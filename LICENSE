@@ -1,0 +1,39 @@
+Manuwave Studio — Source-Available License
+Copyright © 2026 Robert Manuwald. All rights reserved.
+
+Manuwave Studio is made available so that anyone can run it for their own use.
+It is source-available, NOT open-source: the source code is visible, but the
+rights granted below are limited.
+
+GRANT
+You are granted a non-exclusive, non-transferable, royalty-free license to:
+  • download and run the Software on machines you own or control, for
+    personal or internal business use; and
+  • view the source code for the purpose of running and evaluating it.
+
+RESTRICTIONS
+Without the prior written permission of the copyright holder, you may NOT:
+  • modify, adapt, translate, or create derivative works of the Software;
+  • copy, redistribute, publish, sublicense, sell, rent, or host the Software
+    for others, in whole or in part, in original or modified form;
+  • remove or alter this license text or any copyright notice.
+
+YOUR MUSIC
+Music, lyrics and cover art you create with Manuwave Studio are yours, subject
+to the licenses of the AI models that generate them (see THIRD_PARTY.md). This
+license covers Manuwave Studio itself — not the output it helps you create.
+
+THIRD-PARTY COMPONENTS
+The installers download third-party software and models from their original
+sources. They are not part of the Software and are governed by their own
+licenses, listed in THIRD_PARTY.md.
+
+NO WARRANTY
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+For any use beyond this license, contact the copyright holder.

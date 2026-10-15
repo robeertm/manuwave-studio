@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manuwave Studio — Musik-KI</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎛️</text></svg>">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🎛️</span>
+      <div>
+        <h1>Manuwave Studio</h1>
+        <p class="tag">Deine Musik-KI — alles läuft lokal auf deinem Mac</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button id="macPill" class="pill" type="button">🔌 Mac …</button>
+      <button id="settingsBtn" class="ghost" type="button" title="Einstellungen">⚙️</button>
+    </div>
+  </header>
+
+  <!-- Ohne Kopplung geht nichts: der Hinweis steht dort, wo man anfängt -->
+  <div id="pairNote" class="pair-note hidden">
+    <span>🔌 <b>Dein Mac ist in diesem Browser noch nicht gekoppelt.</b> Er schreibt und rechnet die Musik.</span>
+    <button id="pairNoteBtn" class="primary btn-s" type="button">Mac koppeln</button>
+  </div>
+
+  <!-- 3.4.1: zwei Tabs — Studio (Erzeugen, aktueller Track, Bibliothek) und Mastering -->
+  <nav id="tabs" class="tabs" role="tablist" aria-label="Bereiche">
+    <button id="tabStudio" class="tab on" type="button" role="tab" aria-selected="true" aria-controls="studioView" data-tab="studio">🎼 Studio</button>
+    <button id="tabMaster" class="tab" type="button" role="tab" aria-selected="false" aria-controls="masterView" data-tab="master">🎚 Mastering</button>
+  </nav>
+
+  <div id="studioView" class="view" role="tabpanel" aria-labelledby="tabStudio">
+  <!-- ============ 1. NEUER TRACK — der eine Einstieg ============ -->
+  <section id="create" class="card create">
+    <h2>🎼 Neuer Track</h2>
+    <div class="lbl-row">
+      <label class="lbl" for="idea">Beschreibe deinen Track — Stimmung, Klang, Gefühl, gern auf Deutsch</label>
+      <button id="diceBtn" class="ghost btn-s dice" type="button" data-start title="Zufälliger Track nach deiner Auswahl: schreibt eine ausführliche Idee und erzeugt sofort">🎲 Würfeln &amp; erzeugen</button>
+    </div>
+    <textarea id="idea" rows="3" maxlength="1500" placeholder="z. B. „Melodischer Trance für einen Sonnenaufgang, warme Pads, eine Hook zum Mitsummen, Gänsehaut im Breakdown“"></textarea>
+
+    <div class="genres" id="genres" aria-label="Richtung">
+      <div class="gtabs" id="genreTabs" role="tablist" aria-label="Gruppen"></div>
+      <div id="genrePanels"></div>
+      <div class="gpicked" id="genrePicked" aria-live="polite"></div>
+    </div>
+
+    <div class="opts">
+      <div class="opt">
+        <span class="opt-lbl">Gesang</span>
+        <div class="seg" id="vocals" role="radiogroup" aria-label="Gesang">
+          <button type="button" data-v="none" class="on">Instrumental</button>
+          <button type="button" data-v="chops">Vocal-Chops</button>
+          <button type="button" data-v="female">Gesang ♀</button>
+          <button type="button" data-v="male">Gesang ♂</button>
+        </div>
+      </div>
+      <label class="opt" id="langWrap">
+        <span class="opt-lbl">Sprache des Textes</span>
+        <select id="lang">
+          <option value="de">Deutsch</option>
+          <option value="en" selected>Englisch</option>
+          <option value="es">Spanisch</option>
+          <option value="fr">Französisch</option>
+          <option value="it">Italienisch</option>
+        </select>
+      </label>
+      <label class="opt grow">
+        <span class="opt-lbl">Länge <span id="durVal" class="val">≈ 2:00</span></span>
+        <input id="dur" type="range" min="15" max="300" step="5" value="120">
+      </label>
+      <div class="opt">
+        <span class="opt-lbl">Versionen</span>
+        <div class="seg" id="variants" role="radiogroup" aria-label="Versionen">
+          <button type="button" data-v="1">1</button>
+          <button type="button" data-v="2" class="on">2</button>
+          <button type="button" data-v="3">3</button>
+          <button type="button" data-v="4">4</button>
+        </div>
+      </div>
+    </div>
+
+    <details class="more" id="more">
+      <summary>Feinheiten — Stimmung, Tempo, Tonart, Klangqualität, Referenz-Track</summary>
+      <div class="opts">
+        <label class="opt">
+          <span class="opt-lbl">Stimmung</span>
+          <select id="mood">
+            <option value="">— frei —</option>
+            <option value="hypnotic, driving">hypnotisch / treibend</option>
+            <option value="dark, industrial">düster / industriell</option>
+            <option value="euphoric, uplifting">euphorisch / uplifting</option>
+            <option value="melodic, emotional">melodisch / emotional</option>
+            <option value="dreamy, atmospheric">verträumt / atmosphärisch</option>
+            <option value="hard, peak-time, energetic">hart / peak-time</option>
+            <option value="warm, relaxed, groovy">warm / entspannt</option>
+          </select>
+        </label>
+        <label class="opt">
+          <span class="opt-lbl">BPM</span>
+          <input id="bpm" type="number" min="60" max="200" placeholder="automatisch">
+        </label>
+        <label class="opt">
+          <span class="opt-lbl">Tonart</span>
+          <input id="key" type="text" maxlength="16" placeholder="automatisch, z. B. A minor">
+        </label>
+        <label class="opt" id="ditWrap" hidden>
+          <span class="opt-lbl">Klangmodell</span>
+          <select id="dit">
+            <option value="xl-sft">XL — größtes Modell, beste Qualität</option>
+            <option value="sft">Standard — schneller</option>
+          </select>
+        </label>
+        <label class="opt">
+          <span class="opt-lbl">Klangqualität</span>
+          <select id="quality">
+            <option value="studio" selected>Studio — geführt, 50 Schritte</option>
+            <option value="max">Maximal — 80 Schritte, langsamer</option>
+            <option value="schnell">Entwurf — ungeführt, schneller</option>
+          </select>
+        </label>
+        <label class="opt check-opt" title="Bricht die Musik am Ende hart ab, blendet dein Mac die letzten Sekunden weich aus und kürzt die Stille danach">
+          <span class="opt-lbl">Ende</span>
+          <span class="check"><input id="smoothEnd" type="checkbox" checked> weich ausblenden, wenn es abbricht</span>
+        </label>
+        <div class="opt">
+          <span class="opt-lbl">Referenz-Track</span>
+          <button id="refBtn" class="ghost" type="button" title="Einen Song hochladen — die Musik-KI hört ihn an, dein Track baut darauf auf">🎧 Hochladen …</button>
+          <input id="refFile" type="file" accept="audio/*,.wav,.mp3,.flac,.m4a,.ogg" hidden>
+        </div>
+      </div>
+    </details>
+    <div id="refChip" class="ref-chip hidden"></div>
+
+    <div class="go-row">
+      <button id="goBtn" class="primary hero" type="button" data-start>🔥 Track erzeugen</button>
+      <span id="goMsg" class="status" role="status"></span>
+    </div>
+    <p id="estimate" class="sub estimate"></p>
+    <p class="how sub">So entsteht er: ① dein Mac schreibt den Produktions-Brief (lokales Sprachmodell) ·
+      ② die Musik-KI <b>ACE-Step 1.5</b> rechnet auf deinem Mac, etwa in Echtzeit. Nichts davon verlässt dein Netz.</p>
+  </section>
+
+  <!-- ============ 2. AKTUELLER TRACK — weiterarbeiten ============ -->
+  <section id="current" class="card current hidden">
+    <div class="cur-head">
+      <div class="cur-title">
+        <h2 id="curTitle">—</h2>
+        <span id="curBy" class="sub"></span>
+      </div>
+      <div class="cur-meta" id="curMeta"></div>
+    </div>
+    <p id="curNote" class="note hidden"></p>
+    <p id="curTags" class="tags"></p>
+
+    <div id="queue" class="queue hidden"></div>
+
+    <div class="refine">
+      <label class="lbl" for="refineIn">✨ Ändern — sag deinem Produzenten, was anders soll</label>
+      <div class="chips" id="refineChips">
+        <button type="button" class="chip" data-start>Wärmer und organischer, weniger digital</button>
+        <button type="button" class="chip" data-start>Drop härter und breiter</button>
+        <button type="button" class="chip" data-start>Mehr Melodie, eine Hook zum Mitsummen</button>
+        <button type="button" class="chip" data-start>Dunkler und hypnotischer</button>
+        <button type="button" class="chip" data-start>Euphorischer, großer Breakdown</button>
+        <button type="button" class="chip" data-start>Mehr Groove, weniger Druck</button>
+      </div>
+      <div class="row">
+        <input id="refineIn" type="text" maxlength="600" placeholder="z. B. „Bassline rollender, Breakdown mit Piano, 4 BPM schneller“">
+        <button id="refineBtn" class="primary" type="button" data-start>Ändern &amp; erzeugen</button>
+      </div>
+      <div class="row wrap">
+        <button id="againBtn" class="ghost" type="button" data-start title="Derselbe Brief, neue Zufallswerte">🎲 Neue Versionen vom selben Brief</button>
+        <label class="check" title="Beim Ändern dieselben Zufallswerte (Seeds) nehmen — der Track behält seinen Charakter"><input id="keep" type="checkbox"> Charakter behalten</label>
+        <span id="curMsg" class="status" role="status"></span>
+      </div>
+    </div>
+
+    <details class="more" id="editBox">
+      <summary>✎ Brief von Hand bearbeiten</summary>
+      <div class="edit-top">
+        <label class="lbl grow">Titel <input id="bTitle" type="text" maxlength="80"></label>
+        <label class="lbl">BPM <input id="bBpm" type="number" min="60" max="200"></label>
+        <label class="lbl">Tonart <input id="bKey" type="text" maxlength="24" placeholder="A minor"></label>
+        <label class="lbl">Takt
+          <select id="bTs"><option value="4">4/4</option><option value="3">3/4</option><option value="6">6/8</option></select>
+        </label>
+        <label class="lbl">Sprache <input id="bLang" type="text" maxlength="12" placeholder="en"></label>
+        <label class="lbl grow">Länge <span id="bDurVal" class="val">≈ 2:00</span>
+          <input id="bDur" type="range" min="15" max="300" step="5" value="120"></label>
+      </div>
+      <div class="edit-grid">
+        <label class="lbl"><span>Klang &amp; Stil — Tags für die Musik-KI (englisch, kommagetrennt)</span>
+          <textarea id="bCaption" rows="6"></textarea>
+        </label>
+        <label class="lbl"><span>Songstruktur &amp; Text — <code>[Intro]</code> <code>[Chorus]</code> …</span>
+          <textarea id="bLyrics" rows="6" class="mono"></textarea>
+        </label>
+      </div>
+      <p id="editWarn" class="warn-line hidden"></p>
+      <div class="row wrap">
+        <button id="editRender" class="primary" type="button" data-start>🎚 Mit diesen Angaben erzeugen</button>
+        <span id="editMsg" class="status"></span>
+      </div>
+    </details>
+  </section>
+
+  <!-- ============ 3. BIBLIOTHEK ============ -->
+  <section id="library" class="card">
+    <div class="lib-top">
+      <h2>🎧 Bibliothek <span id="libCount" class="sub"></span></h2>
+      <label class="check" id="selAllWrap" title="Alle sichtbaren Tracks auswählen"><input id="selAll" type="checkbox"> alle auswählen</label>
+    </div>
+    <div id="macOnlyLine" class="lib-line hidden">
+      <span id="macOnlyText"></span>
+      <button id="macOnlyMore" class="ghost btn-s" type="button" title="Einzeln holen oder auf dem Mac löschen">Liste ▾</button>
+      <button id="macOnlyBtn" class="primary btn-s" type="button">📥 Vom Mac holen</button>
+      <div id="macOnlyList" class="mo-list hidden"></div>
+    </div>
+    <div id="betterLine" class="lib-line hidden">
+      <span id="betterText"></span>
+      <button id="betterBtn" class="primary btn-s" type="button">✨ Bessere Fassung holen</button>
+    </div>
+    <div id="finishLine" class="lib-line hidden">
+      <span id="finishText"></span>
+      <button id="finishToggle" class="ghost btn-s" type="button">⏸ Anhalten</button>
+    </div>
+    <span id="libMsg" class="status" role="status"></span>
+    <div id="folderBar" class="folder-bar" aria-label="Ordner"></div>
+    <div id="selBar" class="sel-bar hidden" role="toolbar" aria-label="Auswahl">
+      <b id="selCount"></b>
+      <select id="selMove" aria-label="In Ordner verschieben"></select>
+      <button id="selFav" class="ghost btn-s" type="button">★ Favorit</button>
+      <button id="selExport" class="ghost btn-s" type="button" title="Alle ausgewählten exportieren — MP3 oder verlustfrei, als eine ZIP-Datei">⬇︎ Export</button>
+      <button id="selDel" class="ghost btn-s danger" type="button">🗑 Löschen</button>
+      <button id="selNone" class="ghost btn-s" type="button">Auswahl aufheben</button>
+      <span id="selMsg" class="status"></span>
+    </div>
+    <div id="libList" class="lib-list"></div>
+    <p class="sub small">Die Bibliothek liegt in diesem Browser. Jede Datei liegt zusätzlich auf deinem Mac unter <code>~/NeonForge/renders</code> — mit Cover, Tags und Wasserzeichen.</p>
+  </section>
+  </div>
+
+  <!-- ============ MASTERING (3.4.1: eigener Tab, kein Fenster) — live hören, der Mac rechnet beim Export dieselbe Kette ============ -->
+  <section id="masterView" class="card ms-view hidden" role="tabpanel" aria-labelledby="tabMaster">
+    <div class="ms-head">
+      <h2 id="msTitle">🎚 Mastering</h2>
+      <label class="lbl ms-pick-lbl" for="msPick">Track
+        <select id="msPick" aria-label="Track zum Mastern"></select>
+      </label>
+    </div>
+    <p id="msWhat" class="sub"></p>
+    <p id="msEmpty" class="sub hidden">Noch kein Track in der Bibliothek — erzeuge im Studio deinen ersten.</p>
+    <div class="ms-saved">
+      <span id="msSavedTxt" class="sub small" role="status">Jede Änderung wird sofort gespeichert und gilt für jeden Export dieses Tracks.</span>
+      <button id="msUndo" class="ghost btn-s" type="button" disabled title="Letzte Änderung zurücknehmen">↶ Rückgängig</button>
+    </div>
+    <div id="msBody">
+    <div class="ms-wave-box">
+      <canvas id="msWave" class="ms-wave" height="96" aria-label="Wellenform: Griffe ziehen = Anfang/Ende schneiden, Klick = springen"></canvas>
+    </div>
+    <div class="ms-transport">
+      <button id="msPlay" class="primary btn-s" type="button">▶︎ Abspielen</button>
+      <div class="ms-ab" role="group" aria-label="Vergleich">
+        <button id="msA" class="ghost btn-s" type="button" aria-pressed="false">Original</button>
+        <button id="msB" class="ghost btn-s on" type="button" aria-pressed="true">Master</button>
+      </div>
+      <span id="msTime" class="sub small ms-time">0:00</span>
+    </div>
+    <div class="ms-cut sub small">
+      <span>Anfang <b id="msStartTxt">0:00,0</b></span>
+      <span>Ende <b id="msEndTxt">–</b></span>
+      <button id="msAutoEnd" class="ghost btn-s" type="button" title="Findet, wo die Musik aufhört, und schneidet den Klangrest dahinter ab">✂︎ Ende automatisch</button>
+      <button id="msFull" class="ghost btn-s" type="button">Ganzer Track</button>
+    </div>
+    <div class="ms-presets" role="group" aria-label="Voreinstellungen">
+      <button class="ghost btn-s" type="button" data-preset="weich">Weich</button>
+      <button class="ghost btn-s" type="button" data-preset="warm">Warm</button>
+      <button class="ghost btn-s" type="button" data-preset="hell">Klar</button>
+      <button class="ghost btn-s" type="button" data-preset="club">Club</button>
+      <button class="ghost btn-s" type="button" data-preset="neutral">Neutral</button>
+    </div>
+    <div class="ms-knobs">
+      <label class="ms-k" for="msBass"><span>Bässe <b id="msBassV"></b></span><input id="msBass" type="range" min="-12" max="12" step="0.5"></label>
+      <label class="ms-k" for="msTone"><span>Tonfarbe <b id="msToneV"></b></span><input id="msTone" type="range" min="-6" max="6" step="0.5"><small class="sub">warm ↔ hell</small></label>
+      <label class="ms-k" for="msTreble"><span>Höhen <b id="msTrebleV"></b></span><input id="msTreble" type="range" min="-12" max="12" step="0.5"></label>
+      <label class="ms-k" for="msSoft"><span>Weich <b id="msSoftV"></b></span><input id="msSoft" type="range" min="0" max="8" step="0.5"><small class="sub">nimmt die Härte bei 3,5 kHz</small></label>
+      <label class="ms-k" for="msGain"><span>Lautheit <b id="msGainV"></b></span><input id="msGain" type="range" min="-24" max="12" step="0.5"><button id="msAuto" class="ghost btn-s" type="button" aria-pressed="true">Auto · −14 LUFS</button></label>
+      <label class="ms-k" for="msFadeIn"><span>Einblenden <b id="msFadeInV"></b></span><input id="msFadeIn" type="range" min="0" max="10" step="0.1"></label>
+      <label class="ms-k" for="msFadeOut"><span>Ausblenden <b id="msFadeOutV"></b></span><input id="msFadeOut" type="range" min="0" max="15" step="0.1"></label>
+    </div>
+    <p class="sub small">Dein Mac rechnet beim Export genau diese Kette — dazu einen Limiter (−1,5 dB), damit auch ein MP3 nicht übersteuert. Ältere Tracks mit abgeschnittenen Spitzen repariert er von selbst, vor dem Wasserzeichen.</p>
+    <div class="modal-actions">
+      <span id="msMsg" class="status" role="status"></span>
+      <div class="spacer"></div>
+      <button id="msReset" class="ghost" type="button" title="Den Vorschlag wiederherstellen (weich, Ende gekürzt, Lautheit automatisch)">Vorschlag</button>
+      <button id="msExport" class="primary" type="button">⬇︎ Exportieren</button>
+    </div>
+    </div>
+  </section>
+
+  <!-- Jetzt läuft: immer sichtbar, egal wohin die Liste beim Neuzeichnen rückt -->
+  <div id="nowBar" class="now-bar hidden" role="region" aria-label="Jetzt läuft">
+    <button id="nowPlay" class="lib-play on" type="button" title="Pause / weiter">⏸</button>
+    <div class="now-mid">
+      <button id="nowTitle" class="now-title" type="button" title="Zum Track in der Bibliothek springen"></button>
+      <div id="nowSeek" class="now-seek" title="Klicken = springen"><div id="nowFill" class="now-fill"></div></div>
+    </div>
+    <span id="nowTime" class="now-time">0:00 / 0:00</span>
+    <button id="nowStop" class="ghost btn-s" type="button" title="Stopp">✕</button>
+  </div>
+
+  <footer class="foot">
+    <span>Manuwave Studio · <span id="ver"></span> · Brief: Sprachmodell auf deinem Mac · Musik: ACE-Step 1.5 · Cover: Bildmodell auf deinem Mac</span>
+  </footer>
+</div>
+
+<!-- ============ EINSTELLUNGEN: nur noch der Mac ============ -->
+<div id="settings" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="setTitle">
+  <div class="modal-inner card">
+    <h2 id="setTitle">⚙️ Dein Mac</h2>
+    <p id="macText" class="sub"></p>
+    <div class="row">
+      <input id="pairCode" type="text" placeholder="Kopplungscode, z. B. KRB-DMQ" maxlength="12" autocomplete="off" autocapitalize="characters">
+      <button id="pairBtn" class="primary" type="button">Koppeln</button>
+      <button id="unpairBtn" class="ghost danger" type="button" hidden>Kopplung lösen</button>
+    </div>
+    <span id="pairMsg" class="status"></span>
+    <details class="sub setup">
+      <summary>Mac einrichten (einmalig)</summary>
+      <p>Die Musik-KI (ACE-Step 1.5), das Sprachmodell für Brief und Liedtext und das Bildmodell fürs Cover bringt der
+        <b>Installer von Manuwave Studio</b> mit. Wer die App auf einem anderen Rechner betreibt als die KI, koppelt den
+        Rechner mit der KI so (im Terminal):</p>
+      <pre id="setupCmd" class="cmd"></pre>
+      <p>Das richtet die Brücke als Dienst ein (startet mit dem Mac) und öffnet Manuwave Studio gekoppelt. Der Mac verbindet
+        sich nur <b>nach außen</b> — er öffnet keinen Port. Neuer Code für ein weiteres Gerät:
+        <code>/usr/bin/python3 ~/NeonForge/neonforge_bridge.py --pair</code></p>
+    </details>
+    <section id="rightsBox" class="rights">
+      <h3>© Urheber &amp; Rechte</h3>
+      <p class="sub">Gilt für jeden Track, den dieser Mac erzeugt: steht in den Tags jeder Datei, und das unhörbare
+        Wasserzeichen trägt die Kennung. Die Angaben liegen auf dem Mac, nicht im Browser.</p>
+      <span id="rightsMsg" class="status"></span>
+      <div id="rightsForm" class="rights-grid">
+        <label class="lbl">Rechteinhaber (Copyright)<input id="rOwner" type="text" maxlength="120" autocomplete="name"></label>
+        <label class="lbl">Künstlername<input id="rArtist" type="text" maxlength="120" placeholder="leer = Rechteinhaber"></label>
+        <label class="lbl wide">Copyright-Text<input id="rCopy" type="text" maxlength="200">
+          <small class="sub">{jahr}, {inhaber} und {kuenstler} werden eingesetzt</small></label>
+        <label class="lbl">Album<input id="rAlbum" type="text" maxlength="120" placeholder="leer = jeder Track eine Single"></label>
+        <label class="lbl">Label<input id="rLabel" type="text" maxlength="120" placeholder="optional"></label>
+        <label class="lbl wide">Website<input id="rWeb" type="text" maxlength="200" placeholder="https://… (optional)"></label>
+        <div class="checks wide">
+          <label class="check"><input id="rWm" type="checkbox" checked> Unhörbares Wasserzeichen</label>
+          <label class="check"><input id="rCover" type="checkbox" checked> KI-Cover für jeden Track</label>
+          <label class="check"><input id="rTitle" type="checkbox" checked> Titel aufs Cover</label>
+          <label class="check"><input id="rArtistCover" type="checkbox" checked> Künstlername als Schriftzug aufs Cover</label>
+          <label class="check"><input id="rAi" type="checkbox" checked> „KI-erzeugt“ in den Tags</label>
+        </div>
+      </div>
+      <p id="rPreview" class="sub small"></p>
+      <div class="row wrap">
+        <button id="rSave" class="primary btn-s" type="button" disabled>Auf dem Mac speichern</button>
+        <span id="rSaveMsg" class="status"></span>
+      </div>
+      <p id="toolsLine" class="sub small"></p>
+    </section>
+    <section class="rights">
+      <h3>🔏 Wasserzeichen prüfen</h3>
+      <p class="sub">Irgendeine Audiodatei (auch eine MP3 aus dem Netz): stammt sie von diesem Mac, und welcher Track ist es?</p>
+      <div class="row wrap">
+        <button id="verifyBtn" class="ghost btn-s" type="button">Datei wählen …</button>
+        <input id="verifyFile" type="file" accept="audio/*,.flac,.wv,.tta,.aiff,.aif,.m4a,.wav,.mp3" hidden>
+        <span id="verifyMsg" class="status"></span>
+      </div>
+    </section>
+    <div id="oldKeyBox" class="old-key hidden">
+      <p class="sub">🧹 In diesem Browser liegt noch ein <b>Claude-API-Key</b> aus einer früheren Fassung. Manuwave Studio
+        benutzt ihn nicht mehr — alles läuft lokal.</p>
+      <button id="oldKeyDel" class="ghost danger btn-s" type="button">Alten Key aus diesem Browser entfernen</button>
+    </div>
+    <div class="modal-actions">
+      <div class="spacer"></div>
+      <button id="closeSettings" class="ghost" type="button">Schließen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ COVER GROSS (3.2.2) ============ -->
+<div id="coverPeek" class="cover-peek hidden" aria-hidden="true"><img alt=""><span></span></div>
+<div id="coverDlg" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cvTitle">
+  <div class="modal-inner card cv-inner">
+    <h2 id="cvTitle"></h2>
+    <div class="cv-frame">
+      <img id="cvImg" alt="Cover" title="Klicken = schließen">
+      <p id="cvEmpty" class="sub" hidden></p>
+    </div>
+    <p id="cvInfo" class="sub small"></p>
+    <div class="modal-actions">
+      <span id="cvMsg" class="status" role="status"></span>
+      <div class="spacer"></div>
+      <button id="cvSave" class="ghost" type="button">⬇︎ Cover speichern</button>
+      <button id="cvClose" class="ghost" type="button">Schließen</button>
+      <button id="cvNew" class="primary" type="button">🎨 Neues Cover malen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ EXPORT (3.2): die Datei erzeugt der Mac ============ -->
+<div id="exportDlg" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="expTitle">
+  <div class="modal-inner card">
+    <h2 id="expTitle">⬇︎ Exportieren</h2>
+    <p id="expWhat" class="sub"></p>
+    <div id="expFormats" class="exp-formats" role="radiogroup" aria-label="Format"></div>
+    <div id="expNote" class="exp-note hidden" role="note">
+      <span id="expNoteText"></span>
+      <button id="expToAlac" class="btn-s" type="button">Verlustfrei mit Cover auf Apple: ALAC nehmen</button>
+    </div>
+    <div class="exp-row">
+      <label class="lbl exp-rate">Abtastrate
+        <select id="expRate">
+          <option value="0">48 kHz — wie gerechnet (Original)</option>
+          <option value="44100">44,1 kHz — CD und Vertrieb</option>
+        </select>
+      </label>
+      <label class="lbl exp-rate">Bittiefe (verlustfrei)
+        <select id="expBits">
+          <option value="24">24 Bit — Studio</option>
+          <option value="16">16 Bit — CD</option>
+        </select>
+      </label>
+    </div>
+    <label class="check"><input id="expMaster" type="checkbox" checked> 🎚 Gemastert <small id="expMasterTxt" class="sub"></small></label>
+    <!-- 3.9: Veröffentlichungspaket -->
+    <div class="exp-pack">
+      <label class="check"><input id="expPack" type="checkbox"> 📦 Veröffentlichungspaket <small id="expPackTxt" class="sub">— als ZIP: Musik, Cover 3000 × 3000, Metadaten mit KI-Angaben, Liedtext, Herkunftsnachweis (PDF), Lizenzvorlage für Firmen (Word)</small></label>
+      <label class="check exp-pack-opt" id="expOwnTextWrap" hidden><input id="expOwnText" type="checkbox"> ✍️ Den Liedtext habe ich selbst geschrieben <small class="sub">— dann steht er als dein Beitrag im Nachweis und nicht als KI-Text in den Metadaten</small></label>
+    </div>
+    <p class="sub small">Dein Mac schreibt Cover, Tags (<span id="expCopy"></span>) und das unhörbare Wasserzeichen hinein.</p>
+    <div class="modal-actions">
+      <span id="expMsg" class="status" role="status"></span>
+      <div class="spacer"></div>
+      <button id="expCancel" class="ghost" type="button">Schließen</button>
+      <button id="expGo" class="primary" type="button">Exportieren</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

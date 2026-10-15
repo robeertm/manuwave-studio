@@ -1,0 +1,31 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.9" }        # the bridge must stay Python 3.9 compatible (macOS system Python)
+      - name: Python compiles (3.9)
+        run: python -m py_compile app/server.py app/bridge/manuwave_bridge.py install/common/*.py
+      - name: Shell syntax
+        run: for f in install/macos/*.sh install/linux/*.sh "install/macos/Manuwave Studio.command"; do bash -n "$f"; done
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - name: JavaScript syntax
+        run: for f in app/web/*.js; do node --check "$f"; done
+      - name: PowerShell syntax
+        shell: pwsh
+        run: |
+          foreach ($f in Get-ChildItem install/windows/*.ps1) {
+            $e = $null; [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$e) | Out-Null
+            if ($e) { $e | ForEach-Object { Write-Error "$($f.Name): $_" }; exit 1 }
+          }
+      - name: Server smoke test
+        run: |
+          cd app && (HOST=127.0.0.1 PORT=8104 python server.py &) && sleep 2
+          curl -fsS http://127.0.0.1:8104/version && curl -fsS http://127.0.0.1:8104/ | grep -q "Manuwave Studio"
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
