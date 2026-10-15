@@ -73,7 +73,7 @@ HOST = os.environ.get("HOST", "0.0.0.0")      # 3.11: lokale Installation → 12
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, "web")
 
-APP_VERSION = "3.11.1"
+APP_VERSION = "3.12.1"
 BRIDGE_FILE = next((p for p in (os.path.join(ROOT, "bridge", n) for n in ("neonforge_bridge.py", "manuwave_bridge.py"))
                     if os.path.isfile(p)), os.path.join(ROOT, "bridge", "manuwave_bridge.py"))
 BUILD_INFO_FILE = os.path.join(WEB, "build-info.json")
@@ -154,6 +154,7 @@ def _bake_index(info: dict) -> None:
     html = re.sub(r'(href="style\.css)(\?b=[^"]*)?(")', rf"\1?b={buster}\3", html, count=1)
     html = re.sub(r'(src="app\.js)(\?b=[^"]*)?(")', rf"\1?b={buster}\3", html, count=1)
     html = re.sub(r'(src="umzug\.js)(\?b=[^"]*)?(")', rf"\1?b={buster}\3", html, count=1)
+    html = re.sub(r'(src="i18n\.js)(\?b=[^"]*)?(")', rf"\1?b={buster}\3", html, count=1)
     with open(INDEX_FILE, "w", encoding="utf-8") as f:
         f.write(html)
 
@@ -248,7 +249,11 @@ def clean_brief_request(raw: dict) -> dict:
     user = raw.get("user")
     if not isinstance(user, str) or not user.strip():
         raise ValueError("Aufgabe für den Brief fehlt")
-    return {"user": user.strip()[:MAX_BRIEF_TEXT]}
+    out = {"user": user.strip()[:MAX_BRIEF_TEXT]}
+    # 3.12: Sprache der Oberfläche — die Brücke schreibt die Notiz dann englisch statt deutsch
+    if raw.get("ui_lang") in ("de", "en"):
+        out["ui_lang"] = raw["ui_lang"]
+    return out
 
 
 BRIEF_LANE = {"brief", "settings", "export", "verify", "archiv", "loeschen", "web", "web_weg"}

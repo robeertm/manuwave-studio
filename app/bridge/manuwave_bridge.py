@@ -58,7 +58,7 @@ try:
 except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.11.0"
+BRIDGE_VERSION = "3.12.0"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
@@ -302,6 +302,15 @@ WRITER_SCHEMA = {
 TAG_GROUPS = ("genre_tags", "rhythm_tags", "instrument_tags", "production_tags", "mood_tags")
 
 
+NOTE_DE = "- note: 2–4 Sätze AUF DEUTSCH (auch wenn der Songtext englisch ist)"
+NOTE_EN = "- note: 2–4 Sätze AUF ENGLISCH (die Oberfläche ist englisch)"
+
+
+def writer_system(ui_lang: str = "de") -> str:
+    """3.12: bei englischer Oberfläche schreibt das Modell die Notiz englisch — sonst wie bisher deutsch."""
+    return WRITER_SYSTEM.replace(NOTE_DE, NOTE_EN) if ui_lang == "en" else WRITER_SYSTEM
+
+
 def assemble_brief(raw: dict) -> dict:
     """Antwort des Modells → der Brief, den der Browser kennt (caption, lyrics, bpm, …)."""
     seen, tags = set(), []
@@ -339,7 +348,7 @@ def _blocks(lyrics: str):
         yield z[0], z[1:]
 
 
-def brief_defects(brief: dict) -> list:
+def brief_defects(brief: dict, ui_lang: str = "de") -> list:
     """Was ein kleines Modell gern falsch macht (gemessen): Strophenzeilen doppelt
     („Meer der Freiheit, / Meer der Freiheit, …"), Refrains mit 7 Zeilen derselben Hook.
     Im Refrain ist eine wiederholte Hook-Zeile gewollt — dort zählt nur die Länge."""
@@ -351,7 +360,11 @@ def brief_defects(brief: dict) -> list:
         if not head.lower().startswith(("[chorus", "[hook")) and len(set(norm)) < len(norm):
             out.append("%s wiederholt Zeilen" % head)
     words = re.findall(r"[a-zäöüß]+", (brief.get("note") or "").lower())
-    if len(words) >= 8 and sum(w in DE_WORDS for w in words) < 2:
+    if ui_lang == "en":
+        # 3.12: englische Oberfläche → die Notiz soll englisch sein
+        if len(words) >= 8 and sum(w in DE_WORDS for w in words) >= 4:
+            out.append("note not in English")
+    elif len(words) >= 8 and sum(w in DE_WORDS for w in words) < 2:
         out.append("Notiz nicht deutsch")
     return out
 
@@ -394,9 +407,9 @@ def soften_caption(brief: dict, user: str) -> list:
     return gone
 
 
-def _ask_writer(cfg: dict, model: str, user: str, temperature: float) -> dict:
+def _ask_writer(cfg: dict, model: str, user: str, temperature: float, ui_lang: str = "de") -> dict:
     body = {"model": model, "stream": False, "format": WRITER_SCHEMA,
-            "messages": [{"role": "system", "content": WRITER_SYSTEM},
+            "messages": [{"role": "system", "content": writer_system(ui_lang)},
                          {"role": "user", "content": user}],
             "options": {"temperature": temperature, "num_ctx": 8192}}
     req = urllib.request.Request(cfg["writer_url"].rstrip("/") + "/api/chat",
@@ -414,7 +427,7 @@ def _ask_writer(cfg: dict, model: str, user: str, temperature: float) -> dict:
     return brief
 
 
-def write_brief(cfg: dict, user: str) -> dict:
+def write_brief(cfg: dict, user: str, ui_lang: str = "de") -> dict:
     model = find_writer(cfg)
     if not model:
         raise RuntimeError("Kein Sprachmodell auf dem Mac erreichbar (Ollama)")
@@ -424,8 +437,8 @@ def write_brief(cfg: dict, user: str) -> dict:
     best, best_def, tries = None, None, 0
     for temperature in (0.8, 0.9):
         tries += 1
-        brief = _ask_writer(cfg, model, user, temperature)
-        defects = brief_defects(brief)
+        brief = _ask_writer(cfg, model, user, temperature, ui_lang)
+        defects = brief_defects(brief, ui_lang)
         if best is None or len(defects) < len(best_def):
             best, best_def = brief, defects
         if not defects:
@@ -2878,6 +2891,139 @@ def _web(cfg, method, path, body=None, raw=None, ctype=None, timeout=60):
         raise RuntimeError("Fahrstuhlmusik nicht erreichbar (%s) — ist Tailscale auf dem Mac an?" % getattr(e, "reason", e))
 
 
+# whisper.cpp hört die VERÖFFENTLICHTE Fassung (gemastert, also mit Schnitt am Anfang) und liefert Wörter mit Zeiten;
+# Hinweis (--prompt) und ohne Kontextverschleppung (-mc 0) findet auch die zweite Strophe; ein Gesangsfilter half nicht.
+WHISPER_MODEL = os.path.join(DIR, "models", "whisper", "ggml-large-v3-turbo-q5_0.bin")
+_WORD = re.compile(r"[^\w']+", re.U)
+
+
+def _words(text: str) -> list:
+    return [w for w in _WORD.sub(" ", (text or "").lower()).replace("'", "").split() if w]
+
+
+def _similar(a: str, b: str) -> bool:
+    if a == b:
+        return True
+    if min(len(a), len(b)) >= 4 and (a.startswith(b) or b.startswith(a)):
+        return True
+    import difflib
+    return len(a) >= 3 and difflib.SequenceMatcher(None, a, b).ratio() >= 0.75
+
+
+def align_lyrics(lyrics: str, heard: list, duration: float) -> dict:
+    """lyrics: Liedtext mit [Markern]; heard: [(wort, start, ende)] → {"lines": [{t, e, l}], "coverage": Anteil}."""
+    lines = [x.strip() for x in (lyrics or "").split("\n") if x.strip() and not re.fullmatch(r"\[.*\]", x.strip())]
+    L = [(w, i) for i, ln in enumerate(lines) for w in _words(ln)]
+    R = [(w, t0, t1) for (txt, t0, t1) in heard for w in _words(txt)]
+    if not L or not R:
+        return {"lines": [], "coverage": 0.0}
+    n, m = len(L), len(R)
+    GAP, MIS, HIT = -0.6, -1.0, 2.0
+    sc = [[0.0] * (m + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        sc[i][0] = i * GAP
+    for j in range(1, m + 1):
+        sc[0][j] = j * GAP * 0.3                     # Gehörtes ohne Text (Füller) kostet wenig
+    for i in range(1, n + 1):
+        li = L[i - 1][0]
+        row, prev = sc[i], sc[i - 1]
+        for j in range(1, m + 1):
+            d = prev[j - 1] + (HIT if _similar(li, R[j - 1][0]) else MIS)
+            row[j] = max(d, prev[j] + GAP, row[j - 1] + GAP * 0.3)
+    hits = {}                                       # Index im Liedtext → (start, ende)
+    i, j = n, m
+    while i > 0 and j > 0:
+        same = _similar(L[i - 1][0], R[j - 1][0])
+        if sc[i][j] == sc[i - 1][j - 1] + (HIT if same else MIS):
+            if same:
+                hits[i - 1] = R[j - 1][1:]
+            i, j = i - 1, j - 1
+        elif sc[i][j] == sc[i - 1][j] + GAP:
+            i -= 1
+        else:
+            j -= 1
+    out, anchored = [], 0
+    for k, ln in enumerate(lines):
+        idx = [x for x in range(n) if L[x][1] == k]
+        got = [(x, hits[x]) for x in idx if x in hits]
+        if len(got) >= max(1, len(idx) // 3):
+            anchored += 1
+            first_pos = idx.index(got[0][0])
+            t0 = got[0][1][0] - 0.35 * first_pos
+            t1 = got[-1][1][1]
+            # Am Anfang nach Musik dehnt whisper das erste Wort über die ganze Pause — dann vom Zeilenende rechnen
+            if t1 - t0 > len(idx) * 0.9 + 1.0:
+                t0 = t1 - len(idx) * 0.45 - 0.3
+            out.append({"t": max(0.0, t0), "e": t1, "l": ln, "a": True})
+        else:
+            out.append({"t": None, "e": None, "l": ln, "a": False})
+    known = [k for k, x in enumerate(out) if x["a"]]
+    if not known:
+        return {"lines": [], "coverage": 0.0}
+    for k, x in enumerate(out):                     # Lücken gleichmäßig zwischen den Nachbarn verteilen
+        if x["t"] is not None:
+            continue
+        a = max((q for q in known if q < k), default=None)
+        b = min((q for q in known if q > k), default=None)
+        if a is not None and b is not None:
+            x["t"] = out[a]["e"] + (out[b]["t"] - out[a]["e"]) * (k - a) / (b - a)
+        elif a is not None:
+            x["t"] = min(duration or 1e9, out[a]["e"] + 3.0 * (k - a))
+        else:
+            x["t"] = max(0.0, out[b]["t"] - 3.0 * (b - k))
+        x["e"] = x["t"] + 2.5
+    last = -1.0
+    for x in out:                                   # nie rückwärts
+        x["t"] = round(max(x["t"], last + 0.3), 2)
+        x["e"] = round(max(x["e"], x["t"]), 2)
+        last = x["t"]
+        x.pop("a", None)
+    return {"lines": out, "coverage": round(anchored / len(lines), 2)}
+
+
+def _wav_seconds(data: bytes) -> float:
+    import io
+    try:
+        with wave.open(io.BytesIO(data)) as w:
+            return w.getnframes() / float(w.getframerate() or 1)
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def lyrics_timing(cfg: dict, wav_bytes: bytes, lyrics: str, lang: str, duration: float) -> dict:
+    """Zeiten für den Liedtext aus der fertigen Fassung. {} wenn whisper fehlt oder zu wenig erkannt wird."""
+    cli = tool(cfg, "whisper-cli")
+    model = cfg.get("whisper_model") or WHISPER_MODEL
+    if not cli or not os.path.isfile(model) or not (lyrics or "").strip():
+        return {}
+    ff = tool(cfg, "ffmpeg")
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="mws-karaoke-")
+    try:
+        src, w16 = os.path.join(tmp, "in.wav"), os.path.join(tmp, "a16.wav")
+        with open(src, "wb") as f:
+            f.write(wav_bytes)
+        subprocess.run([ff, "-v", "error", "-y", "-i", src, "-ar", "16000", "-ac", "1", w16], check=True, timeout=300)
+        hint = " ".join(dict.fromkeys(x.strip() for x in lyrics.split("\n") if x.strip() and not x.strip().startswith("[")))[:600]
+        cmd = [cli, "-m", model, "-f", w16, "-ml", "1", "-sow", "-mc", "0", "-oj", "-of", os.path.join(tmp, "out"), "-np",
+               "-l", lang if re.fullmatch(r"[a-z]{2}", lang or "") else "auto", "--prompt", hint]
+        subprocess.run(cmd, capture_output=True, timeout=900)
+        try:
+            seg = json.load(open(os.path.join(tmp, "out.json"), encoding="utf-8", errors="replace"))["transcription"]
+        except (OSError, ValueError, KeyError):
+            return {}
+        heard = [(x.get("text", ""), x["offsets"]["from"] / 1000.0, x["offsets"]["to"] / 1000.0) for x in seg if (x.get("text") or "").strip()]
+        res = align_lyrics(lyrics, heard, duration)
+        if res["coverage"] < 0.3:
+            log("Mitsingen: zu wenig erkannt (%.0f %%) — die Seite schätzt" % (res["coverage"] * 100))
+            return {}
+        res["source"] = "whisper large-v3-turbo · %d %% erkannt" % round(res["coverage"] * 100)
+        return res
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def web_publish(cfg, path, req, tick=None):
     given = clean_master(req.get("master"))
     fin = veredeln(cfg, path, req, want_cover=False, tick=tick)
@@ -2909,6 +3055,17 @@ def web_publish(cfg, path, req, tick=None):
     if tick:
         tick("Fahrstuhlmusik wandelt um …")
     f = _web(cfg, "POST", "/api/admin/track/%s/fertig" % tid, {}, timeout=900)
+    if lyrics.strip():
+        # 3.12: Zeiten zum Mitsingen — ein Fehler hier hält die Veröffentlichung nicht auf
+        try:
+            if tick:
+                tick("Liedtext wird an die Musik angelegt …")
+            tm = lyrics_timing(cfg, res["data"], lyrics, lang, _wav_seconds(res["data"]))
+            if tm.get("lines"):
+                _web(cfg, "PUT", "/api/admin/track/%s/timing" % (f.get("id") or tid), {"lines": tm["lines"], "source": tm["source"]})
+                log("Mitsingen: %d Zeilen, %s" % (len(tm["lines"]), tm["source"]))
+        except Exception as e:  # noqa: BLE001
+            log("Mitsingen nicht möglich: %s" % e)
     with FileLock(path):
         d = _read_json(path[:-4] + ".json")
         d["oeffentlich"] = {"id": f.get("id") or tid, "slug": f.get("slug", ""), "url": f.get("url", ""),
@@ -3001,7 +3158,9 @@ def archive_list() -> list:
                     "time": (m.group(2) or "") if m else "", "duration": res.get("duration_real") or res.get("duration") or 0,
                     "cover": os.path.isfile(p[:-4] + ".jpg"), "wm": (d.get("wasserzeichen") or {}).get("id", ""),
                     "stamp": str((d.get("cover") or {}).get("stamp") or ""),
-                    "rev": int((d.get("aufbereitet") or {}).get("v") or 0)})
+                    "rev": int((d.get("aufbereitet") or {}).get("v") or 0),
+                    # 3.12: veröffentlicht? — der Browser gleicht sein 🌐 damit ab (auch nach Veröffentlichen ohne ihn)
+                    "web": {k: (d.get("oeffentlich") or {}).get(k, "") for k in ("url", "slug", "at")} if (d.get("oeffentlich") or {}).get("url") else None})
     return out
 
 
@@ -3200,7 +3359,7 @@ def brief_lane(cfg: dict) -> None:
         log("Brief %s wird geschrieben (%s)" % (jid, find_writer(cfg) or "kein Modell"))
         try:
             srv.progress(jid, "Dein Mac schreibt den Brief …")
-            brief = write_brief(cfg, (job.get("request") or {}).get("user") or "")
+            brief = write_brief(cfg, (job.get("request") or {}).get("user") or "", (job.get("request") or {}).get("ui_lang") or "de")
             srv.result_json(jid, brief)
             log("Brief fertig in %.0f s: %s" % (brief.get("write_s", 0), brief.get("title", "")))
         except Exception as e:  # noqa: BLE001

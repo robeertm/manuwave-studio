@@ -7,6 +7,8 @@
 //   bpm   — üblicher Tempobereich (der Würfel nennt eine Zahl daraus, das Feld BPM bleibt frei)
 //   fam   — Bauform: club (Build/Drop), song (Strophe/Refrain), flow (lange Bögen) → Gerüst + Bogen-Text
 
+import * as EN from "./dice_en.js";
+
 const G = (n, bpm, kit, extra = {}) => ({ n, bpm, kit, ...extra });
 
 export const GENRE_GROUPS = [
@@ -351,35 +353,40 @@ function pickN(a, n) {
 }
 const cap = (s) => s[0].toUpperCase() + s.slice(1);
 
-// genres: die gewählten (oder vom Würfel gezogenen) Richtungen. o: vocals, mood (Wert des Stimmung-Felds).
+// genres: die gewählten (oder vom Würfel gezogenen) Richtungen. o: vocals, mood (Wert des Stimmung-Felds), lang.
+// 3.12: o.lang === "en" (englische Oberfläche) → dieselben Bausteine auf Englisch (dice_en.js).
 export function composeIdea(genres, o = {}) {
+  const en = (o.lang || globalThis.MWS_LANG) === "en";
+  const P = en ? EN : { SCENES, MOODS, ENDINGS, OPENERS, HOOKS, ARCS, SOUND, DETAILS, THEMES, VOICES };
   const infos = genres.map(n => BY_NAME[n]).filter(Boolean);
   const fam = familyOf(genres);
-  const kitAll = [...new Set(infos.flatMap(i => i.kit))];
-  const kit = pickN(kitAll.length ? kitAll : ["warmen Pads", "einem tiefen Bass", "einem klaren Beat", "einer Melodie"], 4);
+  const kitAll = [...new Set(infos.flatMap(i => i.kit))].map(k => en ? EN.KIT[k] : k).filter(Boolean);
+  const kit = pickN(kitAll.length ? kitAll : (en ? EN.FALLBACK_KIT : ["warmen Pads", "einem tiefen Bass", "einem klaren Beat", "einer Melodie"]), 4);
   while (kit.length < 4) kit.push(kit[0]);
   const [lo, hi] = tempoOf(genres) || [100, 128];
   const bpm = lo + Math.floor(Math.random() * (hi - lo + 1));
   const fit = [...new Set(infos.flatMap(i => i.moods || []))];
   const feel = pick(MOOD_SELECT[o.mood] || (fit.length ? fit : Object.keys(MOODS)));
-  const moods = pickN(MOODS[feel], 2);
-  const label = genres.length > 1 ? `${genres.slice(0, -1).join(", ")} trifft ${genres[genres.length - 1]}` : (genres[0] || "Ein Track");
+  const moods = pickN(P.MOODS[feel], 2);
+  const names = genres.map(n => en ? (EN.GENRE_EN[n] || n) : n);
+  const label = names.length > 1 ? `${names.slice(0, -1).join(", ")} ${en ? "meets" : "trifft"} ${names[names.length - 1]}` : (names[0] || (en ? "A track" : "Ein Track"));
 
   const parts = [];
-  parts.push(`${label}, um ${bpm} BPM — ${pick(SCENES[feel])}.`);
-  parts.push(`${pick(OPENERS)(kit[0])}.`);
-  parts.push(`Getragen von ${kit[1]} und ${kit[2]} ${pick(HOOKS)}.`);
-  parts.push(`${pick(ARCS[fam])(kit[3])}.`);
-  parts.push(`Gefühl: ${moods.join(" und ")} — am Ende ${pick(ENDINGS[feel])}.`);
-  const sound = pickN(SOUND[fam], 3);
-  if (roughOf(genres)) sound[0] = pick(SOUND.rough);
-  parts.push(`Klang: ${sound.join(", ")}.`);
+  parts.push(`${label}, ${en ? "around" : "um"} ${bpm} BPM — ${pick(P.SCENES[feel])}.`);
+  parts.push(`${pick(P.OPENERS)(kit[0])}.`);
+  parts.push(en ? `Carried by ${kit[1]} and ${kit[2]}, ${pick(P.HOOKS)}.` : `Getragen von ${kit[1]} und ${kit[2]} ${pick(P.HOOKS)}.`);
+  parts.push(`${pick(P.ARCS[fam])(kit[3])}.`);
+  parts.push(en ? `Feeling: ${moods.join(" and ")} — ending ${pick(P.ENDINGS[feel])}.` : `Gefühl: ${moods.join(" und ")} — am Ende ${pick(P.ENDINGS[feel])}.`);
+  const sound = pickN(P.SOUND[fam], 3);
+  if (roughOf(genres)) sound[0] = pick(P.SOUND.rough);
+  parts.push(`${en ? "Sound" : "Klang"}: ${sound.join(", ")}.`);
   if (o.vocals === "female" || o.vocals === "male") {
-    parts.push(`Gesang: ${pick(VOICES[o.vocals])}; der Text erzählt ${("von " + pick(THEMES)).replace(/^von dem /, "vom ")}, in Bildern statt Floskeln.`);
+    parts.push(en ? `Vocals: ${pick(P.VOICES[o.vocals])}; the lyrics tell of ${pick(P.THEMES)}, in images rather than clichés.`
+      : `Gesang: ${pick(VOICES[o.vocals])}; der Text erzählt ${("von " + pick(THEMES)).replace(/^von dem /, "vom ")}, in Bildern statt Floskeln.`);
   } else if (o.vocals === "chops") {
-    parts.push("Dazu kurze, gehauchte Vocal-Fetzen, die wie ein Echo der Melodie antworten.");
+    parts.push(en ? "Plus short, breathy vocal fragments answering the melody like an echo." : "Dazu kurze, gehauchte Vocal-Fetzen, die wie ein Echo der Melodie antworten.");
   }
-  if (Math.random() < 0.7) parts.push(`Ein Detail: ${pick(DETAILS)}.`);
+  if (Math.random() < 0.7) parts.push(`${en ? "A detail" : "Ein Detail"}: ${pick(P.DETAILS)}.`);
   return { text: parts.map(cap).join(" "), bpm };
 }
 
