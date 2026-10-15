@@ -243,7 +243,7 @@ async function claimCode() {
     setBridgeToken(r.data.token);
     $("#pairCode").value = "";
     setMsg(s, "✓ gekoppelt", "ok");
-    if (/koppeln/.test($("#goMsg").textContent)) setMsg($("#goMsg"), "", "");
+    if (/koppeln/.test($("#goMsg").dataset.msg || "")) setMsg($("#goMsg"), "", "");
     loadPending();
   } else setMsg(s, "✗ " + ((r.data && r.data.message) || "Code unbekannt"), "err");
 }
@@ -263,7 +263,7 @@ function setSeg(id, v) { $$(`#${id} button`).forEach(b => b.classList.toggle("on
 function form() {
   return {
     idea: $("#idea").value.trim(),
-    genres: $$("#genres .chip.on").map(c => c.textContent),
+    genres: $$("#genres .chip.on").map(c => c.dataset.n),     // 3.12: Name aus data-n — die Anzeige kann übersetzt sein
     vocals: segValue("vocals") || "none",
     lang: $("#lang").value,
     duration: +$("#dur").value,
@@ -288,7 +288,7 @@ function restoreForm() {
   try { f = JSON.parse(localStorage.getItem(LS_FORM) || "null"); } catch (e) {}
   if (!f) return;
   $("#idea").value = f.idea || "";
-  $$("#genres .chip").forEach(c => c.classList.toggle("on", (f.genres || []).includes(c.textContent)));
+  $$("#genres .chip").forEach(c => c.classList.toggle("on", (f.genres || []).includes(c.dataset.n)));
   if (VOCAL_TAG[f.vocals]) setSeg("vocals", f.vocals);
   if (LANG_NAMES[f.lang]) $("#lang").value = f.lang;
   if (f.duration) $("#dur").value = f.duration;
@@ -420,7 +420,7 @@ function templateBrief(o, why) {
 
 // Ein Brief-Auftrag an den Mac. Wirft, wenn der Mac ihn nicht schreiben kann.
 async function callMacWriter(task, say) {
-  const r = await api("/api/brief", { method: "POST", body: { request: { user: task }, meta: { title: "Brief" } } });
+  const r = await api("/api/brief", { method: "POST", body: { request: { user: task, ui_lang: window.MWS_LANG || "de" }, meta: { title: "Brief" } } });
   if (!r.ok) throw new Error((r.data && r.data.message) || `Fehler ${r.status}`);
   const id = r.data.id, t0 = Date.now();
   while (true) {
@@ -1013,7 +1013,7 @@ async function libSplitOld() {
   }
   // Direkt nach dem Schreiben liefert Safari mitunter für Sekunden tote Blobs — erst weiter, wenn sie lesbar sind
   for (const id of ids) await freshRec(id, "blob", 6000, true);
-  if (msg.textContent.startsWith("Bibliothek wird einmalig")) setMsg(msg, "", "");
+  if ((msg.dataset.msg || "").startsWith("Bibliothek wird einmalig")) setMsg(msg, "", "");
 }
 // Den Datensatz frisch lesen, bis sein Blob (Audio oder Cover) wirklich lesbar ist — höchstens `ms` lang.
 // Gegen Safaris tote Blobs; in Chrome ist der erste Versuch gleich der richtige.
@@ -1491,6 +1491,18 @@ async function checkMacOnly() {
     // 3.5: auf dem Mac aufbereitet (Spitzen repariert, leises Wasserzeichen, 24 Bit) — die Bibliothek hat die alte Kopie
     const rev = new Map(tracks.map(t => [t.archived, t.rev || 0]));
     state.macBetter = all.filter(r => (rev.get((r.result || {}).archived) || 0) > (r.rev || 0)).map(r => r.id);
+    // 3.12: 🌐 nach dem Archiv — veröffentlicht oder zurückgezogen auch ohne diesen Browser (anderes Gerät, Terminal)
+    const pub = new Map(tracks.filter(t => "web" in t).map(t => [t.archived, t.web]));
+    let webChanged = false;
+    for (const r of all) {
+      const a = (r.result || {}).archived;
+      if (!a || !pub.has(a)) continue;
+      const w = pub.get(a);
+      if (!!w === !!r.web && (!w || w.url === r.web.url)) continue;
+      await libPatch(r.id, { web: w ? { url: w.url, slug: w.slug, at: Date.parse(w.at) || Date.now() } : null });
+      webChanged = true;
+    }
+    if (webChanged) renderLibrary();
   } catch (e) { state.macOnly = []; state.macBetter = []; state.archivAsked = false; }
   renderMacOnly();
 }
@@ -1910,7 +1922,7 @@ function msPlay(at) {
     msLoad(msOrigUrl(), pos, 0); a.muted = true; a.play().catch(() => {});
     setMsg($("#msMsg"), "⏳ Mastering wird gerechnet …", "busy");
     msPrepare().then(prev => {
-      if ($("#msMsg").textContent.startsWith("⏳")) setMsg($("#msMsg"), "", "");
+      if (($("#msMsg").dataset.msg || "").startsWith("⏳")) setMsg($("#msMsg"), "", "");
       if (!prev || !ms.playing || ms.ab !== "B" || !a.muted) return;
       msLoad(prev.url, ms.pos - prev.start, prev.start);
       a.muted = false; a.play().catch(() => msStop());
@@ -2490,7 +2502,7 @@ async function masteredThenPlay(id) {
   setMsg($("#libMsg"), "🎚 Mastering wird gerechnet …", "busy");
   let r = null, err = "";
   try { r = await ensureMastered(id); } catch (e) { err = e.message; }
-  if ($("#libMsg").textContent.startsWith("🎚 Mastering wird")) setMsg($("#libMsg"), "", "");
+  if (($("#libMsg").dataset.msg || "").startsWith("🎚 Mastering wird")) setMsg($("#libMsg"), "", "");
   if (player.id !== id || !player.waiting) return;
   player.waiting = false;
   const a = player.audio;
@@ -2590,6 +2602,7 @@ function libRow(rec, fl) {
   const mid = el("div", "lib-mid");
   const head = el("div", "lib-head");
   const title = el("span", "lib-title", rec.title + (rec.variant ? " · " + rec.variant : ""));
+  title.translate = false;                 // 3.12: Titel und Notiz sind Inhalt — i18n.js lässt sie, wie sie sind
   title.title = "Klicken zum Umbenennen";
   title.onclick = async () => {
     const t = prompt("Neuer Titel:", rec.title);
@@ -2611,7 +2624,7 @@ function libRow(rec, fl) {
   cv.title = "Klicken = an diese Stelle springen";
   cv.onclick = (e) => play(rec, e.offsetX / cv.clientWidth);
   mid.append(head, cv);
-  if (rec.note) mid.append(el("div", "lib-note", rec.note));
+  if (rec.note) { const nt = el("div", "lib-note", rec.note); nt.translate = false; mid.append(nt); }
   const act = el("div", "lib-act");
   const btn = (txt, tip, fn, cls = "") => { const b = el("button", "ghost btn-s " + cls, txt); b.type = "button"; b.title = tip; b.onclick = fn; act.append(b); return b; };
   btn(rec.favorite ? "★" : "☆", "Favorit", async () => { await libPatch(rec.id, { favorite: !rec.favorite }); renderLibrary(); }, rec.favorite ? "fav" : "");
@@ -2710,7 +2723,7 @@ function buildGenres() {
     p.dataset.g = g.id; p.setAttribute("role", "tabpanel"); p.hidden = true;
     g.genres.forEach(x => {
       const c = el("button", "chip", x.n);
-      c.type = "button";
+      c.type = "button"; c.dataset.n = x.n;
       c.onclick = () => { c.classList.toggle("on"); saveForm(); renderGenrePicked(); };
       p.append(c);
     });
@@ -2726,7 +2739,7 @@ function showGenreGroup(id) {
   if (bar && t) bar.scrollLeft += t.getBoundingClientRect().left - bar.getBoundingClientRect().left - (bar.clientWidth - t.offsetWidth) / 2;
 }
 function renderGenrePicked() {
-  const on = $$("#genres .chip.on").map(c => c.textContent);
+  const on = $$("#genres .chip.on").map(c => c.dataset.n);
   $$("#genreTabs .gtab").forEach(t => {
     const n = $$(`#genrePanels .gpanel[data-g="${t.dataset.g}"] .chip.on`).length;
     t.querySelector("b").textContent = n ? String(n) : "";
@@ -2736,9 +2749,9 @@ function renderGenrePicked() {
   if (!on.length) { box.append(el("span", "sub", "Keine Richtung gewählt — 🎲 zieht dann selbst eine.")); return; }
   box.append(el("span", "sub", "Gewählt:"));
   on.forEach(n => {
-    const x = el("button", "gtag", n + " ✕");
+    const x = el("button", "gtag", (window.mwsT || String)(n) + " ✕");
     x.type = "button"; x.title = "Abwählen";
-    x.onclick = () => { $$("#genres .chip.on").filter(c => c.textContent === n).forEach(c => c.classList.remove("on")); saveForm(); renderGenrePicked(); };
+    x.onclick = () => { $$("#genres .chip.on").filter(c => c.dataset.n === n).forEach(c => c.classList.remove("on")); saveForm(); renderGenrePicked(); };
     box.append(x);
   });
 }
@@ -2748,7 +2761,8 @@ function renderGenrePicked() {
 // =============================================================================
 function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-function setMsg(node, msg, cls) { if (!node) return; node.textContent = msg; node.className = "status" + (cls ? " " + cls : ""); }
+// 3.12: dataset.msg = die deutsche Fassung — die englische Oberfläche (i18n.js) übersetzt textContent, Vergleiche lesen hier
+function setMsg(node, msg, cls) { if (!node) return; node.textContent = msg; node.dataset.msg = msg; node.className = "status" + (cls ? " " + cls : ""); }
 function fmtDur(s) { s = Math.round(+s || 0); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
 function fmtBytes(n) { return n >= 1e9 ? (n / 1e9).toFixed(1) + " GB" : n >= 1e6 ? (n / 1e6).toFixed(0) + " MB" : Math.max(1, Math.round(n / 1e3)) + " KB"; }
 function safe(s) { return (s || "track").replace(/[^\wäöüÄÖÜß\- ]+/g, "").trim().replace(/\s+/g, "_").slice(0, 50) || "track"; }

@@ -13,7 +13,7 @@ hobby showcase, where you can also share your own tracks.
 
 ![Studio](docs/screenshots/studio.png)
 
-> The interface is in **German** for now; an English translation is planned. This README and the installers are in English.
+> The interface speaks **English and German** — it follows your browser language, and the button in the top bar switches it. The dice writes its ideas in the language you use.
 
 ## What it does
 
@@ -25,7 +25,7 @@ hobby showcase, where you can also share your own tracks.
 | 🎨 **Cover art** | FLUX.2 [klein] 4B (macOS) or Z-Image Turbo (Windows/Linux) paints a cover that fits the mood. |
 | 🎚 **Mastering** | Bass, tone, treble, softness, fades, auto-loudness to −14 LUFS — what you hear is what you export. |
 | ⬇️ **Export** | MP3, FLAC, ALAC, WAV, AIFF, WavPack, TTA — with cover, tags and lyrics embedded. |
-| 📦 **Release package** | One ZIP with the mastered file, a 3000 × 3000 cover, upload metadata with AI-disclosure checkboxes, lyrics, a proof-of-origin PDF and a licence template. |
+| 📦 **Release package** | One ZIP with the mastered file, a 3000 × 3000 cover, upload metadata with AI-disclosure checkboxes, lyrics, a proof-of-origin PDF and a licence template (these two documents are in German for now). |
 | 🔏 **Honest by design** | Every file is labelled “AI-generated” in its tags; an inaudible watermark (macOS/Linux) proves where it came from. |
 
 ![Mastering](docs/screenshots/mastering.png)

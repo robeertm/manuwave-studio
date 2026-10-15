@@ -35,6 +35,7 @@ h1{font-size:26px;margin:0;letter-spacing:.5px;
   -webkit-background-clip:text;background-clip:text;color:transparent}
 .tag{margin:2px 0 0;color:var(--sub);font-size:13px}
 .top-actions{display:flex;align-items:center;gap:8px}
+.lang-btn{font-size:12.5px;padding:6px 12px;border-radius:999px;color:var(--sub)}
 .pill{font-size:12.5px;color:var(--sub);padding:6px 12px;border:1px solid var(--line);border-radius:999px;background:transparent}
 .pill.ok{color:#0a0b12;background:var(--neon);border-color:var(--neon);font-weight:600}
 .pill.warn{color:#0a0b12;background:var(--amber);border-color:var(--amber);font-weight:600}
