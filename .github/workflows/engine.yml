@@ -10,6 +10,10 @@ on:
         description: "acestep.cpp revision (full commit SHA — actions/checkout does not accept short ones)"
         default: "b7ba6d9ce2f19ca7627fb8f340032c3ebe8ae253"
         required: true
+      only:
+        description: "build only one platform (all | linux | windows)"
+        default: "all"
+        required: false
 
 permissions:
   contents: write
@@ -33,6 +37,7 @@ jobs:
 
   linux:
     needs: release
+    if: inputs.only != 'windows'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -65,14 +70,23 @@ jobs:
     needs: release
     # windows-latest ships Visual Studio 2026, for which CUDA 12 has no MSBuild integration ("No CUDA toolset found")
     runs-on: windows-2022
+    if: inputs.only != 'linux'
     steps:
       - uses: actions/checkout@v4
         with: { repository: "${{ env.UPSTREAM }}", ref: "${{ inputs.rev }}", submodules: recursive, fetch-depth: 0 }
       - uses: Jimver/cuda-toolkit@v0.2.30
         id: cuda
         with: { cuda: "12.8.1" }
-      - uses: humbletim/install-vulkan-sdk@v1.2
-        with: { version: 1.4.309.0, cache: true }
+      # the trimmed SDK of humbletim/install-vulkan-sdk lacks SPIRV-Headers on Windows — use LunarG's installer
+      - name: Vulkan SDK
+        shell: pwsh
+        run: |
+          $v = "1.4.313.2"
+          curl.exe -sSfL -o "$env:RUNNER_TEMP\VulkanSDK.exe" "https://sdk.lunarg.com/sdk/download/$v/windows/vulkansdk-windows-X64-$v.exe"
+          & "$env:RUNNER_TEMP\VulkanSDK.exe" --accept-licenses --default-answer --confirm-command install | Out-Null
+          if (-not (Test-Path "C:\VulkanSDK\$v\Bin\glslc.exe")) { throw "Vulkan SDK not installed" }
+          Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\$v"
+          Add-Content $env:GITHUB_PATH "C:\VulkanSDK\$v\Bin"
       - name: Build
         shell: pwsh
         run: |
