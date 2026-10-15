@@ -16,6 +16,8 @@ permissions:
 
 env:
   UPSTREAM: ServeurpersoCom/acestep.cpp
+  # RTX 20 (75), A100 (80), RTX 30 (86), RTX 40 (89), RTX 50 (120)
+  CUDA_ARCHS: "75;80;86;89;120"
   TAG: engine-b7ba6d9
 
 jobs:
@@ -27,7 +29,7 @@ jobs:
         run: |
           gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Engine b7ba6d9" \
-            --notes "Prebuilt acestep.cpp (MIT) at ${{ inputs.rev }} for Windows and Linux — CUDA 12 + Vulkan backends, CUDA runtime included. Used by the installers."
+            --notes "Prebuilt acestep.cpp (MIT) at ${{ inputs.rev }} for Windows and Linux — CUDA 12.8 + Vulkan backends (RTX 20 and newer), CUDA runtime included. Used by the installers."
 
   linux:
     needs: release
@@ -38,12 +40,14 @@ jobs:
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq cmake build-essential pkg-config libopenblas-dev patchelf
       - uses: Jimver/cuda-toolkit@v0.2.30
         id: cuda
+        with: { cuda: "12.8.1" }        # CUDA 12: runs with driver >= 550 (13.x would need >= 580)
       - uses: humbletim/install-vulkan-sdk@v1.2
         with: { version: 1.4.309.0, cache: true }
       - name: Build
         run: |
           export PATH=/usr/local/cuda/bin:$PATH
-          cmake -S . -B build -DGGML_CPU_ALL_VARIANTS=ON -DGGML_CUDA=ON -DGGML_VULKAN=ON -DGGML_BACKEND_DL=ON -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -DGGML_CPU_ALL_VARIANTS=ON -DGGML_CUDA=ON -DGGML_VULKAN=ON -DGGML_BACKEND_DL=ON -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_CUDA_ARCHITECTURES="$CUDA_ARCHS"
           cmake --build build --config Release -j "$(nproc)"
       - name: Package
         run: |
@@ -59,24 +63,26 @@ jobs:
 
   windows:
     needs: release
-    runs-on: windows-latest
+    # windows-latest ships Visual Studio 2026, for which CUDA 12 has no MSBuild integration ("No CUDA toolset found")
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
         with: { repository: "${{ env.UPSTREAM }}", ref: "${{ inputs.rev }}", submodules: recursive, fetch-depth: 0 }
       - uses: Jimver/cuda-toolkit@v0.2.30
         id: cuda
+        with: { cuda: "12.8.1" }
       - uses: humbletim/install-vulkan-sdk@v1.2
         with: { version: 1.4.309.0, cache: true }
       - name: Build
         shell: pwsh
         run: |
-          cmake -S . -B build-msvc -DGGML_CPU_ALL_VARIANTS=ON -DGGML_CUDA=ON -DGGML_VULKAN=ON -DGGML_BACKEND_DL=ON
+          cmake -S . -B build-msvc -G "Visual Studio 17 2022" -A x64 -DGGML_CPU_ALL_VARIANTS=ON -DGGML_CUDA=ON -DGGML_VULKAN=ON -DGGML_BACKEND_DL=ON "-DCMAKE_CUDA_ARCHITECTURES=$env:CUDA_ARCHS"
           cmake --build build-msvc --config Release -j $env:NUMBER_OF_PROCESSORS -- /v:minimal
       - name: Package
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist\bin | Out-Null
-          Copy-Item build-msvc\Release\*.exe, build-msvc\Release\*.dll dist\bin\
+          Get-ChildItem build-msvc -Recurse -Include *.exe, *.dll | Where-Object { $_.FullName -match '\\Release\\' -and $_.FullName -notmatch 'CMakeFiles' } | Copy-Item -Destination dist\bin\
           $cb = Join-Path $env:CUDA_PATH "bin"
           Get-ChildItem $cb -Include cudart64_*.dll, cublas64_*.dll, cublasLt64_*.dll -Recurse | Copy-Item -Destination dist\bin\
           if (-not (Test-Path dist\bin\ace-server.exe)) { throw "ace-server.exe missing" }
