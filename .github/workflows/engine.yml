@@ -7,8 +7,8 @@ on:
   workflow_dispatch:
     inputs:
       rev:
-        description: "acestep.cpp revision"
-        default: "b7ba6d9"
+        description: "acestep.cpp revision (full commit SHA — actions/checkout does not accept short ones)"
+        default: "b7ba6d9ce2f19ca7627fb8f340032c3ebe8ae253"
         required: true
 
 permissions:
@@ -16,7 +16,7 @@ permissions:
 
 env:
   UPSTREAM: ServeurpersoCom/acestep.cpp
-  TAG: engine-${{ inputs.rev }}
+  TAG: engine-b7ba6d9
 
 jobs:
   release:
@@ -26,7 +26,7 @@ jobs:
         env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
         run: |
           gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Engine ${{ inputs.rev }}" \
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Engine b7ba6d9" \
             --notes "Prebuilt acestep.cpp (MIT) at ${{ inputs.rev }} for Windows and Linux — CUDA 12 + Vulkan backends, CUDA runtime included. Used by the installers."
 
   linux:
