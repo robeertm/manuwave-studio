@@ -1,0 +1,87 @@
+# Builds the music engine (acestep.cpp, MIT) for Windows and Linux from the pinned upstream revision and
+# attaches it to the release "engine-<rev>". macOS builds the engine locally during installation (Metal).
+# Backends are loaded at runtime (GGML_BACKEND_DL): CUDA when the bundled CUDA runtime loads, otherwise Vulkan.
+name: Engine binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      rev:
+        description: "acestep.cpp revision"
+        default: "b7ba6d9"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM: ServeurpersoCom/acestep.cpp
+  TAG: engine-${{ inputs.rev }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create release (if missing)
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        run: |
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Engine ${{ inputs.rev }}" \
+            --notes "Prebuilt acestep.cpp (MIT) at ${{ inputs.rev }} for Windows and Linux — CUDA 12 + Vulkan backends, CUDA runtime included. Used by the installers."
+
+  linux:
+    needs: release
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { repository: "${{ env.UPSTREAM }}", ref: "${{ inputs.rev }}", submodules: recursive, fetch-depth: 0 }
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq cmake build-essential pkg-config libopenblas-dev patchelf
+      - uses: Jimver/cuda-toolkit@v0.2.30
+        id: cuda
+      - uses: humbletim/install-vulkan-sdk@v1.2
+        with: { version: 1.4.309.0, cache: true }
+      - name: Build
+        run: |
+          export PATH=/usr/local/cuda/bin:$PATH
+          cmake -S . -B build -DGGML_CPU_ALL_VARIANTS=ON -DGGML_CUDA=ON -DGGML_VULKAN=ON -DGGML_BACKEND_DL=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release -j "$(nproc)"
+      - name: Package
+        run: |
+          mkdir -p dist/bin
+          cp build/ace-* build/*.so dist/bin/ 2>/dev/null || true
+          for l in libcudart.so.12 libcublas.so.12 libcublasLt.so.12; do cp -L /usr/local/cuda/lib64/$l dist/bin/ ; done
+          for f in dist/bin/ace-* dist/bin/*.so; do patchelf --set-rpath '$ORIGIN' "$f" || true; done
+          test -x dist/bin/ace-server
+          tar -C dist -czf acestep-linux-x64.tar.gz bin
+          sha256sum acestep-linux-x64.tar.gz > acestep-linux-x64.tar.gz.sha256
+      - env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        run: gh release upload "$TAG" acestep-linux-x64.tar.gz acestep-linux-x64.tar.gz.sha256 -R "$GITHUB_REPOSITORY" --clobber
+
+  windows:
+    needs: release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { repository: "${{ env.UPSTREAM }}", ref: "${{ inputs.rev }}", submodules: recursive, fetch-depth: 0 }
+      - uses: Jimver/cuda-toolkit@v0.2.30
+        id: cuda
+      - uses: humbletim/install-vulkan-sdk@v1.2
+        with: { version: 1.4.309.0, cache: true }
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake -S . -B build-msvc -DGGML_CPU_ALL_VARIANTS=ON -DGGML_CUDA=ON -DGGML_VULKAN=ON -DGGML_BACKEND_DL=ON
+          cmake --build build-msvc --config Release -j $env:NUMBER_OF_PROCESSORS -- /v:minimal
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\bin | Out-Null
+          Copy-Item build-msvc\Release\*.exe, build-msvc\Release\*.dll dist\bin\
+          $cb = Join-Path $env:CUDA_PATH "bin"
+          Get-ChildItem $cb -Include cudart64_*.dll, cublas64_*.dll, cublasLt64_*.dll -Recurse | Copy-Item -Destination dist\bin\
+          if (-not (Test-Path dist\bin\ace-server.exe)) { throw "ace-server.exe missing" }
+          Compress-Archive -Path dist\bin -DestinationPath acestep-windows-x64.zip
+          (Get-FileHash acestep-windows-x64.zip -Algorithm SHA256).Hash.ToLower() + "  acestep-windows-x64.zip" | Out-File -Encoding ascii acestep-windows-x64.zip.sha256
+      - env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        shell: pwsh
+        run: gh release upload "$env:TAG" acestep-windows-x64.zip acestep-windows-x64.zip.sha256 -R "$env:GITHUB_REPOSITORY" --clobber
