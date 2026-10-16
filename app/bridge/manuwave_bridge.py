@@ -58,7 +58,7 @@ try:
 except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.12.0"
+BRIDGE_VERSION = "3.12.1"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
@@ -3039,7 +3039,8 @@ def web_publish(cfg, path, req, tick=None):
     cov_name = next((n.split(" (")[0] for k, n, _l, _u in MODEL_LICENSES if k in cov), cov)
     lang = (d.get("request") or {}).get("vocal_language") or (d.get("result") or {}).get("vocal_language") or ""
     lyrics = tags.get("lyrics") or ""
-    meta = {"title": tags.get("title") or info.get("title") or "Track", "artist": tags.get("artist") or "",
+    title = re.sub(r"\s*\(Version [A-Z]\)$", "", tags.get("title") or info.get("title") or "Track")
+    meta = {"title": title, "artist": tags.get("artist") or "",
             "genre": tags.get("genre") or "", "bpm": tags.get("bpm") or "0", "key": tags.get("key") or "", "lyrics": lyrics,
             "note": info.get("note") or "", "language": (LANG_DE.get(lang, lang) if lyrics.strip() else "Instrumental"),
             "tools": "Manuwave Studio · ACE-Step 1.5" + (" · " + cov_name if cov_name else ""),
