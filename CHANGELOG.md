@@ -3,6 +3,31 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.14.0 — 2026-10-17 (bridge 3.14.0)
+
+### Added
+- **Quality check.** A listening-judgement model ([Meta Audiobox Aesthetics](https://github.com/facebookresearch/audiobox-aesthetics),
+  CC-BY 4.0) rates every finished take on your computer's CPU (content enjoyment, usefulness, complexity, production
+  quality, 1–10). A take below 7.2 is rendered again with a new plan — up to twice, set under *Details › Quality
+  check* (2× / 1× / off) — and the best one is kept. Discarded takes stay in `renders/_verworfen` with their ratings.
+  The library shows “🔎 Sound 7.6 · best of 2”. The threshold can be changed with `qa_min_ce` in `bridge.json`.
+  Why this model: on the maintainer's archive all kept tracks scored 7.4–7.8 and the one he called unbearable 6.9,
+  while simple signal measures (clicks, tempo, key) could not tell them apart.
+- **Long tracks up to 10 minutes.** Beyond 4 minutes the music AI gets unstable (official guidance: 2–4 min), so the
+  bridge renders a 220-second main part and then extends it in sections of up to 80 seconds: each extension continues
+  from the last 30 seconds (repaint beyond the source end), rebuilds the last 4 of them itself and is crossfaded over
+  one second. With the quality check, each section gets up to two attempts and the better one stays. Lyrics sections
+  are distributed over the parts by position; the structure for long songs gets more sections.
+- Installers: optional step *Quality check* (about 1 GB: Python via uv, CPU-only PyTorch, the rating model) — skip
+  with `--skip-qa` / `-SkipQa`.
+
+### Changed
+- **Briefs with fewer, consistent tags:** 1–2 genres that fit together, 3–6 instruments, no tempo or key inside the
+  tags; instrumental sections get a short description of what happens (`[Drop - full energy, supersaw lead]`).
+  The ACE-Step tutorial: conflicting styles degrade the result, and structure tags guide instrumentals.
+- The language model plans a little less wildly: `lm_temperature` 0.8 (was 0.85), `lm_top_k` 60 (was off) —
+  within the range the ACE-Step docs call typical. The bridge now passes `lm_top_k`, `lm_top_p` and `lm_cfg_scale`.
+
 ## 3.13.0 — 2026-10-16 (bridge 3.13.0)
 
 ### Fixed
@@ -13,8 +38,8 @@ computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
 ### Added
 - **Interrupted jobs restart.** The browser waits up to three minutes when the server doesn't know a job (it is being
-  re-registered). A render that fails without you cancelling it restarts once automatically — same settings, same
-  seed, so the same track. After that, **↻** next to the job restarts it whenever you like.
+  re-registered). A render that fails without you cancelling it restarts once automatically with the same settings
+  and seed (the language model plans anew, so the result is a new take, not a copy). After that, **↻** next to the job restarts it whenever you like.
 - Short jobs (brief, export, publishing) also wait out a server restart instead of failing at once.
 
 ## 3.12.5 — 2026-10-16 (bridge 3.12.4)

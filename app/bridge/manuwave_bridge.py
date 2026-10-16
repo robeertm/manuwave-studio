@@ -58,7 +58,7 @@ try:
 except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.13.0"
+BRIDGE_VERSION = "3.14.0"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
@@ -112,7 +112,10 @@ DEFAULTS = {
 # Felder, die an den ace-server gehen dürfen — der Mac traut dem Server nicht blind.
 ACE_FIELDS = {"caption", "lyrics", "bpm", "duration", "keyscale", "timesignature",
               "vocal_language", "seed", "inference_steps", "guidance_scale",
-              "lm_temperature", "use_cot_caption"}
+              "lm_temperature", "use_cot_caption", "lm_top_k", "lm_top_p", "lm_cfg_scale"}
+# 3.14: das Sprachmodell plant etwas weniger wild (ACE-Step INFERENCE.md: top_k "typical 40–100"; Server-Vorgabe
+# war temperature 0,85 ohne top_k). Weniger Totalausfälle in der Komposition — die Vielfalt bleibt über den Seed.
+LM_DEFAULTS = {"lm_temperature": 0.8, "lm_top_k": 60}
 
 
 def log(msg: str) -> None:
@@ -252,10 +255,11 @@ Produktions-Brief für die Musik-KI ACE-Step 1.5. Alle Tags auf ENGLISCH, konkre
 Die genannte Richtung bestimmt Klänge, Groove und Tempo — schreib einem Jazz-Stück keine Synths und keinem Rock-Song einen Drop.
 Die Beispiele unten sind nur Muster: übernimm KEINES, das nicht zur Richtung passt. Klänge, die die Idee nennt, haben
 Vorrang — übersetze sie ins Englische (z. B. „Kontrabass" → "upright bass", „Besen-Schlagzeug" → "brushed drums").
-- genre_tags: Genre + Subgenre ("melodic techno", "progressive house", "indie rock", "bossa nova", "cinematic orchestral")
+- genre_tags: 1–2 Tags, Genre + Subgenre, die ZUSAMMENPASSEN ("melodic techno", "progressive house", "indie rock",
+  "bossa nova", "cinematic orchestral"). Keine widersprüchlichen Stile — die Musik-KI kann Widersprüche nicht auflösen.
 - rhythm_tags: Groove — Club: ("four-on-the-floor", "rolling 16th hi-hats", "shuffled groove", "broken beat");
   andere Richtungen: ("laid-back backbeat", "swing feel", "bossa nova groove", "half-time groove", "driving rock beat", "rubato, no fixed beat")
-- instrument_tags: konkrete Klänge ("analog bassline", "detuned supersaw lead", "acid 303 line", "plucked arpeggio", "warm pads", "rumbling sub bass", "vocal chops",
+- instrument_tags: 3–6 konkrete Klänge, die zur Richtung gehören — lieber wenige tragende als viele ("analog bassline", "detuned supersaw lead", "acid 303 line", "plucked arpeggio", "warm pads", "rumbling sub bass", "vocal chops",
   "fingerpicked acoustic guitar", "upright bass", "brushed drums", "string section", "overdriven electric guitar", "brass section")
 - production_tags: wie der fertige Mix KLINGT, nicht wie er gebaut ist ("warm analog mix", "polished production",
   "wide stereo", "deep clean bass", "crisp clear highs", "natural dynamics", "lush reverb", "punchy kick").
@@ -265,11 +269,14 @@ Vorrang — übersetze sie ins Englische (z. B. „Kontrabass" → "upright bass
   Bei Gesang zusätzlich EIN Tag, der die Stimme natürlich beschreibt ("warm natural female vocals",
   "intimate breathy vocals", "soulful expressive male vocals") — keine Effekte wie "autotune", "vocoder".
 - sections: GENAU das vorgegebene Gerüst, in dieser Reihenfolge, mit denselben Markern. lines = die Textzeilen des Abschnitts.
-  Instrumentale Abschnitte bekommen lines = [].
+  Instrumentale Abschnitte bekommen lines = [] — und hinter den Marker eine kurze englische Beschreibung, was dort
+  passiert (2–5 Wörter): "Intro - soft filtered pads", "Build - rising arpeggio, snare roll", "Drop - full energy, supersaw lead",
+  "Breakdown - piano and strings only", "Outro - pads fade out". So weiß die Musik-KI, wohin der Track will.
   Gesangsabschnitte: 4 eigene, singbare Zeilen (3–8 Wörter), mit Reimen, in der SPRACHE, die die Aufgabe nennt.
   Jeder [Chorus] ist bei jedem Auftreten WORTGLEICH und enthält die Hook. Strophen erzählen weiter und wiederholen keine Zeile.
   Vocal-Chops: nur kurze Silben oder einzelne Wörter ("oh-oh", "hey"), höchstens 2 Zeilen.
   Eigener Text, nie ein bekannter Songtext.
+- Keine Zahlen für Tempo oder Tonart in den Tags — dafür gibt es bpm und keyscale.
 - bpm passend zum Genre (Techno 125–135, Hard Techno 140–155, Trance 136–142, Psytrance 140–148,
   Melodic/Deep House 118–124, Drum & Bass 170–176, Hip-Hop 85–98, Downtempo 85–110). Nennt die Aufgabe
   ein Tempo oder einen Tempobereich, gilt das.
@@ -283,11 +290,13 @@ WRITER_SCHEMA = {
     "type": "object",
     "properties": {
         "title": {"type": "string"},
-        "genre_tags": dict(_TAGS, minItems=2, maxItems=4),
-        "rhythm_tags": dict(_TAGS, minItems=2, maxItems=4),
-        "instrument_tags": dict(_TAGS, minItems=4, maxItems=8),
-        "production_tags": dict(_TAGS, minItems=3, maxItems=5),
-        "mood_tags": dict(_TAGS, minItems=3, maxItems=5),
+        # 3.14: weniger, stimmige Tags (ACE-Step-Tutorial: widersprüchliche Stile verschlechtern das Ergebnis) —
+        # vorher bis 26 Tags; ein misslungener Track trug 19, darunter Trance + Glockenspiel + Klavier + "open-ended"
+        "genre_tags": dict(_TAGS, minItems=1, maxItems=2),
+        "rhythm_tags": dict(_TAGS, minItems=1, maxItems=3),
+        "instrument_tags": dict(_TAGS, minItems=3, maxItems=6),
+        "production_tags": dict(_TAGS, minItems=2, maxItems=4),
+        "mood_tags": dict(_TAGS, minItems=2, maxItems=4),
         "sections": {"type": "array", "items": {
             "type": "object",
             "properties": {"marker": {"type": "string"}, "lines": dict(_TAGS, maxItems=6)},
@@ -300,6 +309,8 @@ WRITER_SCHEMA = {
                  "mood_tags", "sections", "bpm", "keyscale", "note"],
 }
 TAG_GROUPS = ("genre_tags", "rhythm_tags", "instrument_tags", "production_tags", "mood_tags")
+# 3.14: Tempo und Tonart gehören in bpm/keyscale, nicht in die Tags (ACE-Step-Tutorial)
+NUMERIC_TAG = re.compile(r"\b\d{2,3}\s*bpm\b|\b[A-G][#b♯♭]?\s*(?:major|minor|dur|moll)\b", re.I)
 
 
 NOTE_DE = "- note: 2–4 Sätze AUF DEUTSCH (auch wenn der Songtext englisch ist)"
@@ -317,14 +328,14 @@ def assemble_brief(raw: dict) -> dict:
     for g in TAG_GROUPS:
         for t in raw.get(g) or []:
             t = re.sub(r"\s+", " ", str(t)).strip(" ,.;")
-            if t and len(t) <= 60 and t.lower() not in seen:
+            if t and len(t) <= 60 and t.lower() not in seen and not NUMERIC_TAG.search(t):
                 seen.add(t.lower())
                 tags.append(t)
     parts = []
     for sec in (raw.get("sections") or [])[:24]:
         if not isinstance(sec, dict):
             continue
-        marker = re.sub(r"[\[\]]", "", str(sec.get("marker") or "")).strip()[:30]
+        marker = re.sub(r"[\[\]]", "", str(sec.get("marker") or "")).strip()[:60]
         if not marker:
             continue
         lines = [re.sub(r"\s+", " ", str(x)).strip() for x in (sec.get("lines") or [])]
@@ -750,6 +761,21 @@ class Engine:
                 return part.get_payload(decode=True)
         raise RuntimeError("kein %s-Teil in der Antwort" % want)
 
+    def repaint(self, request: dict, src_wav: bytes, tick):
+        """3.14: Anbauen — Repaint mit Quell-Audio (multipart/form-data: request + audio). Das Sprachmodell wird dabei
+        übersprungen; Caption und Liedtext steuern den neuen Teil. → WAV des ganzen Fensters (Quelle + Neues)."""
+        boundary = "mws" + uuid.uuid4().hex
+        body = b"".join([
+            ("--%s\r\nContent-Disposition: form-data; name=\"request\"\r\nContent-Type: application/json\r\n\r\n" % boundary).encode(),
+            json.dumps(request).encode(), b"\r\n",
+            ("--%s\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"kontext.wav\"\r\nContent-Type: audio/wav\r\n\r\n" % boundary).encode(),
+            src_wav, b"\r\n", ("--%s--\r\n" % boundary).encode()])
+        t0 = time.monotonic()
+        _, raw = self._http("POST", self.synth + "/synth", raw=body, ctype="multipart/form-data; boundary=" + boundary, timeout=120)
+        ctype, raw = self._wait(self.synth, str(json.loads(raw)["id"]), "Anbau", t0, tick)
+        self.last_used = time.time()
+        return self._part(ctype, raw, "audio/")
+
     def render(self, request: dict, tick):
         req = {k: v for k, v in request.items() if k in ACE_FIELDS}
         req["duration"] = max(10.0, min(300.0, float(req.get("duration") or 90)))
@@ -757,6 +783,8 @@ class Engine:
             req["seed"] = random.randint(0, 2 ** 31 - 1)
         req.setdefault("lyrics", "[Instrumental]")
         req.setdefault("use_cot_caption", False)
+        for k, v in LM_DEFAULTS.items():
+            req.setdefault(k, v)
         # Klangführung: ohne Angabe (ältere Browser-Fassung) gilt die eingestellte, nicht 1,0.
         if not req.get("guidance_scale"):
             req["guidance_scale"] = float(self.cfg.get("guidance_scale") or 1.0)
@@ -3169,6 +3197,287 @@ def web_withdraw(cfg, path):
 # Ablage auf dem Mac
 # =============================================================================
 
+# =============================================================================
+# 3.14: Klangprüfung — ein Hörurteil-Modell bewertet jede Fassung, schwache werden neu gewürfelt
+# =============================================================================
+# Meta Audiobox Aesthetics (CC-BY 4.0) sagt aus dem Audio vier Werte voraus (1–10): CE Hörgenuss, CU Nutzwert,
+# PC Komplexität, PQ Produktionsqualität — trainiert an menschlichen Urteilen. Gemessen am 16.10.2026 am Archiv
+# des Maintainers: alle behaltenen Tracks CE 7,39–7,79, der als misslungen gelöschte 6,87 — einfache Signalmaße
+# (Knackser, Tempo, Tonart) trennten das NICHT. Läuft in einer eigenen Umgebung ($MWS_HOME/qa, PyTorch) auf dem
+# Prozessor, damit der Grafikchip frei bleibt; fehlt sie, ist die Prüfung einfach aus.
+QA_MIN_CE = 7.2
+QA_DIR = os.path.join(DIR, "qa")
+QA_SCRIPT = r"""
+import json, os, subprocess, sys
+import numpy as np, torch
+torch.set_num_threads(max(1, (os.cpu_count() or 4) // 2))
+from audiobox_aesthetics.infer import initialize_predictor
+pred = initialize_predictor()
+for path in sys.argv[1:]:
+    raw = subprocess.run([os.environ.get("MWS_FFMPEG", "ffmpeg"), "-v", "error", "-i", path, "-ac", "1", "-ar", "16000",
+                          "-f", "f32le", "-"], capture_output=True, check=True).stdout
+    x = torch.from_numpy(np.frombuffer(raw, dtype=np.float32).copy()).unsqueeze(0)
+    r = pred.forward([{"path": x, "sample_rate": 16000}])[0]
+    print(json.dumps({k: round(float(v), 3) for k, v in r.items()}), flush=True)
+"""
+
+
+def qa_python() -> str:
+    p = os.path.join(QA_DIR, "Scripts", "python.exe") if IS_WIN else os.path.join(QA_DIR, "bin", "python")
+    return p if os.path.isfile(p) else ""
+
+
+def qa_score_file(cfg: dict, path: str):
+    """→ {"CE":…, "CU":…, "PC":…, "PQ":…} oder None (nicht installiert / Fehler — dann ohne Prüfung weiter)."""
+    py = qa_python()
+    if not py:
+        return None
+    script = os.path.join(QA_DIR, "score.py")
+    try:
+        if _read_bytes(script) != QA_SCRIPT.encode():
+            _write_atomic(script, QA_SCRIPT.encode())
+        env = dict(os.environ, HF_HOME=os.path.join(QA_DIR, "hf"), MWS_FFMPEG=tool(cfg, "ffmpeg") or "ffmpeg",
+                   PYTORCH_ENABLE_MPS_FALLBACK="1")
+        r = subprocess.run([py, script, path], capture_output=True, timeout=900, env=env)
+        lines = [x for x in r.stdout.decode(errors="replace").splitlines() if x.startswith("{")]
+        if r.returncode != 0 or not lines:
+            log("Klangprüfung nicht möglich: %s" % r.stderr.decode(errors="replace").strip()[-200:])
+            return None
+        return json.loads(lines[-1])
+    except Exception as e:  # noqa: BLE001
+        log("Klangprüfung nicht möglich: %s" % e)
+        return None
+
+
+def qa_score(cfg: dict, audio: bytes):
+    with Scratch() as s:
+        p = s.path("probe.wav")
+        with open(p, "wb") as f:
+            f.write(audio)
+        return qa_score_file(cfg, p)
+
+
+def qa_min(cfg: dict) -> float:
+    try:
+        return float(cfg.get("qa_min_ce") or QA_MIN_CE)
+    except (TypeError, ValueError):
+        return QA_MIN_CE
+
+
+def put_aside(job: dict, audio: bytes, meta: dict) -> str:
+    """Eine verworfene Fassung aufheben (renders/_verworfen/<Tag>/) — zum Nachhören, ob die Schwelle stimmt.
+    Unterstrich-Ordner zählen nicht zum Archiv (Bibliothek, „Vom Mac holen“)."""
+    folder = os.path.join(RENDERS, "_verworfen", datetime.date.today().isoformat())
+    os.makedirs(folder, exist_ok=True)
+    title = (job.get("meta") or {}).get("title") or "Manuwave Studio"
+    safe = re.sub(r"[^\w\- äöüÄÖÜß]+", "", title).strip().replace(" ", "_")[:50] or "Manuwave_Studio"
+    base = os.path.join(folder, "%s_%s_%s" % (time.strftime("%H%M%S"), safe, meta.get("seed", "")))
+    with open(base + ".wav", "wb") as f:
+        f.write(audio)
+    with open(base + ".json", "w", encoding="utf-8") as f:
+        json.dump({"request": job.get("request"), "meta": job.get("meta"), "result": {k: v for k, v in meta.items() if k != "audio_codes"}},
+                  f, indent=2, ensure_ascii=False)
+    return base + ".wav"
+
+
+def render_checked(cfg: dict, eng, srv, job: dict, tick):
+    """Rendern, bewerten, bei schwacher Bewertung neu würfeln (neuer Seed = neuer Plan des Sprachmodells) —
+    höchstens `qa_reroll` Mal, behalten wird die beste Fassung."""
+    request = job.get("request") or {}
+    audio, meta = eng.render(request, tick)
+    if not qa_python():
+        return audio, meta
+    try:
+        extra = max(0, min(3, int(request.get("qa_reroll", cfg.get("qa_reroll", 2)))))
+    except (TypeError, ValueError):
+        extra = 2
+    floor = qa_min(cfg)
+    tick("Klangprüfung …")
+    cands = [(qa_score(cfg, audio), audio, meta)]
+    while extra and (cands[-1][0] or {}).get("CE", 99) < floor and len(cands) <= extra:
+        ce = cands[-1][0]["CE"]
+        if tick("Klangprüfung %.1f — unter %.1f, neue Fassung (%d/%d) …" % (ce, floor, len(cands), extra)):
+            raise Cancelled()
+        log("Klangprüfung %.2f < %.2f — würfle neu (%d/%d)" % (ce, floor, len(cands), extra))
+        a2, m2 = eng.render(dict(request, seed=-1), tick)
+        tick("Klangprüfung …")
+        cands.append((qa_score(cfg, a2), a2, m2))
+    best = max(range(len(cands)), key=lambda i: (cands[i][0] or {}).get("CE", -1))
+    for i, (sc, a, m) in enumerate(cands):
+        if i != best:
+            put_aside(job, a, dict(m, qa=sc))
+    sc, audio, meta = cands[best]
+    if sc:
+        meta["qa"] = dict(sc, schwelle=floor, versuche=len(cands), alle=[round((c[0] or {}).get("CE", 0), 2) for c in cands])
+        log("Klangprüfung: Hörgenuss %.2f, Qualität %.2f (%d Fassung%s, beste behalten)" % (
+            sc.get("CE", 0), sc.get("PQ", 0), len(cands), "" if len(cands) == 1 else "en"))
+    return audio, meta
+
+
+# =============================================================================
+# 3.14: Lange Titel — Hauptteil in einem Durchgang, dann Abschnitt für Abschnitt anbauen
+# =============================================================================
+# ACE-Step 1.5 ist laut Tutorial bei 2–4 min stabil; darüber Wiederholungen und Tempo-Sprünge (Issue #1203, XL > 3 min).
+# Repaint verlängert über das Quellende hinaus (acestep.cpp ARCHITECTURE.md: end > Quelldauer = outpaint), schneidet
+# die Naht aber hart — darum: die letzten LONG_CTX s als Quelle, ab LONG_OVERLAP vor ihrem Ende neu rechnen (das Modell
+# baut den Übergang selbst) und in der Quelle selbst gleichlautend überblenden (beide Seiten sind dort dasselbe Stück).
+LONG_SINGLE = 240.0    # bis hierhin ein Durchgang wie bisher
+LONG_MAIN = 220.0      # Hauptteil langer Titel
+LONG_PART = 80.0       # je Anbau (offiziell 3–90 s)
+LONG_CTX = 30.0
+LONG_OVERLAP = 4.0
+LONG_FADE = 1.0
+LONG_TRIES = 2         # Versuche je Anbau; mit Klangprüfung bleibt der beste
+# Überhang: jedes Teilstück (außer dem letzten) wird LONG_OVERHANG s länger gerechnet und dieser Rest weggeworfen.
+# 🔴 Gemessen im ersten echten Test (16.10.2026, 380 s): das Modell plant den 220-s-Hauptteil als ganzen Song
+#    mit Ausklang (letzte 20 s −17,6 dB gegen −13 dB davor), und der Anbau setzte an einem Ende an (+7 dB nach der Naht).
+LONG_OVERHANG = 20.0
+SECTION_WEIGHT = {"intro": 0.6, "outro": 0.6, "build": 0.7, "pre-chorus": 0.7, "bridge": 0.8, "interlude": 0.7}
+
+
+def wav_info(audio: bytes):
+    with wave.open(io.BytesIO(audio)) as w:
+        return w.getparams(), w.readframes(w.getnframes())
+
+
+def wav_bytes(params, frames: bytes) -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(params.nchannels)
+        w.setsampwidth(params.sampwidth)
+        w.setframerate(params.framerate)
+        w.writeframes(frames)
+    return buf.getvalue()
+
+
+def wav_cut(audio: bytes, seconds: float) -> bytes:
+    """Die ersten `seconds` behalten."""
+    p, fr = wav_info(audio)
+    fs = p.nchannels * p.sampwidth
+    return wav_bytes(p, fr[: min(len(fr), int(seconds * p.framerate) * fs)])
+
+
+def wav_seconds(audio: bytes) -> float:
+    with wave.open(io.BytesIO(audio)) as w:
+        return w.getnframes() / float(w.getframerate())
+
+
+def wav_tail(audio: bytes, seconds: float):
+    """→ (WAV der letzten `seconds`, tatsächliche Länge in s)"""
+    p, fr = wav_info(audio)
+    fs = p.nchannels * p.sampwidth
+    n = min(len(fr) // fs, int(seconds * p.framerate))
+    return wav_bytes(p, fr[len(fr) - n * fs:]), n / p.framerate
+
+
+def stitch(a: bytes, o: bytes, ctx_s: float, overlap: float = LONG_OVERLAP, fade: float = LONG_FADE) -> bytes:
+    """Bisheriges `a` + Repaint-Ergebnis `o` (beginnt mit den letzten ctx_s Sekunden von a). Schnitt `overlap` vor dem
+    Ende von a; davor `fade` Sekunden gleichlautend (sin/cos) überblendet — dort sind a und o dasselbe Stück."""
+    import array
+    pa, fa = wav_info(a)
+    po, fo = wav_info(o)
+    if (pa.nchannels, pa.sampwidth, pa.framerate) != (po.nchannels, po.sampwidth, po.framerate) or pa.sampwidth != 2:
+        raise RuntimeError("Anbau: Tonformat passt nicht (%s / %s)" % (pa[:3], po[:3]))
+    ch, sr = pa.nchannels, pa.framerate
+    la = len(fa) // (2 * ch)
+    cut_a = la - int(overlap * sr)
+    cut_o = int(round((ctx_s - overlap) * sr))
+    f = int(fade * sr)
+    if cut_a - f < 0 or cut_o - f < 0 or len(fo) // (2 * ch) <= cut_o:
+        raise RuntimeError("Anbau: zu kurz zum Überblenden")
+    xa = array.array("h", fa[(cut_a - f) * 2 * ch: cut_a * 2 * ch])
+    xo = array.array("h", fo[(cut_o - f) * 2 * ch: cut_o * 2 * ch])
+    mix = array.array("h", bytes(len(xa) * 2))
+    for i in range(len(xa)):
+        t = (i // ch) / max(1, f)
+        v = xa[i] * math.cos(t * math.pi / 2) + xo[i] * math.sin(t * math.pi / 2)
+        mix[i] = max(-32768, min(32767, int(v)))
+    return wav_bytes(pa, fa[: (cut_a - f) * 2 * ch] + mix.tobytes() + fo[cut_o * 2 * ch:])
+
+
+def plan_long(lyrics: str, total: float):
+    """Abschnitte des Liedtexts auf Hauptteil und Anbauten verteilen (nach grobem Gewicht je Abschnittsart).
+    → (Liedtext Hauptteil, [(Liedtext, Beschreibung) je Anbau], Länge je Anbau)"""
+    blocks = [x.strip() for x in (lyrics or "").split("\n\n") if x.strip()]
+    n = max(1, math.ceil((total - LONG_MAIN) / LONG_PART))
+    part = (total - LONG_MAIN) / n
+    if not blocks:
+        return "[Instrumental]", [("[Instrumental]", "") for _ in range(n)], part
+    w = []
+    for blk in blocks:
+        head = blk.split("\n")[0].strip("[] ").lower()
+        w.append(next((v for k, v in SECTION_WEIGHT.items() if head.startswith(k)), 1.0))
+    tot, acc, starts = sum(w), 0.0, []
+    for x in w:
+        starts.append(acc / tot * total)
+        acc += x
+    # nach POSITION verteilen, nie nach Text — ein Refrain kommt mehrmals wortgleich vor
+    k_main = max(1, sum(1 for st in starts if st < LONG_MAIN - 10))
+    main = blocks[:k_main]
+    parts, used = [], k_main
+    for i in range(n):
+        hi = LONG_MAIN + (i + 1) * part - 10
+        k = len(blocks) if i == n - 1 else max(used, sum(1 for st in starts if st < hi))
+        mine, used = blocks[used:k], k
+        desc = ", ".join(m.split(" - ", 1)[1] for m in (b.split("\n")[0].strip("[] ") for b in mine) if " - " in m)
+        parts.append(("\n\n".join(mine) or "[Instrumental]", desc))
+    return "\n\n".join(main), parts, part
+
+
+def render_long(cfg: dict, eng, srv, job: dict, tick):
+    request = job.get("request") or {}
+    total = min(600.0, float(request.get("duration") or 0))
+    main_lyrics, parts, part_s = plan_long(request.get("lyrics") or "", total)
+    # Hauptteil: kein weiches Ausblenden — an seinem Ende wird angebaut
+    sub = dict(job, request=dict(request, duration=LONG_MAIN + LONG_OVERHANG, lyrics=main_lyrics, smooth_end=False))
+    audio, meta = render_checked(cfg, eng, srv, sub, tick)
+    audio = wav_cut(audio, LONG_MAIN)             # Ausklang des Hauptteils weg — hier geht es weiter
+    floor, qa_on = qa_min(cfg), bool(qa_python())
+    tries = LONG_TRIES if qa_on else 1
+    stats = []
+    for i, (lyr, desc) in enumerate(parts):
+        ctx, ctx_s = wav_tail(audio, LONG_CTX)
+        caption = (request.get("caption") or "") + ((", " + desc) if desc else "")
+        last = i == len(parts) - 1
+        extra = 0.0 if last else LONG_OVERHANG
+        req = {"task_type": "repaint", "caption": caption, "lyrics": lyr,
+               "repainting_start": round(ctx_s - LONG_OVERLAP, 3), "repainting_end": round(ctx_s + part_s + extra, 3),
+               "inference_steps": int(request.get("inference_steps") or 50), "guidance_scale": float(request.get("guidance_scale") or 7.0),
+               "synth_model": os.path.basename(meta.get("dit") or cfg["synth_model"]), "output_format": "wav16", "peak_clip": 0}
+        for k in ("bpm", "keyscale", "timesignature", "vocal_language"):
+            if meta.get(k) or request.get(k):
+                req[k] = meta.get(k) or request.get(k)
+        cands = []
+        for t in range(tries):
+            if tick("Langer Titel: Teil %d/%d, Versuch %d …" % (i + 2, len(parts) + 1, t + 1)):
+                raise Cancelled()
+            out = eng.repaint(dict(req, seed=random.randint(0, 2 ** 31 - 1)), ctx, tick)
+            joined = stitch(audio, out, ctx_s)
+            if extra:
+                joined = wav_cut(joined, wav_seconds(joined) - extra)
+            sc = qa_score(cfg, joined) if qa_on else None
+            cands.append((sc, joined))
+            if not qa_on or (sc or {}).get("CE", 0) >= floor:
+                break
+        best = max(cands, key=lambda c: (c[0] or {}).get("CE", -1))
+        audio = best[1]
+        stats.append({"versuche": len(cands), "CE": [round((c[0] or {}).get("CE", 0), 2) for c in cands]})
+        log("Langer Titel: Teil %d/%d angebaut (%d Versuch%s)" % (i + 2, len(parts) + 1, len(cands), "" if len(cands) == 1 else "e"))
+    if request.get("smooth_end", True):
+        audio, info = smooth_end(audio)
+        if info:
+            meta["ende"] = info
+    with wave.open(io.BytesIO(audio)) as w:
+        meta["duration_real"] = round(w.getnframes() / float(w.getframerate()), 2)
+    meta["duration"] = total
+    meta["teile"] = {"haupt_s": LONG_MAIN, "anbau_s": round(part_s, 1), "anbauten": stats}
+    if qa_on:
+        sc = qa_score(cfg, audio)
+        if sc:
+            meta["qa"] = dict(meta.get("qa") or {}, **sc)
+    return audio, meta
+
+
 def archive(cfg, job, audio, meta) -> str:
     if not cfg.get("keep_renders", True):
         return ""
@@ -3537,7 +3846,8 @@ def run(cfg: dict) -> None:
             elif job.get("kind") in ("nachruesten", "cover"):
                 finish_job(cfg, srv, job, tick)
             else:
-                audio, meta = eng.render(job.get("request") or {}, tick)
+                long_ = float((job.get("request") or {}).get("duration") or 0) > LONG_SINGLE
+                audio, meta = (render_long if long_ else render_checked)(cfg, eng, srv, job, tick)
                 path = archive(cfg, job, audio, meta)
                 cover_next = False
                 # 3.2: erst veredeln (Wasserzeichen + Tags), DANN ausliefern — so verlässt kein
