@@ -73,7 +73,7 @@ HOST = os.environ.get("HOST", "0.0.0.0")      # 3.11: lokale Installation → 12
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, "web")
 
-APP_VERSION = "3.12.3"
+APP_VERSION = "3.12.5"
 BRIDGE_FILE = next((p for p in (os.path.join(ROOT, "bridge", n) for n in ("neonforge_bridge.py", "manuwave_bridge.py"))
                     if os.path.isfile(p)), os.path.join(ROOT, "bridge", "manuwave_bridge.py"))
 BUILD_INFO_FILE = os.path.join(WEB, "build-info.json")
@@ -256,9 +256,9 @@ def clean_brief_request(raw: dict) -> dict:
     return out
 
 
-BRIEF_LANE = {"brief", "settings", "export", "verify", "archiv", "loeschen", "web", "web_weg"}
-NEW_KINDS = {"settings", "export", "verify", "cover", "nachruesten", "archiv", "loeschen", "web", "web_weg"}
-KIND_SINCE = {"loeschen": "3.6", "web": "3.10", "web_weg": "3.10"}     # ab welcher Brücke eine Art geht (für die Meldung)
+BRIEF_LANE = {"brief", "settings", "export", "verify", "archiv", "loeschen", "web", "web_weg", "master_merken"}
+NEW_KINDS = {"settings", "export", "verify", "cover", "nachruesten", "archiv", "loeschen", "web", "web_weg", "master_merken"}
+KIND_SINCE = {"loeschen": "3.6", "web": "3.10", "web_weg": "3.10", "master_merken": "3.12.3"}     # ab welcher Brücke eine Art geht (für die Meldung)
 
 
 def lane_of(kind: str) -> str:
@@ -321,6 +321,18 @@ def clean_job(kind: str, raw) -> dict:
         return {"set": keep}
     if kind in ("verify", "archiv"):
         return {}
+    if kind == "master_merken":
+        # 3.12.3: Mastering-Regler je Archivpfad an den Mac — nur Zahlen in ihren Grenzen (die Brücke prüft noch einmal)
+        lst = (raw or {}).get("items") if isinstance(raw, dict) else None
+        keep = []
+        for it in (lst if isinstance(lst, list) else [])[:500]:
+            a = it.get("archived") if isinstance(it, dict) else None
+            m = clean_master(it.get("master")) if isinstance(it, dict) else None
+            if isinstance(a, str) and ARCHIVED_RE.match(a) and ".." not in a and m is not None:
+                keep.append({"archived": a, "master": m})
+        if not keep:
+            raise ValueError("Keine Regler")
+        return {"items": keep}
     if kind == "loeschen":
         # 3.6: nur Archivpfade in der erwarteten Form — die Brücke prüft selbst noch einmal, dass sie in renders/ liegen
         lst = (raw or {}).get("archived") if isinstance(raw, dict) else None

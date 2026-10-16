@@ -1503,8 +1503,65 @@ async function checkMacOnly() {
       webChanged = true;
     }
     if (webChanged) renderLibrary();
+    // 3.12.4: die Regler auch am Mac hinterlegen — alles ohne diesen Browser (Veröffentlichen aus dem Terminal,
+    // anderes Gerät) nahm bis hier das Standard-Mastering.
+    const mac = new Map(tracks.map(t => [t.archived, t]));
+    if (macCan("master_merken")) {
+      const items = all.filter(r => r.master && mac.has((r.result || {}).archived) && mNorm(r.master) !== mNorm(mac.get(r.result.archived).master))
+        .map(r => ({ archived: r.result.archived, master: r.master }));
+      if (items.length) { try { await macJob("master_merken", { items }, { timeoutMs: 60000 }); } catch (e) { /* nächster Abgleich */ } }
+    }
+    // Online mit anderen Reglern gerechnet als jetzt eingestellt (oder ganz ohne)?
+    state.webStale = all.filter(r => {
+      const t = mac.get((r.result || {}).archived);
+      return r.master && t && t.web && "web_master" in t && mNorm(r.master) !== mNorm(t.web_master);     // t.web: r.web ist hier evtl. erst frisch gesetzt
+    }).map(r => r.id);
   } catch (e) { state.macOnly = []; state.macBetter = []; state.archivAsked = false; }
   renderMacOnly();
+}
+// Regler vergleichbar machen (Brücke und Browser runden und ordnen verschieden)
+const M_KEYS = ["bass", "tone", "treble", "soft", "gain", "fade_in", "fade_out", "start", "end"];
+function mNorm(m) {
+  if (!m || typeof m !== "object") return "";
+  const o = {};
+  for (const k of M_KEYS) if (typeof m[k] === "number" && isFinite(m[k])) o[k] = Math.round(m[k] * 1000) / 1000;
+  if (m.off === true) o.off = true;
+  return JSON.stringify(o);
+}
+function renderStale() {
+  const n = (state.webStale || []).length;
+  $("#staleLine").classList.toggle("hidden", !n);
+  if (n) $("#staleText").textContent = n === 1 ? "🌐 1 veröffentlichter Track klingt auf Fahrstuhlmusik anders als dein Mastering."
+    : `🌐 ${n} veröffentlichte Tracks klingen auf Fahrstuhlmusik anders als dein Mastering.`;
+}
+async function updateStale() {
+  const ids = [...(state.webStale || [])];
+  const btn = $("#staleBtn"); btn.disabled = true;
+  for (const id of ids) {
+    const rec = await libGet(id);
+    if (rec) await webRun(rec, "web");
+  }
+  btn.disabled = false;
+  await checkMacOnly();
+}
+// Nach dem Speichern neuer Regler: auch am Mac hinterlegen (gebündelt, nicht bei jedem Zucken des Reglers)
+const masterPush = new Map();
+let masterPushTimer = 0;
+function pushMasterSoon(id, m) {
+  masterPush.set(id, m);
+  clearTimeout(masterPushTimer);
+  masterPushTimer = setTimeout(async () => {
+    const batch = [...masterPush.entries()]; masterPush.clear();
+    if (!macCan("master_merken")) return;
+    const items = [];
+    for (const [rid, mm] of batch) {
+      const rec = await libGet(rid);
+      if (rec && (rec.result || {}).archived) items.push({ archived: rec.result.archived, master: mm });
+      if (rec && rec.web && !(state.webStale || []).includes(rid)) state.webStale = [...(state.webStale || []), rid];
+    }
+    if (items.length) { try { await macJob("master_merken", { items }, { timeoutMs: 60000 }); } catch (e) { /* nächster Abgleich */ } }
+    renderStale();
+  }, 2500);
 }
 function renderBetter() {
   const n = (state.macBetter || []).length;
@@ -1536,7 +1593,7 @@ async function fetchBetter() {
   if (ok) setMsg($("#libMsg"), `✓ ${ok} ${ok === 1 ? "Track" : "Tracks"} in der neuen Fassung`, "ok");
 }
 function renderMacOnly() {
-  renderBetter();
+  renderBetter(); renderStale();
   const n = state.macOnly.length;
   $("#macOnlyLine").classList.toggle("hidden", !n);
   if (!n) { $("#macOnlyList").classList.add("hidden"); $("#macOnlyMore").textContent = "Liste ▾"; }
@@ -1788,6 +1845,7 @@ async function msFlush(id, m) {
   if (ms.pending && ms.pending.id === id && JSON.stringify(ms.pending.m) === JSON.stringify(m)) ms.pending = null;
   try {
     await libPatch(id, { master: m });
+    pushMasterSoon(id, m);
     let p = null; try { p = JSON.parse(localStorage.getItem(LS_MS_PENDING) || "null"); } catch (e) {}
     if (p && p.id === id && JSON.stringify(p.m) === JSON.stringify(m)) localStorage.removeItem(LS_MS_PENDING);
     if (ms.id === id) {
@@ -2838,6 +2896,7 @@ function init() {
   $("#macOnlyBtn").onclick = () => fetchMacOnly();
   $("#macOnlyMore").onclick = () => { const l = $("#macOnlyList"); l.classList.toggle("hidden"); $("#macOnlyMore").textContent = l.classList.contains("hidden") ? "Liste ▾" : "Liste ▴"; };
   $("#betterBtn").onclick = fetchBetter;
+  $("#staleBtn").onclick = updateStale;
   $("#rSave").onclick = saveRights;
   Object.keys(RIGHT_FIELDS).forEach(id => $("#" + id).addEventListener("input", renderRightsPreview));
   [...Object.keys(RIGHT_FIELDS), ...Object.keys(RIGHT_CHECKS)].forEach(id => $("#" + id).addEventListener("change", autoSaveRights));
