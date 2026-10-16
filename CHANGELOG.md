@@ -3,6 +3,20 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.13.0 — 2026-10-16 (bridge 3.13.0)
+
+### Fixed
+- **A server restart no longer kills a running render.** The job queue lives in memory, so after a restart (an update,
+  for example) the server didn't know the job and told the bridge to cancel it — minutes of rendering were lost. Now
+  the server answers “unknown”, the bridge registers the job again under the same ID (`/api/bridge/adopt/<id>`) and
+  keeps rendering; the browser receives the result as usual.
+
+### Added
+- **Interrupted jobs restart.** The browser waits up to three minutes when the server doesn't know a job (it is being
+  re-registered). A render that fails without you cancelling it restarts once automatically — same settings, same
+  seed, so the same track. After that, **↻** next to the job restarts it whenever you like.
+- Short jobs (brief, export, publishing) also wait out a server restart instead of failing at once.
+
 ## 3.12.5 — 2026-10-16 (bridge 3.12.4)
 
 ### Fixed
