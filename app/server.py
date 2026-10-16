@@ -73,7 +73,7 @@ HOST = os.environ.get("HOST", "0.0.0.0")      # 3.11: lokale Installation → 12
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, "web")
 
-APP_VERSION = "3.12.5"
+APP_VERSION = "3.13.0"
 BRIDGE_FILE = next((p for p in (os.path.join(ROOT, "bridge", n) for n in ("neonforge_bridge.py", "manuwave_bridge.py"))
                     if os.path.isfile(p)), os.path.join(ROOT, "bridge", "manuwave_bridge.py"))
 BUILD_INFO_FILE = os.path.join(WEB, "build-info.json")
@@ -603,13 +603,34 @@ class Broker:
         j = self.jobs.get(jid)
         return j if j and j["ns"] == ns else None
 
+    def adopt(self, ns: str, jid: str, kind: str, request: dict, meta: dict, taker: str) -> bool:
+        """3.13: Die Brücke meldet einen Auftrag wieder an, den sie gerade rechnet, den dieser Server aber nach einem
+        Neustart nicht mehr kennt (die Warteschlange liegt nur im Speicher). Gleiche Kennung — der Browser fragt
+        weiter nach ihr und bekommt das Ergebnis, als wäre nichts gewesen."""
+        with self.cv:
+            now = time.time()
+            j = self.jobs.get(jid)
+            if j:
+                return j["ns"] == ns
+            if sum(1 for x in self.jobs.values() if x["ns"] == ns) >= MAX_JOBS_PER_NS:
+                return False
+            self.jobs[jid] = {"id": jid, "ns": ns, "kind": kind, "status": "running",
+                              "message": "Server war neu gestartet — dein Mac rechnet weiter …",
+                              "created": now, "updated": now, "request": request, "meta": meta,
+                              "result_meta": None, "result": None, "audio": None, "upload": None,
+                              "cancel": False, "taken_by": taker, "attempts": 1, "adopted": True}
+            self.cv.notify_all()
+            return True
+
     def progress(self, ns: str, jid: str, message: str) -> dict:
         with self.cv:
             now = time.time()
             self.bridges.setdefault(ns, {"seen": now, "info": {}})["seen"] = now
             j = self._bridge_job(ns, jid)
             if not j:
-                return {"cancel": True}
+                # 3.13: bis hier hieß unbekannt: abbrechen. Nach jedem Neustart dieses Servers starb so ein laufender
+                #    Render mitten in der Rechnung. Jetzt meldet die Brücke ihn wieder an (adopt).
+                return {"cancel": False, "unknown": True}
             if j["status"] == "running":
                 j["message"] = (message or "")[:120]
                 j["updated"] = now
@@ -1016,6 +1037,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._json(200, {"ok": BROKER.cancel(ns, m.group(1))})
             return
         # ---- Mac-Brücke ----
+        m = re.match(r"^/api/bridge/adopt/([0-9a-f]{16})$", path)
+        if m:
+            data = self._read_body()
+            kind = data.get("kind")
+            try:
+                if kind == "render":
+                    req = clean_render_request(data.get("request"))
+                elif kind == "brief":
+                    req = clean_brief_request(data.get("request"))
+                elif kind in NEW_KINDS and kind not in ("verify",):
+                    req = clean_job(kind, data.get("request"))
+                else:
+                    raise ValueError("Unbekannte Auftragsart.")
+            except ValueError as e:
+                self._json(400, {"error": "bad_request", "message": str(e)})
+                return
+            taker = str(clean_agent(self.headers.get("x-nf-agent", "")).get("host") or "?")
+            ok = BROKER.adopt(ns, m.group(1), kind, req, clean_meta(data.get("meta")), taker)
+            self._json(200 if ok else 409, {"ok": ok})
+            return
         m = re.match(r"^/api/bridge/(progress|meta|result|error|cover)/([0-9a-f]{16})$", path)
         if not m:
             self._json(404, {"error": "unbekannter Endpunkt"})

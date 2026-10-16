@@ -58,7 +58,7 @@ try:
 except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.12.4"
+BRIDGE_VERSION = "3.13.0"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
@@ -485,13 +485,29 @@ class Server:
         return self._req("GET", "/api/bridge/next?wait=25&lane=" + lane, timeout=45,
                          extra={"x-nf-agent": agent})
 
-    def progress(self, jid, message) -> bool:
+    def progress(self, jid, message, job=None) -> bool:
         """True, wenn der Browser abbrechen will."""
         try:
             _, r = self._req("POST", "/api/bridge/progress/" + jid, body={"message": message}, timeout=15)
-            return bool((r or {}).get("cancel"))
+            r = r or {}
+            if r.get("unknown") and job is not None:
+                self.adopt(job)          # 3.13: Server neu gestartet → weiterrechnen statt abbrechen
+                return False
+            return bool(r.get("cancel"))
         except Exception:
             return False
+
+    def adopt(self, job) -> None:
+        """3.13: Der Server kennt den Auftrag nicht mehr (neu gestartet, seine Warteschlange lag nur im Speicher).
+        Bis 3.12 hieß das „abbrechen“ — ein Deploy kostete so einen halb gerechneten Track. Jetzt wird der Auftrag
+        mit derselben Kennung wieder angemeldet; der Browser bekommt das Ergebnis wie gewohnt."""
+        try:
+            agent = urllib.parse.quote(json.dumps(agent_info(self.cfg, True)))
+            self._req("POST", "/api/bridge/adopt/" + job["id"], timeout=15, extra={"x-nf-agent": agent},
+                      body={k: job.get(k) for k in ("kind", "request", "meta")})
+            log("Server war neu gestartet — Auftrag %s wieder angemeldet, es wird weitergerechnet" % job["id"])
+        except Exception as e:  # noqa: BLE001 — beim nächsten Lebenszeichen wieder
+            log("Wiederanmelden von %s noch nicht möglich: %s" % (job["id"], e))
 
     def meta(self, jid, meta):
         self._req("POST", "/api/bridge/meta/" + jid, body=meta, timeout=30)
@@ -3316,7 +3332,7 @@ def tool_job(cfg: dict, srv, job: dict) -> None:
     """Schnelle Aufträge der Brief-Spur: Einstellungen, Export, Wasserzeichen prüfen.
     Sie rühren den Grafikchip nicht an (Cover entstehen auf der Render-Spur)."""
     kind, jid, req = job.get("kind"), job["id"], job.get("request") or {}
-    tick = lambda m: srv.progress(jid, m)  # noqa: E731
+    tick = lambda m: srv.progress(jid, m, job)  # noqa: E731
     if kind == "archiv":
         srv.result_json(jid, {"tracks": archive_list()})
     elif kind == "master_merken":
@@ -3458,7 +3474,7 @@ def brief_lane(cfg: dict) -> None:
             continue
         log("Brief %s wird geschrieben (%s)" % (jid, find_writer(cfg) or "kein Modell"))
         try:
-            srv.progress(jid, "Dein Mac schreibt den Brief …")
+            srv.progress(jid, "Dein Mac schreibt den Brief …", job)
             brief = write_brief(cfg, (job.get("request") or {}).get("user") or "", (job.get("request") or {}).get("ui_lang") or "de")
             srv.result_json(jid, brief)
             log("Brief fertig in %.0f s: %s" % (brief.get("write_s", 0), brief.get("title", "")))
@@ -3506,13 +3522,13 @@ def run(cfg: dict) -> None:
         jid = job["id"]
         title = (job.get("meta") or {}).get("title", "")
         log("Auftrag %s (%s) %s" % (jid, job.get("kind"), title))
-        tick = lambda msg: srv.progress(jid, msg)  # noqa: E731
+        tick = lambda msg: srv.progress(jid, msg, job)  # noqa: E731
         Awake.hold(cfg)
         try:
             # Nur Musik und Analyse brauchen den Modellserver — ein Cover oder Nachrüsten nicht.
             # 🔴 Sonst lüde er ~8 GB nur für ein Bild, und das Bildmodell bekäme den Speicher nicht.
             if job.get("kind") not in ("nachruesten", "cover"):
-                eng.ensure(lambda m: srv.progress(jid, m))
+                eng.ensure(lambda m: srv.progress(jid, m, job))
             if job.get("kind") == "understand":
                 upload = srv.upload(jid)
                 result = eng.understand(upload, job.get("filename") or "upload", tick)

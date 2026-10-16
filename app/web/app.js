@@ -130,11 +130,18 @@ async function macJob(kind, request, { upload, filename, meta, onMsg, pollMs = 7
     : await api("/api/job", { method: "POST", body: { kind, request, meta } });
   if (!r.ok) throw new Error((r.data && r.data.message) || "HTTP " + r.status);
   const id = r.data.id, t0 = Date.now();
+  let missSince = 0;
   for (;;) {
     await sleep(pollMs);
     let g;
     try { g = await api("/api/render/" + id); } catch (e) { continue; }
-    if (g.status === 404) throw new Error("Auftrag verloren (Server neu gestartet?) — bitte noch einmal.");
+    // 3.13: Server neu gestartet → der Mac meldet den Auftrag gleich wieder an; erst nach der Frist aufgeben
+    if (g.status === 404) {
+      missSince = missSince || Date.now();
+      if (Date.now() - missSince < LOST_GRACE_MS) { if (onMsg) onMsg({ status: "running", message: "Server startet neu — dein Mac arbeitet weiter …" }); continue; }
+      throw new Error("Auftrag verloren (Server neu gestartet?) — bitte noch einmal.");
+    }
+    missSince = 0;
     const j = g.data || {};
     if (onMsg) onMsg(j);
     if (j.status === "done") return j;
@@ -599,7 +606,8 @@ async function render(b, { n, keep, source }) {
     const r = await api("/api/render", { method: "POST", body: { request, meta } });
     if (!r.ok) { fail.push((r.data && r.data.message) || r.status); continue; }
     seeds.push(seed);
-    state.pending.push({ id: r.data.id, title: b.title, variant: meta.variant, group, created: Date.now(), folder: targetFolder() });
+    // 3.13: Auftrag samt Einstellungen merken — so lässt er sich jederzeit identisch neu starten (gleicher Seed)
+    state.pending.push({ id: r.data.id, title: b.title, variant: meta.variant, group, created: Date.now(), folder: targetFolder(), req: request, meta });
   }
   b.seeds = seeds;
   setBrief(b);
@@ -774,8 +782,16 @@ async function pollOnce() {
     try { r = await api("/api/render/" + p.id); } catch (e) { still.push(p); continue; }
     if (r.status === 404 || r.status === 410) {
       if (p.status === "fetch") { p.gone = true; fromMac(p); still.push(p); continue; }
-      p.status = "lost"; p.message = "Auftrag verloren (Server neu gestartet) — bitte neu erzeugen."; still.push(p); continue;
+      // 🔴 3.13: nach einem Neustart des Servers kennt er den Auftrag kurz nicht — der Mac rechnet weiter und meldet
+      //    ihn mit derselben Kennung wieder an. Bis 3.12 galt er sofort als verloren (und der Mac brach ab).
+      p.missSince = p.missSince || Date.now();
+      if (Date.now() - p.missSince < LOST_GRACE_MS) {
+        p.status = "running"; p.message = "Server startet neu — dein Mac rechnet weiter …"; still.push(p); continue;
+      }
+      if (await autoRestart(p, "Auftrag war verloren")) { still.push(p); continue; }
+      p.status = "lost"; p.message = "Auftrag verloren (Server neu gestartet)."; still.push(p); continue;
     }
+    delete p.missSince;
     const j = r.data || {};
     if (j.status === "done") {
       p.archived = (j.result_meta || {}).archived || p.archived || "";
@@ -784,7 +800,8 @@ async function pollOnce() {
       continue;
     }
     p.status = j.status; p.message = j.message; p.queue_pos = j.queue_pos;
-    if (j.status === "cancelled") continue;
+    if (j.status === "cancelled") continue;          // von dir abgebrochen
+    if (j.status === "error") await autoRestart(p, j.message);
     still.push(p);
   }
   const collected = state.pending.length - still.length;
@@ -795,6 +812,25 @@ async function pollOnce() {
   const waits = state.pending.filter(p => p.status === "fetch" && !macFetching.has(p.id)).map(p => Math.max(0, (p.retryAt || 0) - Date.now()));
   if (state.pending.some(p => p.status === "queued" || p.status === "running" || !p.status)) schedulePoll(2000);
   else if (waits.length) schedulePoll(Math.max(1000, Math.min(...waits)));
+}
+
+// ---- 3.13: Abgebrochene Aufträge wieder starten (automatisch einmal, sonst per ↻) ----
+const LOST_GRACE_MS = 3 * 60e3;
+const AUTO_RESTARTS = 1;
+async function restartJob(p) {
+  if (!p.req) return false;
+  const r = await api("/api/render", { method: "POST", body: { request: p.req, meta: p.meta || { title: p.title, variant: p.variant || "", group: p.group } } });
+  if (!r.ok) { p.message = "Neustart nicht möglich: " + ((r.data && r.data.message) || r.status); return false; }
+  Object.assign(p, { id: r.data.id, status: "queued", queue_pos: null, created: Date.now(), restarts: (p.restarts || 0) + 1,
+    message: "↻ neu gestartet — gleiche Einstellungen, gleicher Seed" });
+  delete p.missSince;
+  return true;
+}
+async function autoRestart(p, why) {
+  if (!p.req || (p.restarts || 0) >= AUTO_RESTARTS) return false;
+  const ok = await restartJob(p);
+  if (ok) setMsg($("#curMsg"), `↻ „${p.title}${p.variant ? " · " + p.variant : ""}“ wurde unterbrochen (${why || "Fehler"}) und läuft neu.`, "");
+  return ok;
 }
 
 function fetchFailed(p, e) {
@@ -906,8 +942,15 @@ function renderQueueNow() {
     row.append(el("span", "q-title", p.title + (p.variant ? " · " + p.variant : "")));
     let txt = p.message || "";
     if (p.status === "queued" || !p.status) txt = p.queue_pos ? `wartet (${p.queue_pos} davor)` : (state.bridge.connected ? "wartet auf den Mac …" : "wartet — der Mac meldet sich gerade nicht");
+    if ((p.status === "queued" || !p.status) && p.restarts) txt = "↻ neu gestartet · " + txt;
     const msg = el("span", "q-msg" + (p.status === "running" ? " live" : ""), txt);
     row.append(msg);
+    if (bad && p.req) {
+      const again = el("button", "ghost btn-s", "↻");
+      again.type = "button"; again.title = "Neu starten (gleiche Einstellungen)";
+      again.onclick = async () => { again.disabled = true; await restartJob(p); savePending(); renderQueue(); schedulePoll(500); };
+      row.append(again);
+    }
     const x = el("button", "ghost btn-s", "✕");
     x.type = "button";
     const hide = bad || p.status === "fetch";   // fertig gerechnet: nichts abzubrechen, der Track bleibt im Mac-Archiv
