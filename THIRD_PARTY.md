@@ -8,6 +8,9 @@ repository, except the engine binaries that this project's CI builds from unmodi
 |---|---|---|---|
 | ACE-Step 1.5 (models) | music generation | MIT — the model card states generated music may be used commercially | [ACE-Step/Ace-Step1.5](https://huggingface.co/ACE-Step/Ace-Step1.5), GGUF: [Serveurperso/ACE-Step-1.5-GGUF](https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF) |
 | acestep.cpp | music engine (C++/ggml) | MIT | [ServeurpersoCom/acestep.cpp](https://github.com/ServeurpersoCom/acestep.cpp) |
+| Meta Audiobox Aesthetics (code + checkpoint) | optional quality check — rates each take | CC-BY 4.0 (parts MIT) | [facebookresearch/audiobox-aesthetics](https://github.com/facebookresearch/audiobox-aesthetics), checkpoint: [facebook/audiobox-aesthetics](https://huggingface.co/facebook/audiobox-aesthetics) |
+| PyTorch / torchaudio | runs the quality check (CPU) | BSD-3-Clause | [pytorch/pytorch](https://github.com/pytorch/pytorch) |
+| uv | creates the quality check's Python environment | MIT / Apache-2.0 | [astral-sh/uv](https://github.com/astral-sh/uv) |
 | Ollama | runs the language model (and, on macOS, the image model) | MIT | [ollama/ollama](https://github.com/ollama/ollama) |
 | Qwen2.5 Instruct (7B / 3B) | production briefs and lyrics | Apache-2.0 (7B), Qwen Research License (3B — non-commercial) | [Qwen](https://huggingface.co/Qwen) |
 | FLUX.2 [klein] 4B | cover art on macOS | Apache-2.0 | [black-forest-labs/FLUX.2-klein-4B](https://huggingface.co/black-forest-labs/FLUX.2-klein-4B) |

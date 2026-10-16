@@ -73,7 +73,7 @@ HOST = os.environ.get("HOST", "0.0.0.0")      # 3.11: lokale Installation → 12
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, "web")
 
-APP_VERSION = "3.13.0"
+APP_VERSION = "3.14.0"
 BRIDGE_FILE = next((p for p in (os.path.join(ROOT, "bridge", n) for n in ("neonforge_bridge.py", "manuwave_bridge.py"))
                     if os.path.isfile(p)), os.path.join(ROOT, "bridge", "manuwave_bridge.py"))
 BUILD_INFO_FILE = os.path.join(WEB, "build-info.json")
@@ -189,7 +189,7 @@ RUNNING_STALE_S = 15 * 60                 # ohne Lebenszeichen → als verloren 
 QUEUED_TTL = 2 * 3600                     # 3.2: ein nie abgeholter Auftrag verfällt (sonst hält er Upload + Platz ewig)
 NS_UPLOAD_CAP = 192 * 1024 * 1024         # 3.2: wartende Uploads je Kopplung
 MAX_JSON_BODY = 256 * 1024                # JSON-Körper — Briefe/Texte sind weit kleiner
-DURATION_RANGE = (10.0, 300.0)
+DURATION_RANGE = (10.0, 600.0)   # 3.14: über 240 s baut die Brücke in Abschnitten an
 
 # Was an den Mac durchgereicht werden darf — alles andere fällt weg. Der Browser
 # bestimmt die Felder, der Mac rechnet sie: hier wird geklemmt, nicht vertraut.
@@ -230,6 +230,8 @@ def clean_render_request(raw: dict) -> dict:
         # 3.1: Klangmodell (Kurzname, die Brücke prüft, ob es auf dem Mac liegt) und weiches Ende
         "dit": text("dit", 24) if re.fullmatch(r"[a-z0-9][a-z0-9-]{1,23}", text("dit", 24) or "") else "",
         "smooth_end": bool(raw.get("smooth_end", True)),
+        # 3.14: Klangprüfung — so oft darf die Brücke eine schwach bewertete Fassung neu würfeln (0 = aus)
+        "qa_reroll": num("qa_reroll", 0, 3, 2, int),
     }
     #    use_cot_caption=False fiele dann still weg.
     auto_bei_null = {"bpm", "inference_steps", "guidance_scale", "lm_temperature"}

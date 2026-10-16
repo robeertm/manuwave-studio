@@ -75,7 +75,7 @@
       </label>
       <label class="opt grow">
         <span class="opt-lbl">Länge <span id="durVal" class="val">≈ 2:00</span></span>
-        <input id="dur" type="range" min="15" max="300" step="5" value="120">
+        <input id="dur" type="range" min="15" max="600" step="5" value="120">
       </label>
       <div class="opt">
         <span class="opt-lbl">Versionen</span>
@@ -130,6 +130,14 @@
         <label class="opt check-opt" title="Bricht die Musik am Ende hart ab, blendet dein Mac die letzten Sekunden weich aus und kürzt die Stille danach">
           <span class="opt-lbl">Ende</span>
           <span class="check"><input id="smoothEnd" type="checkbox" checked> weich ausblenden, wenn es abbricht</span>
+        </label>
+        <label class="opt" title="Ein Hörurteil-Modell bewertet jede fertige Fassung auf deinem Mac. Fällt sie durch, rechnet der Mac eine neue und behält die bessere — das kostet dann die Rechenzeit einer weiteren Fassung. Verworfene liegen im Ordner renders/_verworfen.">
+          <span class="opt-lbl">Klangprüfung</span>
+          <select id="qaReroll">
+            <option value="2" selected>schwache Fassung bis zu 2× neu würfeln</option>
+            <option value="1">schwache Fassung 1× neu würfeln</option>
+            <option value="0">aus — jede Fassung behalten</option>
+          </select>
         </label>
         <div class="opt">
           <span class="opt-lbl">Referenz-Track</span>
@@ -195,7 +203,7 @@
         </label>
         <label class="lbl">Sprache <input id="bLang" type="text" maxlength="12" placeholder="en"></label>
         <label class="lbl grow">Länge <span id="bDurVal" class="val">≈ 2:00</span>
-          <input id="bDur" type="range" min="15" max="300" step="5" value="120"></label>
+          <input id="bDur" type="range" min="15" max="600" step="5" value="120"></label>
       </div>
       <div class="edit-grid">
         <label class="lbl"><span>Klang &amp; Stil — Tags für die Musik-KI (englisch, kommagetrennt)</span>

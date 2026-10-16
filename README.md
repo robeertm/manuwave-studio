@@ -25,6 +25,8 @@ hobby showcase, where you can also share your own tracks.
 | 🎲 **Dice** | Picks from 114 styles in 11 groups — from melodic techno to bossa nova, metal, film score — and writes a detailed idea, then renders right away. |
 | 🎶 **Music AI** | [ACE-Step 1.5](https://huggingface.co/ACE-Step/Ace-Step1.5) via [acestep.cpp](https://github.com/ServeurpersoCom/acestep.cpp) renders instruments, vocals and mix in one pass. |
 | 🎨 **Cover art** | FLUX.2 [klein] 4B (macOS) or Z-Image Turbo (Windows/Linux) paints a cover that fits the mood. |
+| 🔎 **Quality check** | A listening-judgement model ([Meta Audiobox Aesthetics](https://github.com/facebookresearch/audiobox-aesthetics)) rates every finished take on your computer. Weak takes are rendered again automatically (up to twice, your choice) and the best one is kept; discarded takes stay in `renders/_verworfen` so you can check the verdict. |
+| ⏱ **Long tracks** | Up to 10 minutes. Beyond 4 minutes the music AI gets unstable, so the studio renders a main part and then extends it section by section, continuing from the last 30 seconds and crossfading the seam. |
 | 🎚 **Mastering** | Bass, tone, treble, softness, fades, auto-loudness to −14 LUFS — what you hear is what you export. |
 | ⬇️ **Export** | MP3, FLAC, ALAC, WAV, AIFF, WavPack, TTA — with cover, tags and lyrics embedded. |
 | 📦 **Release package** | One ZIP with the mastered file, a 3000 × 3000 cover, upload metadata with AI-disclosure checkboxes, lyrics, a proof-of-origin PDF and a licence template (these two documents are in German for now). |
@@ -38,7 +40,7 @@ hobby showcase, where you can also share your own tracks.
 |---|---|---|
 | Hardware | Apple silicon (M1–M4), 16 GB RAM recommended (8 GB works with smaller models) | NVIDIA GPU, RTX 20xx or newer, 8 GB VRAM; driver ≥ 550 |
 | System | macOS 14 or newer | Windows 10/11 · Ubuntu/Debian x86_64 |
-| Disk | about 25 GB | about 25 GB |
+| Disk | about 25 GB (+1 GB for the optional quality check) | about 25 GB (+1 GB for the optional quality check) |
 | Status | ✅ tested | ⚠️ experimental — built and checked in CI, not yet run on real NVIDIA hardware by the maintainer |
 
 ## Install
@@ -63,10 +65,11 @@ under `renders/` and in your browser's library.
 | `--lm 0.6B \| 1.7B \| 4B` | size of the music AI's planning model (default: chosen by RAM) |
 | `--xl` | the larger, better-sounding XL model (+3 GB) |
 | `--skip-writer`, `--skip-image` | skip the language model or the cover model |
+| `--skip-qa` | skip the quality check (PyTorch + rating model, about 1 GB; runs on the CPU) |
 | `--no-start` | don't start the app at the end |
 | `--home DIR` | install somewhere else (must be inside your home folder) |
 
-Windows: `-Lm`, `-Xl`, `-SkipWriter`, `-SkipImage`, `-NoStart`.
+Windows: `-Lm`, `-Xl`, `-SkipWriter`, `-SkipImage`, `-SkipQa`, `-NoStart`.
 </details>
 
 ## How it works
@@ -75,6 +78,7 @@ Windows: `-Lm`, `-Xl`, `-SkipWriter`, `-SkipImage`, `-NoStart`.
 Browser (UI, library)  ⇄  app server (127.0.0.1:8104)  ⇄  bridge  ─┬─ ace-server  (ACE-Step 1.5, GPU)
                                                                   ├─ Ollama      (Qwen 2.5 — brief & lyrics)
                                                                   ├─ cover model (FLUX.2 klein / Z-Image Turbo)
+                                                                  ├─ quality check (Audiobox Aesthetics, CPU, optional)
                                                                   └─ ffmpeg · audiowmark (mastering, tags, watermark)
 ```
 

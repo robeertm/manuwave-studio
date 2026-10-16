@@ -282,6 +282,7 @@ function form() {
     quality: $("#quality").value,
     dit: $("#dit").value,
     smoothEnd: $("#smoothEnd").checked,
+    qaReroll: $("#qaReroll").value,
   };
 }
 const sung = (v) => v === "female" || v === "male";
@@ -306,6 +307,7 @@ function restoreForm() {
   if (QUALITY[f.quality]) $("#quality").value = f.quality;
   if ([...$("#dit").options].some(x => x.value === f.dit)) $("#dit").value = f.dit;
   if (typeof f.smoothEnd === "boolean") $("#smoothEnd").checked = f.smoothEnd;
+  if (["0", "1", "2"].includes(f.qaReroll)) $("#qaReroll").value = f.qaReroll;
 }
 
 // =============================================================================
@@ -317,9 +319,12 @@ function skeleton(o) {
   let s;
   // 3.1: weniger Abschnitte je Länge. Bis 3.0 (z. B. 12 Abschnitte in 215 s) hatte die Musik-KI
   // keine Zeit mehr fürs Outro und brach ab — gemessen bei 7 von 13 Tracks ein harter Schnitt.
+  // 3.14: über 4,5 min mehr Abschnitte — die Brücke verteilt sie auf Hauptteil und Anbauten
+  const lang = d > 270;
   if (sung(o.vocals)) {
     s = d <= 45 ? ["Intro", "Chorus", "Outro"]
       : d < 150 ? ["Intro", "Verse 1", "Chorus", "Verse 2", "Chorus", "Outro"]
+      : lang ? ["Intro", "Verse 1", "Chorus", "Verse 2", "Chorus", "Bridge", "Verse 3", "Chorus", "Chorus", "Outro"]
       : ["Intro", "Verse 1", "Chorus", "Verse 2", "Chorus", "Bridge", "Chorus", "Outro"];
   } else {
     // 3.8: Ohne Gesang richtet sich das Gerüst nach der Bauform der Richtung — ein Jazz-Stück
@@ -327,13 +332,16 @@ function skeleton(o) {
     s = fam === "song"
       ? (d <= 45 ? ["Intro", "Chorus", "Outro"]
         : d < 150 ? ["Intro", "Verse", "Chorus", "Solo", "Chorus", "Outro"]
+        : lang ? ["Intro", "Verse 1", "Chorus", "Verse 2", "Chorus", "Solo", "Verse 3", "Chorus", "Outro"]
         : ["Intro", "Verse 1", "Chorus", "Verse 2", "Chorus", "Solo", "Outro"])
       : fam === "flow"
       ? (d <= 45 ? ["Intro", "Theme", "Outro"]
         : d < 150 ? ["Intro", "Theme", "Development", "Climax", "Outro"]
+        : lang ? ["Intro", "Theme", "Development", "Interlude", "Theme 2", "Development 2", "Climax", "Outro"]
         : ["Intro", "Theme", "Development", "Interlude", "Climax", "Outro"])
       : (d <= 45 ? ["Intro", "Drop", "Outro"]
         : d < 150 ? ["Intro", "Build", "Drop", "Breakdown", "Drop 2", "Outro"]
+        : lang ? ["Intro", "Build", "Drop", "Breakdown", "Build 2", "Drop 2", "Breakdown 2", "Build 3", "Drop 3", "Outro"]
         : ["Intro", "Build", "Drop", "Breakdown", "Build 2", "Drop 2", "Outro"]);
   }
   return s;
@@ -455,7 +463,7 @@ function normalizeBrief(b) {
     bpm: Math.round(num(b.bpm, 60, 200, 0)),
     keyscale: String(b.keyscale || "").trim().slice(0, 24),
     timesignature: ["4", "3", "6"].includes(String(b.timesignature)) ? String(b.timesignature) : "4",
-    duration: Math.round(num(b.duration, 15, 300, 120)),
+    duration: Math.round(num(b.duration, 15, 600, 120)),
     vocal_language: String(b.vocal_language || "en").slice(0, 12),
     note: String(b.note || "").trim().slice(0, 1500),
     seeds: Array.isArray(b.seeds) ? b.seeds.slice(0, 8) : [],
@@ -579,16 +587,25 @@ function estimateSeconds(o) {
   const steps = q.inference_steps || 50;
   let dit = (xl ? 2.8 : 1.25) * steps / 50;
   if ((q.guidance_scale || 1) <= 1) dit *= 0.62;
-  return o.variants * (o.duration * (0.3 + dit) + 20);
+  if (o.duration <= 240) return o.variants * (o.duration * (0.3 + dit) + 20);
+  // 3.14: lange Titel — Hauptteil 220 s, dann je Anbau (30 s Kontext + Abschnitt) im Mittel 1,5 Versuche
+  const parts = Math.ceil((o.duration - 220) / 80), part = (o.duration - 220) / parts;
+  return o.variants * (220 * (0.3 + dit) + 20 + parts * 1.5 * ((30 + part) * dit + 15));
 }
 function renderEstimate() {
   const o = form();
   const s = estimateSeconds(o);
   const m = Math.max(1, Math.round(s / 60));
   $("#estimate").textContent = `⏱ ≈ ${m} Min. Rechenzeit auf deinem Mac für ${o.variants} ${o.variants === 1 ? "Version" : "Versionen"}` +
-    (!$("#ditWrap").hidden && o.dit === "xl-sft" ? " (XL: beste Qualität, etwa 2–3× langsamer als Standard)" : "");
+    (!$("#ditWrap").hidden && o.dit === "xl-sft" ? " (XL: beste Qualität, etwa 2–3× langsamer als Standard)" : "") +
+    (o.duration > 240 ? ` · über 4 Min.: Hauptteil + ${Math.ceil((o.duration - 220) / 80)} angebaute Abschnitte` : "");
 }
 
+function qaLabel(qa) {
+  if (!qa || typeof qa.CE !== "number") return "";
+  const n = qa.CE.toFixed(1).replace(".", window.MWS_LANG === "en" ? "." : ",");
+  return qa.versuche > 1 ? `🔎 Klang ${n} · beste von ${qa.versuche}` : `🔎 Klang ${n}`;
+}
 function randomSeed() { return Math.floor(Math.random() * 2147483647); }
 
 async function render(b, { n, keep, source }) {
@@ -598,7 +615,7 @@ async function render(b, { n, keep, source }) {
   for (let i = 0; i < n; i++) {
     const seed = keep && b.seeds[i] != null ? b.seeds[i] : randomSeed();
     const request = { caption: b.caption, lyrics: b.lyrics, timesignature: b.timesignature, duration: b.duration,
-      vocal_language: b.vocal_language, seed, ...quality, smooth_end: $("#smoothEnd").checked };
+      vocal_language: b.vocal_language, seed, ...quality, smooth_end: $("#smoothEnd").checked, qa_reroll: +$("#qaReroll").value };
     if (!$("#ditWrap").hidden) request.dit = $("#dit").value;
     if (b.bpm) request.bpm = b.bpm;
     if (b.keyscale) request.keyscale = b.keyscale;
@@ -2718,7 +2735,7 @@ function libRow(rec, fl) {
     fmtDur(masteredOk(rec) && rec.masteredDur ? rec.masteredDur : r.duration_real || r.duration || q.duration || 0), seed != null ? `Seed ${seed}` : "",
     /xl/.test(r.dit || "") ? "XL" : "",
     g > 1 ? (q.inference_steps > 50 ? "Maximal" : "Studio") : "ungeführt",
-    r.ende ? "Ende geglättet" : "", rec.wm ? "🔏 Wasserzeichen" : "", rec.master ? "🎚 gemastert" : "",
+    r.ende ? "Ende geglättet" : "", qaLabel(r.qa), rec.wm ? "🔏 Wasserzeichen" : "", rec.master ? "🎚 gemastert" : "",
     state.finishing === rec.id ? "✨ wird veredelt …" : rec.coverState === "pending" ? "🎨 Cover entsteht …" : "",
     r.render_s ? `in ${fmtDur(r.render_s)} gerechnet` : "", fname ? "📁 " + fname : ""].filter(Boolean).join(" · ")));
   const cv = el("canvas", "lib-wave");
@@ -2976,7 +2993,7 @@ function init() {
     if (player.id) { e.preventDefault(); togglePause(); }
   });
   $("#diceBtn").onclick = rollDice;
-  ["#dit", "#smoothEnd"].forEach(x => $(x).addEventListener("change", saveForm));
+  ["#dit", "#smoothEnd", "#qaReroll"].forEach(x => $(x).addEventListener("change", saveForm));
   ["#dur", "#quality", "#dit"].forEach(x => $(x).addEventListener("input", renderEstimate));
   ["#quality", "#dit"].forEach(x => $(x).addEventListener("change", renderEstimate));
   $$("#variants button").forEach(b => b.addEventListener("click", renderEstimate));
