@@ -58,7 +58,7 @@ try:
 except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.12.1"
+BRIDGE_VERSION = "3.12.2"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
@@ -3024,6 +3024,54 @@ def lyrics_timing(cfg: dict, wav_bytes: bytes, lyrics: str, lang: str, duration:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# die fahrstuhl webseite umstellt") — die Notizen sind mal deutsch, mal englisch; die fehlende Sprache schreibt das
+# Sprachmodell auf dem Mac. Ohne Modell bleibt sie leer, die Seite zeigt dann die vorhandene.
+TRANSLATE_SYSTEM = {
+    "en": "Translate the user's German text into natural, fluent English. Keep music terms (breakdown, drop, BPM, synth, "
+          "pads) as they are, keep names and titles unchanged, fix obvious typos. Reply with the translation only.",
+    "de": "Übersetze den englischen Text des Nutzers in natürliches, flüssiges Deutsch. Musikbegriffe (Breakdown, Drop, BPM, "
+          "Synth, Pads) bleiben, Namen und Titel bleiben unverändert, offensichtliche Tippfehler korrigieren. Antworte nur mit "
+          "der Übersetzung.",
+}
+
+
+def is_german(text: str) -> bool:
+    words = re.findall(r"[a-zäöüß]+", (text or "").lower())
+    return sum(w in DE_WORDS for w in words) >= 2 or bool(re.search(r"[äöüß]", text or ""))
+
+
+def translate_text(cfg: dict, text: str, target: str) -> str:
+    model = find_writer(cfg)
+    if not model or not (text or "").strip():
+        return ""
+    body = {"model": model, "stream": False,
+            "messages": [{"role": "system", "content": TRANSLATE_SYSTEM[target]}, {"role": "user", "content": text}],
+            "options": {"temperature": 0.2, "num_ctx": 4096}}
+    req = urllib.request.Request(cfg["writer_url"].rstrip("/") + "/api/chat", data=json.dumps(body).encode(), method="POST",
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=180) as r:
+        answer = json.loads(r.read())
+    out = ((answer.get("message") or {}).get("content") or "").strip().strip('"„“”')
+    # Nur annehmen, was wirklich in der Zielsprache steht und nicht bloß das Original wiederholt
+    if not out or out == text.strip() or is_german(out) != (target == "de"):
+        return ""
+    return out[:1500]
+
+
+def note_languages(cfg: dict, note: str) -> tuple:
+    """→ (note_de, note_en). Die Sprache der Notiz wird erkannt, die andere übersetzt."""
+    note = (note or "").strip()
+    if not note:
+        return "", ""
+    de = is_german(note)
+    try:
+        other = translate_text(cfg, note, "en" if de else "de")
+    except Exception as e:  # noqa: BLE001
+        log("Notiz nicht übersetzt: %s" % e)
+        other = ""
+    return (note, other) if de else (other, note)
+
+
 def web_publish(cfg, path, req, tick=None):
     given = clean_master(req.get("master"))
     fin = veredeln(cfg, path, req, want_cover=False, tick=tick)
@@ -3045,6 +3093,10 @@ def web_publish(cfg, path, req, tick=None):
             "note": info.get("note") or "", "language": (LANG_DE.get(lang, lang) if lyrics.strip() else "Instrumental"),
             "tools": "Manuwave Studio · ACE-Step 1.5" + (" · " + cov_name if cov_name else ""),
             "ai_note": "KI-erzeugt", "ext_id": rel_home(path)}
+    if meta["note"]:
+        if tick:
+            tick("Notiz wird übersetzt …")
+        meta["note_de"], meta["note_en"] = note_languages(cfg, meta["note"])
     if tick:
         tick("Übertrage an Fahrstuhlmusik …")
     r = _web(cfg, "POST", "/api/admin/track", meta)

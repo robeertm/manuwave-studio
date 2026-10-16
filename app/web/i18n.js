@@ -264,6 +264,8 @@
 "Noch keine Favoriten.": "No favourites yet.",
 "Noch keine Tracks — erzeuge oben deinen ersten.": "No tracks yet — generate your first one above.",
 "Noch nicht gekoppelt. Auf dem Mac einmal die Brücke einrichten (siehe unten), dann den angezeigten": "Not paired yet. Set up the bridge on your computer once (see below), then enter the code shown",
+"Notiz nicht übersetzt: {0}": "Note not translated: {0}",
+"Notiz wird übersetzt …": "Translating the note …",
 "Ohne Titel": "Untitled",
 "Orchester / Klassik": "Orchestral / Classical",
 "Ordner": "Folder",
