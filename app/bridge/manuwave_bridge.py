@@ -58,7 +58,7 @@ try:
 except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.12.2"
+BRIDGE_VERSION = "3.12.4"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
@@ -916,7 +916,7 @@ WM_MAGIC = "4e4601"
 WM_STRENGTH = 3
 AUFBEREITET_V = 2       # Fassung der Archiv-Aufbereitung (adeclip wenn beschnitten + leises Zeichen + 24 Bit)
 TAGS_VERSION = 1
-CAPS = "settings,export,cover,verify,nachruesten,archiv,master,loeschen,paket,web"
+CAPS = "settings,export,cover,verify,nachruesten,archiv,master,loeschen,paket,web,master_merken"
 
 
 def caps_for(cfg: dict) -> str:
@@ -3073,7 +3073,11 @@ def note_languages(cfg: dict, note: str) -> tuple:
 
 
 def web_publish(cfg, path, req, tick=None):
+    # 3.12.3: ohne mitgeschickte Regler (Veröffentlichen ohne den Browser) galt bis hier das Standard-Mastering und
+    # die eigenen Regler fehlten online. Jetzt: die Regler, die das Studio am Mac hinterlegt hat.
     given = clean_master(req.get("master"))
+    if given is None:
+        given = clean_master(_read_json(path[:-4] + ".json").get("master"))
     fin = veredeln(cfg, path, req, want_cover=False, tick=tick)
     if rights(cfg)["watermark"] and not fin["id"]:
         raise RuntimeError("Wasserzeichen fehlt — Veröffentlichen abgebrochen")
@@ -3213,7 +3217,9 @@ def archive_list() -> list:
                     "stamp": str((d.get("cover") or {}).get("stamp") or ""),
                     "rev": int((d.get("aufbereitet") or {}).get("v") or 0),
                     # 3.12: veröffentlicht? — der Browser gleicht sein 🌐 damit ab (auch nach Veröffentlichen ohne ihn)
-                    "web": {k: (d.get("oeffentlich") or {}).get(k, "") for k in ("url", "slug", "at")} if (d.get("oeffentlich") or {}).get("url") else None})
+                    "web": {k: (d.get("oeffentlich") or {}).get(k, "") for k in ("url", "slug", "at")} if (d.get("oeffentlich") or {}).get("url") else None,
+                    # 3.12.3: welche Regler der Mac kennt und mit welchen die Online-Fassung gerechnet wurde
+                    "master": d.get("master"), "web_master": (d.get("oeffentlich") or {}).get("master")})
     return out
 
 
@@ -3234,15 +3240,54 @@ def track_files(path: str) -> list:
     return out
 
 
-def delete_tracks(rels: list) -> dict:
+def remember_masters(items: list) -> dict:
+    """3.12.3: Die Mastering-Regler leben im Browser (IndexedDB). Das Studio meldet sie hierher, damit alles,
+    was ohne den Browser läuft (Veröffentlichen aus dem Terminal, ein zweites Gerät), dieselben Regler nimmt."""
+    saved, missing = 0, []
+    for it in items[:500]:
+        if not isinstance(it, dict):
+            continue
+        p = archive_path(it.get("archived"))
+        m = clean_master(it.get("master"))
+        if not p or m is None:
+            missing.append(it.get("archived"))
+            continue
+        with FileLock(p):
+            d = _read_json(p[:-4] + ".json")
+            if d.get("master") == m:
+                continue
+            d["master"] = m
+            _write_atomic(p[:-4] + ".json", json.dumps(d, indent=2, ensure_ascii=False).encode("utf-8"))
+            saved += 1
+    if saved:
+        log("Mastering-Regler vom Studio übernommen: %d Track%s" % (saved, "" if saved == 1 else "s"))
+    return {"saved": saved, "missing": missing}
+
+
+def delete_tracks(rels: list, cfg=None) -> dict:
     import shutil
-    done, missing, hard = [], [], 0
+    done, missing, hard, web_off = [], [], 0, 0
     ziel = os.path.join(TRASH, "Manuwave Studio gelöscht " + time.strftime("%Y-%m-%d %H.%M.%S"))
     for rel in rels[:500]:
         p = archive_path(rel)
         if not p:
             missing.append(rel)          # schon weg — für den Browser ist das dasselbe wie gelöscht
             continue
+        # 3.12.4: gelöscht heißt auch: nicht mehr öffentlich. Bis hier lag ein gelöschter Track im Papierkorb und lief
+        # auf der Seite weiter. Klappt das Zurückziehen nicht (Seite/Tailscale weg), bleibt der Track liegen: der
+        # Browser behält ihn in seiner Löschliste und versucht es beim nächsten Verbinden wieder.
+        pub = _read_json(p[:-4] + ".json").get("oeffentlich") or {}
+        if pub.get("id") and not ((cfg or {}).get("web_admin") or "").strip():
+            log("%s war veröffentlicht, aber keine Fahrstuhlmusik-Seite eingetragen — dort bitte von Hand zurückziehen" % os.path.basename(p))
+        elif pub.get("id"):
+            try:
+                _web(cfg, "POST", "/api/admin/track/%s/zurueckziehen" % pub["id"], {"reason": "Vom Künstler gelöscht"})
+                web_off += 1
+            except RuntimeError as e:
+                if "(404)" not in str(e):
+                    log("Löschen von %s verschoben — erst von Fahrstuhlmusik nehmen: %s" % (os.path.basename(p), e))
+                    continue
+            log("Von Fahrstuhlmusik zurückgezogen (gelöscht): %s" % os.path.basename(p))
         with FileLock(p):                # nie mitten in ein Veredeln/Exportieren hinein
             day = os.path.basename(os.path.dirname(p))
             for f in track_files(p):
@@ -3258,7 +3303,7 @@ def delete_tracks(rels: list) -> dict:
                         pass
         done.append(rel)
         log("Gelöscht: %s (%s)" % (os.path.basename(p), "Papierkorb" if not hard else "endgültig"))
-    return {"deleted": done, "missing": missing, "trash": rel_home(ziel) if os.path.isdir(ziel) else "", "hard": hard}
+    return {"deleted": done, "missing": missing, "trash": rel_home(ziel) if os.path.isdir(ziel) else "", "hard": hard, "web_off": web_off}
 
 
 def settings_result(cfg: dict) -> dict:
@@ -3274,9 +3319,11 @@ def tool_job(cfg: dict, srv, job: dict) -> None:
     tick = lambda m: srv.progress(jid, m)  # noqa: E731
     if kind == "archiv":
         srv.result_json(jid, {"tracks": archive_list()})
+    elif kind == "master_merken":
+        srv.result_json(jid, remember_masters(req.get("items") if isinstance(req.get("items"), list) else []))
     elif kind == "loeschen":
         rels = req.get("archived")
-        srv.result_json(jid, delete_tracks(rels if isinstance(rels, list) else []))
+        srv.result_json(jid, delete_tracks(rels if isinstance(rels, list) else [], cfg))
     elif kind == "settings":
         if isinstance(req.get("set"), dict):
             with _cfg_lock:

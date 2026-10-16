@@ -15,6 +15,8 @@ hobby showcase, where you can also share your own tracks.
 
 > The interface speaks **English and German** — it follows your browser language, and the button in the top bar switches it. The dice writes its ideas in the language you use.
 
+> What changed in each version: [CHANGELOG.md](CHANGELOG.md).
+
 ## What it does
 
 | | |
