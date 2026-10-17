@@ -148,10 +148,10 @@ if (-not $SkipMidi) {
     & uv pip install -q --python $mp --extra-index-url https://download.pytorch.org/whl/cpu --index-strategy unsafe-best-match torch torchaudio
     & uv pip install -q --python $mp demucs==4.1.0 onnxruntime librosa mir_eval pretty_midi scipy resampy soundfile
     & uv pip install -q --python $mp --no-deps basic-pitch==0.4.0
-    $env:TORCH_HOME = Join-Path $md "torch"
+    $env:TORCH_HOME = Join-Path $md "torch"; $env:HF_HOME = Join-Path $md "hf"
     & $mp -c "from demucs.pretrained import get_model as g; g('htdemucs'); import basic_pitch.inference" | Out-Null
     $code = $LASTEXITCODE
-    Remove-Item Env:TORCH_HOME
+    Remove-Item Env:TORCH_HOME; Remove-Item Env:HF_HOME
     if ($code -eq 0) { Ok "MIDI image ready" } else { Warn "MIDI image not available - songs stay audio only" }
   } catch { Warn "MIDI image not available - songs stay audio only" }
 } else { Warn "skipped (-SkipMidi): songs stay audio only" }

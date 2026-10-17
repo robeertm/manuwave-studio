@@ -58,7 +58,7 @@ try:
 except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.16.0"
+BRIDGE_VERSION = "3.16.1"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
@@ -3851,6 +3851,7 @@ if __name__ == "__main__":
 _job_active = threading.Event()   # die Render-Spur arbeitet gerade (gesetzt in run())
 _midi_first = []                  # vom Browser gewünscht — kommt zuerst dran
 _midi_lock = threading.Lock()
+_midi_proc = None                 # der laufende Rechenprozess — SIGTERM nimmt ihn mit (sonst rechnet er als Waise weiter)
 
 
 def midi_python() -> str:
@@ -3886,12 +3887,14 @@ def midi_make(cfg: dict, path: str) -> str:
     d = _read_json(path[:-4] + ".json")
     bpm = (d.get("request") or {}).get("bpm") or (d.get("result") or {}).get("bpm") or 0
     tmp_j, tmp_m = path[:-4] + ".midi.json.tmp", path[:-4] + ".mid.tmp"
-    env = dict(os.environ, MWS_FFMPEG=tool(cfg, "ffmpeg") or "ffmpeg", TORCH_HOME=os.path.join(MIDI_DIR, "torch"),
+    # Modelle in den eigenen Ordner (Demucs 4.1 lädt über den Hugging-Face-Hub): Deinstallieren = Ordner löschen
+    env = dict(os.environ, MWS_FFMPEG=tool(cfg, "ffmpeg") or "ffmpeg", TORCH_HOME=os.path.join(MIDI_DIR, "torch"), HF_HOME=os.path.join(MIDI_DIR, "hf"),
                MWS_MIDI_DEVICE="mps" if sys.platform == "darwin" else "cpu", PYTORCH_ENABLE_MPS_FALLBACK="1")
     t0 = time.time()
     kw = {} if IS_WIN else {"preexec_fn": lambda: os.nice(10)}
-    proc = subprocess.Popen([py, script, path, tmp_j, tmp_m, str(int(bpm) if bpm else 0)], stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, env=env, **kw)
+    global _midi_proc
+    proc = _midi_proc = subprocess.Popen([py, script, path, tmp_j, tmp_m, str(int(bpm) if bpm else 0)], stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE, env=env, **kw)
     try:
         while proc.poll() is None:
             if _job_active.is_set() or os.path.exists(INFLIGHT) or time.time() - t0 > 1800:
@@ -3917,6 +3920,7 @@ def midi_make(cfg: dict, path: str) -> str:
             ", ".join("%s %d" % (k, len(v)) for k, v in (data.get("tracks") or {}).items())))
         return "ok"
     finally:
+        _midi_proc = None
         for t in (tmp_j, tmp_m):
             try:
                 os.remove(t)
@@ -3924,8 +3928,35 @@ def midi_make(cfg: dict, path: str) -> str:
                 pass
 
 
+def midi_kill() -> None:
+    """Beim Beenden der Brücke: den Rechenprozess mitnehmen."""
+    p = _midi_proc
+    if p is not None and p.poll() is None:
+        try:
+            p.kill()
+            p.wait(timeout=5)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def midi_cleanup() -> int:
+    """Halbe Ergebnisse eines hart beendeten Laufs (.midi.json.tmp / .mid.tmp) wegräumen. → Anzahl."""
+    n = 0
+    for root, dirs, files in os.walk(RENDERS):
+        for f in files:
+            if f.endswith(".midi.json.tmp") or f.endswith(".mid.tmp"):
+                try:
+                    os.remove(os.path.join(root, f))
+                    n += 1
+                except OSError:
+                    pass
+    return n
+
+
 def midi_lane(cfg: dict) -> None:
     """Hintergrund: jedem KI-Track sein Abbild — gewünschte zuerst, dann die neuesten. Nur bei Ruhe."""
+    if midi_cleanup():
+        log("MIDI: halbe Ergebnisse eines abgebrochenen Laufs entfernt")
     time.sleep(30)
     while True:
         try:
@@ -4178,6 +4209,7 @@ def _on_term(signum, frame):
     # launchctl stop / Abmelden / kill schicken SIGTERM: den laufenden Auftrag beim
     # Modellserver mitnehmen, statt ihn als Waise rechnen zu lassen.
     Engine.cancel_inflight("Brücke wird beendet")
+    midi_kill()                     # 3.16.1: auch das MIDI-Abbild nicht als Waise weiterrechnen lassen
     sys.exit(0)
 
 

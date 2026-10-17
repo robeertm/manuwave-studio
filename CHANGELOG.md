@@ -3,9 +3,13 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
-## 3.16.1 — 2026-10-17 (bridge 3.16.0)
+## 3.16.1 — 2026-10-17 (bridge 3.16.1)
 
 ### Fixed
+- The MIDI image keeps its models in its own folder (`midi/hf`, `midi/torch`) — Demucs 4.1 otherwise downloaded into
+  the general Hugging Face cache outside the install folder, so uninstalling left it behind.
+- Stopping the bridge while a MIDI image is being made now ends that process too (it kept running as an orphan), and
+  half-written results of a hard stop are removed at the next start.
 - **Knobs stuck to the mouse.** 3.16.0 lost the release handler when the knobs were rebuilt: after a click the value
   kept following the pointer. Knobs now react to the click only — the value jumps to the clicked spot on the arc and
   stays there. Fine moves: Shift + vertical drag, or the mouse wheel. The default is now Alt-click (a double-click reset
