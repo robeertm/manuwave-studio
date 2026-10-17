@@ -3,6 +3,7 @@
 **Make complete songs — music, lyrics and cover art — with AI that runs entirely on your own computer.**
 No subscription, no cloud, no upload. Describe an idea (or roll the dice), and Manuwave Studio writes a
 production brief, renders the track with ACE-Step 1.5, paints a cover, and lets you master and export it.
+Or make the music yourself: synthesizers, a drum machine and a MIDI keyboard, right in the browser.
 
 [![License: Source-Available](https://img.shields.io/badge/license-source--available-informational)](LICENSE)
 ![macOS](https://img.shields.io/badge/macOS-Apple%20silicon-black)
@@ -30,9 +31,28 @@ hobby showcase, where you can also share your own tracks.
 | 🎚 **Mastering** | Bass, tone, treble, softness, fades, auto-loudness to −14 LUFS — what you hear is what you export. |
 | ⬇️ **Export** | MP3, FLAC, ALAC, WAV, AIFF, WavPack, TTA — with cover, tags and lyrics embedded. |
 | 📦 **Release package** | One ZIP with the mastered file, a 3000 × 3000 cover, upload metadata with AI-disclosure checkboxes, lyrics, a proof-of-origin PDF and a licence template (these two documents are in German for now). |
-| 🔏 **Honest by design** | Every file is labelled “AI-generated” in its tags; an inaudible watermark (macOS/Linux) proves where it came from. |
+| 🎹 **Make your own** | A third tab with ten synthesizers and a drum machine — every knob included — plus a piano roll, patterns, a song arranger and a loop recorder. Play it with a USB/MIDI keyboard or the computer keyboard. *Create track* renders your piece into the library, where it is mastered, exported and published like any other track. |
+| 🔏 **Honest by design** | Every file is labelled in its tags — “AI-generated”, or “self-played” for what you made in *Make your own* (then only the cover counts as AI); an inaudible watermark (macOS/Linux) proves where it came from. |
 
 ![Mastering](docs/screenshots/mastering.png)
+
+## Make your own
+
+![Make your own](docs/screenshots/selber.png)
+
+| | |
+|---|---|
+| 🎛 **Synthesizers** | Analog poly and mono (two oscillators plus sub, ladder filter, two envelopes, two LFOs, unison, glide), acid bass with accent and slide, supersaw, wavetable (six sets: analog, pulse width, sync, wavefolder, vowels, glass), string machine, 4-operator FM with eight algorithms, electric piano, tonewheel organ with nine drawbars, percussion and rotary speaker, and a plucked string (Karplus-Strong). 40 factory sounds; save your own. Arpeggiator on every synth. |
+| 🥁 **Drum machine** | 16 pads, all synthesized (no samples) — 808, 909, techno and lo-fi kits, each pad with level, pan, tune, decay, tone and snap. Step grid with accents. |
+| 🎼 **Patterns & song** | Eight patterns (1–8 bars) per project, piano roll and step grid, swing, quantize, undo. Chain patterns into a song. Up to 16 tracks with volume, pan, EQ, chorus and sends to a shared reverb and tempo-synced delay. |
+| 🎹 **MIDI** | Any class-compliant USB/MIDI keyboard (for example the M-Audio Keystation 61 MK3): velocity, pitch bend, mod wheel, sustain pedal, volume fader, transport buttons in DAW mode, and *MIDI learn* for every knob. Web MIDI needs Chrome or Edge; without it (Safari) the computer keyboard plays (A W S E D … = C … C, Z/X octave). |
+| ⏺ **Recording** | One-bar count-in, metronome, quantize to 1/4…1/32, overdub in a loop — every take can be undone. |
+| 🎵 **Create track** | Renders the arrangement faster than real time into a 24-bit/48 kHz WAV with a −1.5 dBFS limiter and puts it in the library. Projects are saved in the browser; back them up as a file. |
+
+The sound runs in one AudioWorklet (band-limited oscillators, zero-delay-feedback filters), so timing stays tight even
+when the tab is in the background, and the offline render is sample-identical to what you hear.
+
+![Synthesizer](docs/screenshots/synth.png)
 
 ## Requirements
 
@@ -95,6 +115,8 @@ Nothing listens on your network — everything binds to `127.0.0.1`.
   contributions — lyrics you write, your selection and mastering — can be. The release package records them.
 - **Distribution:** services such as DistroKid accept AI-assisted music if you disclose it; the release package
   contains ready-to-tick AI credits. Some platforms (e.g. Bandcamp) don't accept AI-generated music.
+- **Self-played tracks** (*Make your own*) are your own work: the tags, the release package and Fahrstuhlmusik say
+  “self-played”, and only the cover is declared as AI.
 - This is not legal advice.
 
 ## Uninstall

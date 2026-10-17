@@ -73,7 +73,7 @@ HOST = os.environ.get("HOST", "0.0.0.0")      # 3.11: lokale Installation → 12
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, "web")
 
-APP_VERSION = "3.14.0"
+APP_VERSION = "3.15.0"
 BRIDGE_FILE = next((p for p in (os.path.join(ROOT, "bridge", n) for n in ("neonforge_bridge.py", "manuwave_bridge.py"))
                     if os.path.isfile(p)), os.path.join(ROOT, "bridge", "manuwave_bridge.py"))
 BUILD_INFO_FILE = os.path.join(WEB, "build-info.json")
@@ -302,6 +302,8 @@ def clean_track(raw) -> dict:
                 out[k] = v
         except (TypeError, ValueError, OverflowError):
             pass
+    if raw.get("source") == "eigen":
+        out["source"] = "eigen"
     if not out.get("title"):
         raise ValueError("Titel fehlt")
     return out
