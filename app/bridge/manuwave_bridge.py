@@ -58,7 +58,7 @@ try:
 except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.15.0"
+BRIDGE_VERSION = "3.16.0"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
@@ -960,7 +960,7 @@ WM_MAGIC = "4e4601"
 WM_STRENGTH = 3
 AUFBEREITET_V = 2       # Fassung der Archiv-Aufbereitung (adeclip wenn beschnitten + leises Zeichen + 24 Bit)
 TAGS_VERSION = 1
-CAPS = "settings,export,cover,verify,nachruesten,archiv,master,loeschen,paket,web,master_merken"
+CAPS = "settings,export,cover,verify,nachruesten,archiv,master,loeschen,paket,web,master_merken,midi"
 
 
 def caps_for(cfg: dict) -> str:
@@ -1319,7 +1319,7 @@ class SdServer:
 def tools_state(cfg: dict) -> dict:
     return {"ffmpeg": bool(tool(cfg, "ffmpeg")), "audiowmark": bool(tool(cfg, "audiowmark")),
             "key": os.path.isfile(WM_KEY), "image_model": find_image_model(cfg),
-            "writer": find_writer(cfg)}
+            "writer": find_writer(cfg), "midi": bool(midi_python())}
 
 
 def _run(args, timeout=600):
@@ -3581,8 +3581,396 @@ def archive_list() -> list:
                     # 3.12: veröffentlicht? — der Browser gleicht sein 🌐 damit ab (auch nach Veröffentlichen ohne ihn)
                     "web": {k: (d.get("oeffentlich") or {}).get(k, "") for k in ("url", "slug", "at")} if (d.get("oeffentlich") or {}).get("url") else None,
                     # 3.12.3: welche Regler der Mac kennt und mit welchen die Online-Fassung gerechnet wurde
-                    "master": d.get("master"), "web_master": (d.get("oeffentlich") or {}).get("master")})
+                    "master": d.get("master"), "web_master": (d.get("oeffentlich") or {}).get("master"),
+                    # 3.16: MIDI-Abbild — "ok" (mit Fassung), "pending", "failed", "none" (selbst gespielt / nicht eingerichtet)
+                    "midi": midi_state(p, d), "midi_v": MIDI_V})
     return out
+
+
+# automatisch jeder erzeugte song auch auf den instrumenten verfügbar sein") ------------------------------------------
+# Eigene Umgebung $MWS_HOME/midi (Installer-Schritt "MIDI image"): Demucs (MIT) trennt Schlagzeug/Bass/Gesang/Rest,
+# Basic Pitch (Apache-2.0, ONNX) erkennt die Töne, pYIN den Bass, Einsätze je Band das Schlagzeug.
+# 🔑 Gerechnet wird NUR, wenn die Brücke sonst nichts tut — kommt ein Auftrag, wird abgebrochen und später neu begonnen.
+# Ergebnis neben der WAV: <name>.midi.json (Spuren auf dem 1/16-Raster, wie die Projekte in "Selber machen") + <name>.mid.
+MIDI_DIR = os.path.join(DIR, "midi")
+MIDI_V = 1                      # Fassung des Abbilds — höher = alles wird neu gerechnet
+MIDI_SCRIPT = r'''"""Manuwave Studio 3.16 — MIDI-Abbild eines Tracks: Stimmen trennen (Demucs), Noten erkennen (Basic Pitch),
+Schlagzeug aus Einsätzen je Band, alles aufs Raster des Tempos gelegt.
+
+    python transcribe.py <audio> <aus.json> <aus.mid> [bpm]
+
+Ausgabe: JSON mit Spuren auf dem 1/16-Raster (wie die Projekte im Tab „Selber machen“) und eine MIDI-Datei (Typ 1).
+"""
+import json, os, subprocess, sys, warnings, logging
+warnings.filterwarnings("ignore")
+logging.disable(logging.WARNING)
+import numpy as np
+import torch
+
+SR = 44100
+FF = os.environ.get("MWS_FFMPEG", "ffmpeg")
+DEV = os.environ.get("MWS_MIDI_DEVICE", "cpu")
+torch.set_num_threads(max(1, (os.cpu_count() or 4) // 2))
+
+
+def load(path, sr=SR, ch=2):
+    raw = subprocess.run([FF, "-v", "error", "-i", path, "-ac", str(ch), "-ar", str(sr), "-f", "f32le", "-"], capture_output=True, check=True).stdout
+    return np.frombuffer(raw, dtype=np.float32).reshape(-1, ch).T.copy()
+
+
+def separate(wav):
+    from demucs.pretrained import get_model
+    from demucs.apply import apply_model
+    model = get_model("htdemucs")
+    model.eval()
+    x = torch.from_numpy(wav)
+    ref = x.mean(0)
+    x = (x - ref.mean()) / (ref.std() + 1e-8)
+    with torch.no_grad():
+        out = apply_model(model, x[None], device=DEV, split=True, overlap=0.15, progress=False)[0]
+    out = out * (ref.std() + 1e-8) + ref.mean()
+    return {name: out[i].mean(0).numpy() for i, name in enumerate(model.sources)}
+
+
+def notes_of(mono, lo, hi, onset=0.5, frame=0.3, min_ms=80):
+    """Basic Pitch (ONNX) auf einer Stimme → [(start, ende, tonhöhe, stärke)]."""
+    import tempfile, soundfile as sf
+    from basic_pitch import ICASSP_2022_MODEL_PATH
+    from basic_pitch.inference import predict, Model
+    onnx = os.path.join(os.path.dirname(ICASSP_2022_MODEL_PATH), "nmp.onnx")
+    global _BP
+    try:
+        _BP
+    except NameError:
+        _BP = Model(onnx)
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        tmp = f.name
+    try:
+        sf.write(tmp, mono, SR)
+        _, _, ev = predict(tmp, _BP, onset_threshold=onset, frame_threshold=frame, minimum_note_length=min_ms,
+                           minimum_frequency=lo, maximum_frequency=hi, melodia_trick=True)
+    finally:
+        os.remove(tmp)
+    return [(float(s), float(e), int(p), float(a)) for s, e, p, a, *_ in ev]
+
+
+def bass_line(x):
+    """Einstimmige Basslinie mit pYIN (Grundton-Tracker) — Basic Pitch griff bei tiefen Tönen oft Obertöne.
+    Ton = gerundeter Halbton über stimmhafte Rahmen; neue Note bei Tonwechsel oder neuem Anschlag im Bass-Stem."""
+    import librosa
+    sr, hop = 11025, 128
+    y = librosa.resample(x.astype(np.float32), orig_sr=SR, target_sr=sr)
+    f0, voiced, prob = librosa.pyin(y, fmin=28, fmax=330, sr=sr, frame_length=2048, hop_length=hop, fill_na=np.nan)
+    rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=hop)[0]
+    gate = max(1e-4, np.percentile(rms[rms > 0], 60) * 0.25) if (rms > 0).any() else 1e-4
+    on = set(librosa.onset.onset_detect(y=y, sr=sr, hop_length=hop, delta=0.12, wait=4).tolist())
+    midi = np.where(voiced & (rms[:len(f0)] > gate), np.round(librosa.hz_to_midi(np.nan_to_num(f0, nan=1.0))), -1)
+    out, cur, start, amp = [], -1, 0, []
+    for i, m in enumerate(midi.tolist() + [-1]):
+        if m != cur or (i in on and cur >= 0 and i - start > 2):
+            if cur >= 0 and i - start >= 4:          # mindestens ~45 ms
+                out.append((start * hop / sr, i * hop / sr, int(cur), float(min(1, np.mean(amp) / (gate * 8)))))
+            cur, start, amp = m, i, []
+        if i < len(rms):
+            amp.append(rms[i])
+    return out
+
+
+def mono_line(ev, prefer="strong"):
+    """Eine Stimme: überlappende Noten → je Zeitpunkt nur eine (die stärkste bzw. tiefste)."""
+    ev = sorted(ev, key=lambda n: n[0])
+    out = []
+    for n in ev:
+        if out and n[0] < out[-1][1] - 0.03:
+            last = out[-1]
+            better = (n[3] > last[3]) if prefer == "strong" else (n[2] < last[2])
+            if better:
+                out[-1] = (last[0], max(last[0] + 0.03, n[0]), last[2], last[3])
+                out.append(n)
+            continue
+        out.append(n)
+    return [n for n in out if n[1] - n[0] >= 0.05]
+
+
+def drum_hits(x):
+    """Schlagzeug-Stem → [(zeit, "kick"|"snare"|"hat", stärke)]. Je Band eigene Einsätze (ein gemeinsamer Detektor
+    hörte unter der Kick die Hi-Hats nicht): tief = Kick, Mitte = Snare/Clap, hoch = Hi-Hat. Stille Teile zählen nicht."""
+    import librosa
+    sr, hop = SR // 2, 256
+    y = x[::2].astype(np.float32)
+    S = np.abs(librosa.stft(y, n_fft=1024, hop_length=hop))
+    f = librosa.fft_frequencies(sr=sr, n_fft=1024)
+    D = librosa.amplitude_to_db(S, ref=np.max)
+    total = librosa.amplitude_to_db(S.sum(0), ref=np.max)                     # Pegel des Stems je Rahmen
+    bands = (("kick", (f >= 30) & (f < 130), 0.10), ("snare", (f >= 180) & (f < 3500), 0.2), ("hat", f >= 7000, 0.10))
+    found = {}
+    for name, m, delta in bands:
+        env = librosa.onset.onset_strength(S=D[m], sr=sr, hop_length=hop)
+        on = librosa.onset.onset_detect(onset_envelope=env, sr=sr, hop_length=hop, delta=delta, wait=2)
+        band_db = librosa.amplitude_to_db(S[m].sum(0), ref=np.max)
+        pk = env.max() + 1e-9
+        found[name] = [(float(i * hop / sr), float(min(1, 0.35 + 0.65 * env[i] / pk))) for i in on
+                       if total[min(len(total) - 1, i + 1)] > -40 and band_db[min(len(band_db) - 1, i + 1)] > -45]
+    kicks = [t for t, _ in found["kick"]]
+    near = lambda t, ts, d: any(abs(t - u) < d for u in ts)
+    hits = [(t, "kick", v) for t, v in found["kick"]]
+    # der Anschlag einer Kick klickt auch in der Mitte — eine Snare zählt nur ohne Kick oder deutlich kräftig
+    hits += [(t, "snare", v) for t, v in found["snare"] if not near(t, kicks, 0.03) or v > 0.8]
+    snares = [t for t, k, _ in hits if k == "snare"]
+    hits += [(t, "hat", v) for t, v in found["hat"] if not near(t, snares, 0.03)]
+    return hits
+
+
+def tempo_and_beats(mix, drums, prior):
+    """Echtes Tempo + Schlagzeiten. 🔑 Die Musik-KI trifft das bestellte Tempo nicht genau (gemessen: 137,96 statt 136 —
+    nach 3:45 schon 3 Schläge daneben). Darum: Feinsuche ±6 % um die Vorgabe, dann der Beat-Tracker."""
+    import librosa
+    sr, hop = SR // 2, 128
+    loud = np.sqrt((drums ** 2).mean()) > 0.25 * np.sqrt((mix ** 2).mean())   # trägt das Schlagzeug den Takt?
+    env = librosa.onset.onset_strength(y=drums if loud else mix, sr=sr, hop_length=hop)    # beide schon in 22,05 kHz
+    t = np.arange(len(env)) * hop / sr
+    e = env - env.mean()
+    def coh(b):
+        return abs((e * np.exp(2j * np.pi * t / (60.0 / b))).sum())
+    cands = []
+    # nur ±6 % um die Vorgabe: halb/doppelt gewänne sonst bei Achtel-Hi-Hats (gemessen: 202,6 statt 101,3)
+    for p in ([prior] if prior else [librosa.feature.tempo(onset_envelope=env, sr=sr, hop_length=hop)[0]]):
+        if 60 <= p <= 200:
+            cands += list(np.arange(p * 0.94, p * 1.06, 0.01))
+    if not cands:
+        cands = list(np.arange(70, 180, 0.02))
+    bpm = float(max(cands, key=coh))
+    _, bt = librosa.beat.beat_track(onset_envelope=env, sr=sr, hop_length=hop, start_bpm=bpm, tightness=800, units="time")
+    beat = 60.0 / bpm
+    if len(bt) > 16 and abs(np.median(np.diff(bt)) / beat - 1) < 0.03:
+        return bpm, np.asarray(bt, dtype=float)
+    ph = float(np.angle((e * np.exp(2j * np.pi * t / beat)).sum()) / (2 * np.pi) * beat) % beat
+    return bpm, np.arange(ph, t[-1] + beat, beat)
+
+
+def beat_pos(times, beats, bpm):
+    """Zeit → Position in Schlägen, entlang der verfolgten Schläge (linear über die Ränder hinaus)."""
+    times = np.asarray(times, dtype=float)
+    idx = np.arange(len(beats), dtype=float)
+    beat = 60.0 / bpm
+    out = np.interp(times, beats, idx)
+    lo, hi = times < beats[0], times > beats[-1]
+    out[lo] = (times[lo] - beats[0]) / beat
+    out[hi] = idx[-1] + (times[hi] - beats[-1]) / beat
+    return out
+
+
+def downbeat(beats, bpm, events, changes=()):
+    """Welcher Schlag ist die „1“? Kicks auf 1 und 3, Snares/Clap auf 2 und 4, Basswechsel auf der 1 → Verschiebung 0…3.
+    🔑 Bei four-on-the-floor sind die Kicks auf allen Vierteln gleich — dann entscheiden Snares und Basswechsel."""
+    ch = beat_pos(list(changes), beats, bpm) if len(changes) else np.array([])
+    k = beat_pos([t for t, n, _ in events if n == "kick"], beats, bpm) if events else np.array([])
+    sn = beat_pos([t for t, n, _ in events if n == "snare"], beats, bpm) if events else np.array([])
+    def score(o):
+        return (np.cos(np.pi * (k - o)).sum() if len(k) else 0) + (np.cos(np.pi * (sn - o - 1)).sum() if len(sn) else 0) \
+            + (0.5 * np.cos(np.pi * (k - o) / 2).sum() if len(k) else 0) + (1.5 * np.cos(np.pi * (ch - o) / 2).sum() if len(ch) else 0)
+    return max(range(4), key=score)
+
+
+def main():
+    src, out_json, out_mid = sys.argv[1], sys.argv[2], sys.argv[3]
+    bpm = float(sys.argv[4]) if len(sys.argv) > 4 and float(sys.argv[4]) > 0 else 0
+    import time
+    t0 = time.time()
+    wav = load(src)
+    dur = wav.shape[1] / SR
+    cache = os.environ.get("MWS_MIDI_STEMS")          # nur zum Entwickeln: getrennte Stimmen zwischenspeichern
+    if cache and os.path.exists(cache):
+        st = dict(np.load(cache))
+    else:
+        st = separate(wav)
+        if cache:
+            np.savez(cache, **st)
+    t_sep = time.time() - t0
+    drums = drum_hits(st["drums"])
+    bpm, beats = tempo_and_beats(wav.mean(0)[::2], st["drums"][::2], bpm)
+    bass = bass_line(st["bass"])
+    mel = mono_line(notes_of(st["vocals"], 80, 1100, onset=0.5, frame=0.35, min_ms=100))
+    oth = [n for n in notes_of(st["other"], 55, 3000, onset=0.55, frame=0.35, min_ms=110) if n[3] > 0.3]
+    chg = [b[0] for a, b in zip(bass, bass[1:]) if b[2] % 12 != a[2] % 12]        # Basswechsel (Tonklasse)
+    db = downbeat(beats, bpm, drums, chg)
+    first = min([e[0] for e in bass + mel + oth] + [t for t, *_ in drums] + [beats[0]])
+    shift = db - 4 * int(np.ceil((db - float(beat_pos([first], beats, bpm)[0])) / 4))   # Takt 1 beginnt vor dem ersten Ton
+    q = lambda t: int(round((float(beat_pos([t], beats, bpm)[0]) - shift) * 4))
+    # Zeit von Schritt 0 im Original (Schlag "shift" entlang der verfolgten Schläge, außerhalb linear)
+    off = round(float(np.interp(shift, np.arange(len(beats)), beats)) if 0 <= shift < len(beats) else float(beats[0] + shift * 60.0 / bpm), 3)
+    step = 60.0 / bpm / 4
+    def notes(ev, cap=None):
+        o = []
+        for s, e, p, a in ev:
+            st_ = q(s)
+            o.append({"s": st_, "l": max(1, q(e) - st_), "n": p, "v": round(min(1.0, 0.45 + a * 0.6), 2)})
+        o.sort(key=lambda n: (n["s"], n["n"]))
+        if cap:   # höchstens cap Töne, die zugleich anschlagen (die lautesten)
+            keep, by = [], {}
+            for n in o:
+                by.setdefault(n["s"], []).append(n)
+            for s_, g in by.items():
+                keep += sorted(g, key=lambda n: -n["v"])[:cap]
+            o = sorted(keep, key=lambda n: (n["s"], n["n"]))
+        # gleiche Tonhöhe auf demselben Schritt nur einmal
+        seen, uniq = set(), []
+        for n in o:
+            if (n["s"], n["n"]) not in seen:
+                seen.add((n["s"], n["n"])); uniq.append(n)
+        return uniq
+    pad = {"kick": 0, "snare": 1, "hat": 3}
+    dr, seen = [], set()
+    for t, k, v in sorted(drums):
+        s_ = q(t)
+        if (s_, pad[k]) in seen:
+            continue
+        seen.add((s_, pad[k])); dr.append({"s": s_, "n": pad[k], "v": round(v, 2), "l": 1})
+    res = {"v": 1, "bpm": round(bpm, 2), "offset": round(off, 3), "duration": round(dur, 2), "steps_per_beat": 4,
+           "tracks": {"drums": dr, "bass": notes(bass), "chords": notes(oth, cap=5), "melody": notes(mel)},
+           "stats": {"separate_s": round(t_sep, 1), "total_s": round(time.time() - t0, 1), "device": DEV}}
+    # MIDI-Datei (Typ 1) auf dem Raster, Tempo = bpm — lässt sich in jede DAW ziehen
+    import pretty_midi
+    pm = pretty_midi.PrettyMIDI(initial_tempo=bpm)
+    sec = lambda s: max(0.0, s * step)
+    for name, prog, drum in (("Melody", 81, False), ("Chords", 4, False), ("Bass", 38, False), ("Drums", 0, True)):
+        inst = pretty_midi.Instrument(program=prog, is_drum=drum, name=name)
+        for n in res["tracks"][name.lower()]:
+            pitch = {0: 36, 1: 38, 3: 42}[n["n"]] if drum else n["n"]
+            inst.notes.append(pretty_midi.Note(velocity=int(n["v"] * 127), pitch=pitch, start=sec(n["s"]), end=sec(n["s"] + n["l"])))
+        pm.instruments.append(inst)
+    pm.write(out_mid)
+    with open(out_json, "w", encoding="utf-8") as f:
+        json.dump(res, f, separators=(",", ":"))
+    print(json.dumps({k: len(v) for k, v in res["tracks"].items()} | res["stats"] | {"bpm": res["bpm"], "offset": res["offset"]}), flush=True)
+
+
+if __name__ == "__main__":
+    main()
+'''
+_job_active = threading.Event()   # die Render-Spur arbeitet gerade (gesetzt in run())
+_midi_first = []                  # vom Browser gewünscht — kommt zuerst dran
+_midi_lock = threading.Lock()
+
+
+def midi_python() -> str:
+    p = os.path.join(MIDI_DIR, "Scripts", "python.exe") if IS_WIN else os.path.join(MIDI_DIR, "bin", "python")
+    return p if os.path.isfile(p) else ""
+
+
+def midi_state(path: str, d: dict = None) -> str:
+    d = d if d is not None else _read_json(path[:-4] + ".json")
+    if ((d.get("meta") or {}).get("source") or (d.get("request") or {}).get("source")) == "eigen":
+        return "none"                                   # selbst gespielt: die Noten gibt es schon im Projekt
+    if (_read_json(path[:-4] + ".midi.json").get("v") or 0) == MIDI_V and os.path.isfile(path[:-4] + ".mid"):
+        return "ok"
+    fail = _read_json(path[:-4] + ".midi.fail")
+    if fail.get("v") == MIDI_V and time.time() - float(fail.get("at") or 0) < 7 * 86400:
+        return "failed"
+    return "pending" if midi_python() else "none"
+
+
+def _midi_busy() -> bool:
+    if _job_active.is_set() or os.path.exists(INFLIGHT):
+        return True
+    with FileLock("bild-server", blocking=False) as l:     # malt gerade jemand (Cover, Bildwerk)? Dann nicht dazwischen.
+        return not l.held
+
+
+def midi_make(cfg: dict, path: str) -> str:
+    """Ein Abbild rechnen. → "ok", "stopped" (Auftrag kam dazwischen) oder "failed"."""
+    py = midi_python()
+    script = os.path.join(MIDI_DIR, "transcribe.py")
+    if _read_bytes(script) != MIDI_SCRIPT.encode():
+        _write_atomic(script, MIDI_SCRIPT.encode())
+    d = _read_json(path[:-4] + ".json")
+    bpm = (d.get("request") or {}).get("bpm") or (d.get("result") or {}).get("bpm") or 0
+    tmp_j, tmp_m = path[:-4] + ".midi.json.tmp", path[:-4] + ".mid.tmp"
+    env = dict(os.environ, MWS_FFMPEG=tool(cfg, "ffmpeg") or "ffmpeg", TORCH_HOME=os.path.join(MIDI_DIR, "torch"),
+               MWS_MIDI_DEVICE="mps" if sys.platform == "darwin" else "cpu", PYTORCH_ENABLE_MPS_FALLBACK="1")
+    t0 = time.time()
+    kw = {} if IS_WIN else {"preexec_fn": lambda: os.nice(10)}
+    proc = subprocess.Popen([py, script, path, tmp_j, tmp_m, str(int(bpm) if bpm else 0)], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, env=env, **kw)
+    try:
+        while proc.poll() is None:
+            if _job_active.is_set() or os.path.exists(INFLIGHT) or time.time() - t0 > 1800:
+                proc.kill()
+                proc.wait()
+                return "stopped"
+            time.sleep(0.5)
+        out, err = proc.communicate()
+        if proc.returncode != 0 or not os.path.isfile(tmp_j) or not os.path.isfile(tmp_m):
+            msg = err.decode(errors="replace").strip().splitlines()[-1:] or ["?"]
+            _write_atomic(path[:-4] + ".midi.fail", json.dumps({"v": MIDI_V, "at": time.time(), "error": msg[0][-300:]}).encode())
+            log("MIDI-Abbild nicht möglich (%s): %s" % (os.path.basename(path), msg[0][-200:]))
+            return "failed"
+        data = _read_json(tmp_j)
+        data["v"] = MIDI_V
+        _write_atomic(path[:-4] + ".midi.json", json.dumps(data, separators=(",", ":")).encode())
+        os.replace(tmp_m, path[:-4] + ".mid")
+        try:
+            os.remove(path[:-4] + ".midi.fail")
+        except OSError:
+            pass
+        log("MIDI-Abbild fertig in %.0f s: %s (%s BPM, %s)" % (time.time() - t0, os.path.basename(path), data.get("bpm"),
+            ", ".join("%s %d" % (k, len(v)) for k, v in (data.get("tracks") or {}).items())))
+        return "ok"
+    finally:
+        for t in (tmp_j, tmp_m):
+            try:
+                os.remove(t)
+            except OSError:
+                pass
+
+
+def midi_lane(cfg: dict) -> None:
+    """Hintergrund: jedem KI-Track sein Abbild — gewünschte zuerst, dann die neuesten. Nur bei Ruhe."""
+    time.sleep(30)
+    while True:
+        try:
+            if not midi_python() or cfg.get("midi") is False or _midi_busy():
+                time.sleep(20)
+                continue
+            with _midi_lock:
+                want = [p for p in _midi_first if os.path.isfile(p)]
+            todo = want + [p for p in sorted(all_archived(), reverse=True) if p not in want]
+            nxt = next((p for p in todo if midi_state(p) == "pending"), None)
+            if not nxt:
+                time.sleep(60)
+                continue
+            res = midi_make(cfg, nxt)
+            if res != "stopped":
+                with _midi_lock:
+                    if nxt in _midi_first:
+                        _midi_first.remove(nxt)
+            time.sleep(2 if res == "ok" else 20)
+        except Exception as e:  # noqa: BLE001
+            log("MIDI-Spur: %s" % e)
+            time.sleep(60)
+
+
+def midi_result(paths: list) -> bytes:
+    """Auftrag „midi": für jeden gefragten Track das Abbild (JSON + .mid als base64) oder seinen Stand.
+    Noch nicht fertige rücken nach vorn. Als JSON-Datei (ein Abbild ist ~100 KB — zu groß für den JSON-Körper)."""
+    import base64
+    items = {}
+    for rel in paths[:40]:
+        p = os.path.realpath(os.path.join(HOME, rel))
+        if not p.startswith(os.path.realpath(RENDERS) + os.sep) or not os.path.isfile(p):
+            items[rel] = {"state": "missing"}
+            continue
+        st = midi_state(p)
+        if st == "ok":
+            items[rel] = {"state": "ok", "data": _read_json(p[:-4] + ".midi.json"),
+                          "mid": base64.b64encode(_read_bytes(p[:-4] + ".mid") or b"").decode()}
+        else:
+            items[rel] = {"state": st}
+            if st == "pending":
+                with _midi_lock:
+                    if p not in _midi_first:
+                        _midi_first.append(p)
+    return json.dumps({"items": items, "v": MIDI_V}, separators=(",", ":")).encode()
 
 
 # Jetzt geht ALLES eines Tracks in den Papierkorb des Macs: WAV, .json, Cover (.jpg + Rohling .roh.jpg) und das
@@ -3595,7 +3983,7 @@ TRASH = os.path.join(HOME, ".Trash")
 def track_files(path: str) -> list:
     """Alle Dateien eines Archiv-Tracks (die WAV zuerst)."""
     base = path[:-4]
-    out = [path] + [base + s for s in (".json", ".jpg", ".roh.jpg") if os.path.isfile(base + s)]
+    out = [path] + [base + s for s in (".json", ".jpg", ".roh.jpg", ".midi.json", ".mid") if os.path.isfile(base + s)]
     orig = os.path.join(ORIG_DIR, os.path.basename(os.path.dirname(path)), os.path.basename(path))
     if os.path.isfile(orig):
         out.append(orig)
@@ -3681,6 +4069,9 @@ def tool_job(cfg: dict, srv, job: dict) -> None:
     tick = lambda m: srv.progress(jid, m, job)  # noqa: E731
     if kind == "archiv":
         srv.result_json(jid, {"tracks": archive_list()})
+    elif kind == "midi":
+        rels = req.get("archived")
+        srv.result_file(jid, midi_result(rels if isinstance(rels, list) else []), "application/vnd.manuwave.file+json")
     elif kind == "master_merken":
         srv.result_json(jid, remember_masters(req.get("items") if isinstance(req.get("items"), list) else []))
     elif kind == "loeschen":
@@ -3840,6 +4231,7 @@ def run(cfg: dict) -> None:
     log("Manuwave-Studio-Brücke %s · Server %s · Ablage %s · Brief-Schreiber %s" % (
         BRIDGE_VERSION, cfg["server"], RENDERS, find_writer(cfg) or "keiner"))
     threading.Thread(target=brief_lane, args=(cfg,), name="brief", daemon=True).start()
+    threading.Thread(target=midi_lane, args=(cfg,), name="midi", daemon=True).start()    # 3.16: MIDI-Abbilder bei Ruhe
     # Ist die letzte Brücke ohne Aufräumen gestorben (Absturz, Strom, kill -9)?
     Engine.cancel_inflight("vom letzten Lauf übrig")
     ImageServer(cfg).cleanup_at_start()
@@ -3869,6 +4261,7 @@ def run(cfg: dict) -> None:
         title = (job.get("meta") or {}).get("title", "")
         log("Auftrag %s (%s) %s" % (jid, job.get("kind"), title))
         tick = lambda msg: srv.progress(jid, msg, job)  # noqa: E731
+        _job_active.set()          # 3.16: die MIDI-Spur hält sofort an
         Awake.hold(cfg)
         try:
             # Nur Musik und Analyse brauchen den Modellserver — ein Cover oder Nachrüsten nicht.
@@ -3939,6 +4332,7 @@ def run(cfg: dict) -> None:
             srv.error(jid, msg)
             log("Fehler bei %s: %s" % (jid, msg))
         finally:
+            _job_active.clear()
             Awake.release(cfg)
 
 
