@@ -361,7 +361,8 @@ class VAVoice {
   constructor(ins) {
     this.ins = ins; this.active = false; this.released = false; this.t = 0;
     this.amp = new Env(); this.fenv = new Env();
-    this.ph1 = new Float64Array(7); this.ph2 = new Float64Array(7); this.phs = 0;
+    this.ph1 = new Float64Array(7); this.ph2 = new Float64Array(7); this.ph3 = new Float64Array(7); this.phs = 0;
+    this.hp = new Float64Array(4);        // Hochpass vor dem Filter (2 × einpolig, L/R)
     this.fL = new Ladder(); this.fR = new Ladder(); this.sL = new SVF(); this.sR = new SVF();
     this.freq = 440; this.target = 440; this.vel = 1; this.n = 60; this.id = 0;
     this.tri1 = 0; this.tri2 = 0;
@@ -372,8 +373,9 @@ class VAVoice {
     this.target = mtof(n);
     if (!glide || !this.active) this.freq = this.target;
     if (!this.active) {
-      for (let i = 0; i < 7; i++) { this.ph1[i] = (rnd() * 0.5 + 0.5); this.ph2[i] = (rnd() * 0.5 + 0.5); }
+      for (let i = 0; i < 7; i++) { this.ph1[i] = (rnd() * 0.5 + 0.5); this.ph2[i] = (rnd() * 0.5 + 0.5); this.ph3[i] = (rnd() * 0.5 + 0.5); }
       if (p.uni <= 1) { this.ph1[0] = 0; this.ph2[0] = 0; }
+      this.hp.fill(0);
       this.fL.reset(); this.fR.reset(); this.sL.reset(); this.sR.reset();
     }
     this.active = true;
@@ -388,6 +390,11 @@ class VAVoice {
     const det = num(p.unidet, 0.2) * 0.5, spread = num(p.unispread, 0.5);
     const w1 = WAVE[p.o1w] ?? 0, w2 = WAVE[p.o2w] ?? 0;
     const l1 = num(p.o1lvl, 0.8), l2 = num(p.o2lvl, 0), lsub = num(p.sub, 0), lno = num(p.noise, 0);
+    // 3.16: dritter Oszillator (Minimoog, Taurus) — ohne Wavetable, läuft frei (kein Sync)
+    const l3 = num(p.o3lvl, 0), w3 = l3 > 0 ? (WAVE[p.o3w] ?? 0) : 0;
+    const r3 = Math.pow(2, num(p.o3oct, 0) + (num(p.o3semi, 0) + num(p.o3fine, 0) / 100) / 12);
+    // 3.16: Hochpass vor dem Filter (Juno, MS-20) — zwei einpolige Stufen, 12 dB/Okt.
+    const hpf = num(p.hpf, 20), hpA = hpf > 21 ? 1 - Math.exp(-2 * Math.PI * Math.min(hpf, sr * 0.2) / sr) : 0;
     const r1 = Math.pow(2, num(p.o1oct, 0) + (num(p.o1semi, 0) + num(p.o1fine, 0) / 100) / 12);
     const r2 = Math.pow(2, num(p.o2oct, 0) + (num(p.o2semi, 0) + num(p.o2fine, 0) / 100) / 12);
     const sync = p.o2sync ? 1 : 0, fmA = num(p.fm, 0) * 3;
@@ -405,7 +412,7 @@ class VAVoice {
     const bendM = ins.pitchMul();
     const dms = this.dms || (this.dms = new Float64Array(7)), pans = this.pans || (this.pans = new Float64Array(7));
     for (let u = 0; u < uni; u++) { const off = uni === 1 ? 0 : (u / (uni - 1) - 0.5) * 2; dms[u] = Math.pow(2, off * det / 12); pans[u] = off * spread; }
-    const tri1 = this.tr1 || (this.tr1 = new Float64Array(7)), tri2 = this.tr2 || (this.tr2 = new Float64Array(7));
+    const tri1 = this.tr1 || (this.tr1 = new Float64Array(7)), tri2 = this.tr2 || (this.tr2 = new Float64Array(7)), tri3 = this.tr3 || (this.tr3 = new Float64Array(7));
     const ampAcc = 1 + accent * 0.5;
     const stereo = uni > 1 && spread > 0;          // ohne Stereobreite reicht ein Filter (halbe Rechenzeit)
     let g = this.g || 0.1;
@@ -430,10 +437,17 @@ class VAVoice {
         }
         let ph = this.ph1[u];
         const dA = fmA > 0 ? dtA * (1 + fmA * o2) : dtA;
-        const o1 = osc(w1, ph, dA > 0 ? dA : -dA || 1e-6, pw1, tab, wtpos, lv1, sr, tri1, u);
+        const o1 = osc(w1, ph, dA > 0 ? dA : -dA || 1e-6, pw1, tab, wtpos, lv1, sr, tri1, u, dA < 0 ? -1 : 1);
         ph += dA; if (ph >= 1) { ph -= 1; if (sync) this.ph2[u] = 0; } else if (ph < 0) ph += 1;
         this.ph1[u] = ph;
-        const s = o1 * l1 + o2 * l2, pan = pans[u];
+        let s = o1 * l1 + o2 * l2;
+        if (l3 > 0) {
+          const dtC = f0 * r3 * dms[u] / sr;
+          let p3 = this.ph3[u];
+          s += osc(w3 === 4 ? 0 : w3, p3, dtC, pw1, null, 0, 0, sr, tri3, u) * l3;
+          p3 += dtC; if (p3 >= 1) p3 -= 1; this.ph3[u] = p3;
+        }
+        const pan = pans[u];
         sl += s * (1 - pan); sr2 += s * (1 + pan);
       }
       sl *= norm; sr2 *= norm;
@@ -444,6 +458,11 @@ class VAVoice {
         sl += sq * lsub * 0.3; sr2 += sq * lsub * 0.3;
       }
       if (lno > 0) { const nz = rnd() * lno * 0.25; sl += nz; sr2 += nz; }
+      if (hpA) {
+        const hp = this.hp;
+        hp[0] += hpA * (sl - hp[0]); sl -= hp[0]; hp[1] += hpA * (sl - hp[1]); sl -= hp[1];
+        if (stereo) { hp[2] += hpA * (sr2 - hp[2]); sr2 -= hp[2]; hp[3] += hpA * (sr2 - hp[3]); sr2 -= hp[3]; }
+      }
       // Filter (Steuerrate: alle 4 Samples)
       if ((i & 3) === 0 || i === a) {
         const oct = baseOct + fenvA * fe * 7 + m.cut[i] + accent * 1.2;
@@ -465,13 +484,13 @@ class VAVoice {
   }
 }
 // ein Oszillatorwert
-function osc(w, ph, dt, pw, tab, wtpos, f, sr, tri, u) {
+function osc(w, ph, dt, pw, tab, wtpos, f, sr, tri, u, dir = 1) {   // dir: -1, wenn tiefe FM die Phase rückwärts laufen lässt
   switch (w) {
     case 0: return 2 * ph - 1 - blep(ph, dt);
     case 1: { let v = ph < pw ? 1 : -1; v += blep(ph, dt); let t = ph - pw; if (t < 0) t += 1; v -= blep(t, dt); return v; }
     case 2: {   // Dreieck aus integriertem, bandbegrenztem Rechteck (leicht leckend gegen Gleichanteil)
       let v = ph < 0.5 ? 1 : -1; v += blep(ph, dt); let t = ph - 0.5; if (t < 0) t += 1; v -= blep(t, dt);
-      tri[u] = tri[u] * 0.9998 + v * 4 * dt; return tri[u];
+      tri[u] = tri[u] * 0.9998 + v * 4 * dt * dir; return tri[u];
     }
     case 3: return sinp(ph);
     case 4: return tab ? wtRead(tab, wtpos, ph, f) : 0;      // f = Oktavstufe (je Block)
@@ -1206,6 +1225,11 @@ class Engine extends AudioWorkletProcessor {
         if (!busy(ins)) continue;                    // still: nichts zu rechnen
         if (ins.l1) modBlock(ins, at, to);
         ins.render(this.bufL[ti], this.bufR[ti], at, to);
+        // 3.16: Regler "Pegel" — Orgel und Drums rechnen ihn selbst, alle anderen hier (0,8 = neutral wie bisher)
+        if (!(ins instanceof Organ || ins instanceof Drums)) {
+          const g = num(ins.p.vol, 0.8) / 0.8;
+          if (g !== 1) { const L = this.bufL[ti], R = this.bufR[ti]; for (let i = at; i < to; i++) { L[i] *= g; R[i] *= g; } }
+        }
       }
       at = to;
     };

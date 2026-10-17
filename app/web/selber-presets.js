@@ -49,6 +49,10 @@ export const SCHEMA = {
       SEL("o2w", "Welle", "Wave", WAVES, "saw"), K("o2oct", "Oktave", "Octave", -2, 2, 0, { st: 1 }), K("o2semi", "Halbton", "Semitone", -12, 12, 0, { st: 1, u: "st" }),
       K("o2fine", "Fein", "Fine", -50, 50, 7, { u: "ct" }), K("o2pw", "Pulsbreite", "Pulse width", 0.03, 0.97, 0.5, { u: "%" }), K("o2lvl", "Pegel", "Level", 0, 1, 0, { u: "%" }),
       TOG("o2sync", "Hard Sync", "Hard sync"), K("fm", "FM 2→1", "FM 2→1", 0, 1, 0, { u: "%" })] },
+    { id: "osc3", de: "Oszillator 3", en: "Oscillator 3", p: [
+      SEL("o3w", "Welle", "Wave", WAVES.filter(w => w[0] !== "wt"), "saw"), K("o3oct", "Oktave", "Octave", -2, 2, 0, { st: 1 }),
+      K("o3semi", "Halbton", "Semitone", -12, 12, 0, { st: 1, u: "st" }), K("o3fine", "Fein", "Fine", -50, 50, -5, { u: "ct" }),
+      K("o3lvl", "Pegel", "Level", 0, 1, 0, { u: "%" })] },
     { id: "mix", de: "Mischer & Unisono", en: "Mixer & unison", p: [
       K("sub", "Sub-Oszillator", "Sub oscillator", 0, 1, 0, { u: "%" }), K("noise", "Rauschen", "Noise", 0, 1, 0, { u: "%" }),
       K("uni", "Unisono", "Unison", 1, 7, 1, { st: 1 }), K("unidet", "Verstimmung", "Detune", 0, 1, 0.2, { u: "%" }),
@@ -63,7 +67,8 @@ export const SCHEMA = {
         ["hp12", "Hochpass 12 dB", "High-pass 12 dB"], ["bp12", "Bandpass", "Band-pass"], ["notch", "Kerbe", "Notch"]], "lp24"),
       K("cut", "Cutoff", "Cutoff", 20, 20000, 2400, { c: "exp", u: "Hz" }), K("res", "Resonanz", "Resonance", 0, 1, 0.2, { u: "%" }),
       K("fenv", "Hüllkurve", "Env amount", -1, 1, 0.3, { u: "%" }), K("fkey", "Tastatur", "Key track", 0, 1, 0.3, { u: "%" }),
-      K("fvel", "Anschlag", "Velocity", 0, 1, 0.3, { u: "%" }), K("accent", "Akzent (303)", "Accent (303)", 0, 1, 0, { u: "%" })] },
+      K("fvel", "Anschlag", "Velocity", 0, 1, 0.3, { u: "%" }), K("accent", "Akzent (303)", "Accent (303)", 0, 1, 0, { u: "%" }),
+      K("hpf", "Hochpass davor", "High-pass before", 20, 2000, 20, { c: "exp", u: "Hz" })] },
     { id: "fenv", de: "Filter-Hüllkurve", en: "Filter envelope", p: [
       K("fa", "Attack", "Attack", 0.001, 5, 0.005, { c: "exp", u: "s" }), K("fd", "Decay", "Decay", 0.005, 8, 0.4, { c: "exp", u: "s" }),
       K("fs", "Sustain", "Sustain", 0, 1, 0.3, { u: "%" }), K("fr", "Release", "Release", 0.005, 8, 0.4, { c: "exp", u: "s" })] },
@@ -144,11 +149,11 @@ export const PAD_TO_GM = [36, 38, 39, 42, 46, 41, 45, 48, 37, 56, 49, 51, 70, 63
 
 const pad = (model, o = {}) => ({ model, lvl: 0.8, pan: 0, tune: 0, dec: 1, tone: 0.5, snap: 0.5, ...o });
 export const KITS = {
-  "808": { de: "808 — rund und tief", en: "808 — round and deep", kit: [
+  "808": { de: "TR-808 — rund und tief", en: "TR-808 — round and deep", kit: [
     pad("kick808", { lvl: 0.95, dec: 1.4, tone: 0.35 }), pad("snare", { tone: 0.4 }), pad("clap", { lvl: 0.7 }), pad("hatc", { lvl: 0.55, pan: 0.2 }), pad("hato", { lvl: 0.5, pan: 0.2 }),
     pad("tomlo", { pan: -0.3 }), pad("tommid"), pad("tomhi", { pan: 0.3 }), pad("rim", { lvl: 0.6 }), pad("cowbell", { lvl: 0.5 }), pad("crash", { lvl: 0.5, pan: -0.2 }),
     pad("ride", { lvl: 0.45, pan: 0.25 }), pad("shaker", { lvl: 0.45, pan: -0.25 }), pad("conga", { pan: 0.35 }), pad("clave", { lvl: 0.55 }), pad("zap", { lvl: 0.5 })] },
-  "909": { de: "909 — House & Techno", en: "909 — house & techno", kit: [
+  "909": { de: "TR-909 — House & Techno", en: "TR-909 — house & techno", kit: [
     pad("kick909", { lvl: 0.95, snap: 0.6 }), pad("snare909", { snap: 0.65 }), pad("clap", { lvl: 0.75 }), pad("hatc", { lvl: 0.6, tone: 0.65, pan: 0.15 }),
     pad("hato", { lvl: 0.55, tone: 0.65, pan: 0.15 }), pad("tomlo", { pan: -0.3, dec: 0.8 }), pad("tommid", { dec: 0.8 }), pad("tomhi", { pan: 0.3, dec: 0.8 }), pad("rim", { lvl: 0.6 }),
     pad("cowbell", { lvl: 0.45 }), pad("crash", { lvl: 0.5 }), pad("ride", { lvl: 0.5, tone: 0.6, pan: 0.2 }), pad("shaker", { lvl: 0.45 }), pad("tamb", { lvl: 0.45, pan: -0.3 }),
@@ -158,6 +163,28 @@ export const KITS = {
     pad("hatc", { lvl: 0.55, tone: 0.8, dec: 0.7 }), pad("hato", { lvl: 0.5, tone: 0.75, dec: 0.8 }), pad("tomlo", { tune: -5 }), pad("tommid", { tune: -3 }), pad("tomhi"),
     pad("rim", { lvl: 0.65, tune: 2 }), pad("cowbell", { lvl: 0.4, tune: -2 }), pad("crash", { lvl: 0.45 }), pad("ride", { lvl: 0.55, tone: 0.75 }), pad("shaker", { lvl: 0.4 }),
     pad("lofi", { lvl: 0.4 }), pad("clave", { lvl: 0.45 }), pad("zap", { lvl: 0.5, tune: -5 })] },
+  // 3.16: weitere Klassiker — Nachbauten mit den eigenen Klangmodellen
+  "606": { de: "TR-606 — leicht und trocken", en: "TR-606 — light and dry", kit: [
+    pad("kick808", { lvl: 0.9, tune: 4, dec: 0.6, tone: 0.55, snap: 0.6 }), pad("snare", { tone: 0.65, snap: 0.75, dec: 0.6 }), pad("clap", { lvl: 0.6, dec: 0.8 }),
+    pad("hatc", { lvl: 0.55, tone: 0.8, dec: 0.6, pan: 0.15 }), pad("hato", { lvl: 0.5, tone: 0.8, dec: 0.7, pan: 0.15 }), pad("tomlo", { tune: 3, dec: 0.6, pan: -0.3 }),
+    pad("tommid", { tune: 3, dec: 0.6 }), pad("tomhi", { tune: 3, dec: 0.6, pan: 0.3 }), pad("rim", { lvl: 0.55 }), pad("cowbell", { lvl: 0.4 }), pad("cymbal", { lvl: 0.45, tone: 0.7 }),
+    pad("ride", { lvl: 0.4, tone: 0.7 }), pad("shaker", { lvl: 0.4 }), pad("clave", { lvl: 0.5 }), pad("tamb", { lvl: 0.4 }), pad("zap", { lvl: 0.45, tune: 5 })] },
+  cr78: { de: "CR-78 — Vintage-Rhythmusbox", en: "CR-78 — vintage rhythm box", kit: [
+    pad("kickacoustic", { lvl: 0.85, dec: 0.6, tone: 0.3, snap: 0.15 }), pad("snare", { tone: 0.7, snap: 0.3, dec: 0.5 }), pad("rim", { lvl: 0.6, tone: 0.6 }),
+    pad("hatc", { lvl: 0.5, tone: 0.9, dec: 0.4, snap: 0.3 }), pad("hato", { lvl: 0.4, tone: 0.9, dec: 0.5, snap: 0.3 }), pad("conga", { tune: -3, pan: -0.3 }),
+    pad("conga", { tune: 4, pan: 0.3 }), pad("conga", { tune: 9, dec: 0.7, pan: 0.4 }), pad("clave", { lvl: 0.55 }), pad("cowbell", { lvl: 0.45, tune: 2 }),
+    pad("cymbal", { lvl: 0.4, tone: 0.6, dec: 0.7 }), pad("tamb", { lvl: 0.45, pan: -0.2 }), pad("shaker", { lvl: 0.45, pan: 0.2 }), pad("tomlo", { tune: -2, tone: 0.3 }),
+    pad("tomhi", { tone: 0.3 }), pad("lofi", { lvl: 0.3 })] },
+  "80s": { de: "80er — TR-707 & LinnDrum-Stil", en: "80s — TR-707 & LinnDrum style", kit: [
+    pad("kick909", { lvl: 0.95, tone: 0.4, snap: 0.4, dec: 0.9 }), pad("snare909", { tone: 0.5, snap: 0.55, dec: 1.1 }), pad("clap", { lvl: 0.75, dec: 1.1 }),
+    pad("hatc", { lvl: 0.55, tone: 0.55, pan: 0.15 }), pad("hato", { lvl: 0.5, tone: 0.55, dec: 1.1, pan: 0.15 }), pad("tomlo", { dec: 1.3, tone: 0.45, pan: -0.35 }),
+    pad("tommid", { dec: 1.3, tone: 0.45 }), pad("tomhi", { dec: 1.3, tone: 0.45, pan: 0.35 }), pad("rim", { lvl: 0.6 }), pad("cowbell", { lvl: 0.5 }), pad("crash", { lvl: 0.55 }),
+    pad("ride", { lvl: 0.45, pan: 0.2 }), pad("tamb", { lvl: 0.5, pan: -0.25 }), pad("shaker", { lvl: 0.4 }), pad("conga", { pan: 0.3 }), pad("clave", { lvl: 0.5 })] },
+  trap: { de: "Trap — langes 808 und schnelle Hats", en: "Trap — long 808 and fast hats", kit: [
+    pad("kick808", { lvl: 1, dec: 3.2, tone: 0.2, snap: 0.55 }), pad("snare909", { tone: 0.75, snap: 0.8, dec: 0.8 }), pad("clap", { lvl: 0.8, dec: 1.2 }),
+    pad("hatc", { lvl: 0.45, tone: 0.85, dec: 0.5, pan: 0.15 }), pad("hato", { lvl: 0.4, tone: 0.8, dec: 0.9, pan: 0.15 }), pad("tomlo", { tune: -4, dec: 1.5 }), pad("tommid", { tune: -2, dec: 1.4 }),
+    pad("tomhi", { dec: 1.3 }), pad("rim", { lvl: 0.6, tune: 3 }), pad("cowbell", { lvl: 0.4 }), pad("crash", { lvl: 0.45 }), pad("ride", { lvl: 0.4 }), pad("shaker", { lvl: 0.35 }),
+    pad("zap", { lvl: 0.45, tune: -7 }), pad("clave", { lvl: 0.45 }), pad("lofi", { lvl: 0.3 })] },
   lofi: { de: "Lo-Fi — weich und staubig", en: "Lo-fi — soft and dusty", kit: [
     pad("kickacoustic", { lvl: 0.9, dec: 0.8, tone: 0.2, snap: 0.2 }), pad("snare", { tone: 0.15, snap: 0.3, dec: 0.8 }), pad("clap", { lvl: 0.5, tone: 0.2 }),
     pad("hatc", { lvl: 0.4, tone: 0.2, snap: 0.8 }), pad("hato", { lvl: 0.35, tone: 0.25, snap: 0.8 }), pad("tomlo", { tone: 0.2 }), pad("tommid"), pad("tomhi"),
@@ -166,18 +193,39 @@ export const KITS = {
 };
 
 // ---- Synthesizer-Modelle: was man im "Instrument"-Menü wählt ----
+// g: Gruppe im Menü — "base" Grundmodelle, "classic" Nachbauten berühmter Synthesizer (3.16), "drums"
+// Die Namen der Klassiker nennen nur das Vorbild; es sind eigene Nachbauten, keine Samples und kein Bezug zu den Herstellern.
+export const MODEL_GROUPS = [["base", "Grundmodelle", "Basic models"], ["classic", "Klassiker (Nachbau)", "Classics (recreations)"], ["drums", "Drums", "Drums"]];
 export const MODELS = [
-  { id: "poly", engine: "va", de: "Analog Poly", en: "Analog Poly", hd: "Flächen, Akkorde, Brass — zwei Oszillatoren, Leiterfilter", he: "Pads, chords, brass — two oscillators, ladder filter" },
-  { id: "mono", engine: "va", de: "Analog Mono", en: "Analog Mono", hd: "Bässe und Leads — ein Ton, Glide, drei Oszillatoren", he: "Basses and leads — one note, glide, three oscillators" },
-  { id: "acid", engine: "va", de: "Acid-Bass", en: "Acid Bass", hd: "Quietschende Resonanz, Akzent und Slide", he: "Squelchy resonance, accent and slide" },
-  { id: "super", engine: "va", de: "Supersaw", en: "Supersaw", hd: "Sieben verstimmte Sägezähne — Trance, Hymnen", he: "Seven detuned saws — trance, anthems" },
-  { id: "wave", engine: "va", de: "Wavetable", en: "Wavetable", hd: "Wandernde Wellenformen — Vokale, Glas, Sync", he: "Moving waveforms — vowels, glass, sync" },
-  { id: "strings", engine: "va", de: "String Machine", en: "String Machine", hd: "Streicherflächen der 70er/80er", he: "70s/80s string ensembles" },
-  { id: "fm", engine: "fm", de: "FM-Synth (4 Operatoren)", en: "FM synth (4 operators)", hd: "Glocken, E-Pianos, Digitalbässe, Metall", he: "Bells, e-pianos, digital basses, metal" },
-  { id: "ep", engine: "ep", de: "E-Piano", en: "Electric piano", hd: "Zinken-Piano mit Biss und Tremolo", he: "Tine piano with bark and tremolo" },
-  { id: "organ", engine: "organ", de: "Orgel", en: "Organ", hd: "Neun Zugriegel, Perkussion, Leslie", he: "Nine drawbars, percussion, rotary" },
-  { id: "pluck", engine: "pluck", de: "Saite / Pluck", en: "String / pluck", hd: "Gezupft: Gitarre, Harfe, Koto", he: "Plucked: guitar, harp, koto" },
-  { id: "drums", engine: "drums", de: "Drum-Machine", en: "Drum machine", hd: "16 Pads, alle synthetisch — 808, 909, Techno, Lo-Fi", he: "16 pads, all synthetic — 808, 909, techno, lo-fi" },
+  { id: "poly", g: "base", engine: "va", de: "Analog Poly", en: "Analog Poly", hd: "Flächen, Akkorde, Brass — zwei Oszillatoren, Leiterfilter", he: "Pads, chords, brass — two oscillators, ladder filter" },
+  { id: "mono", g: "base", engine: "va", de: "Analog Mono", en: "Analog Mono", hd: "Bässe und Leads — ein Ton, Glide, drei Oszillatoren", he: "Basses and leads — one note, glide, three oscillators" },
+  { id: "super", g: "base", engine: "va", de: "Supersaw", en: "Supersaw", hd: "Sieben verstimmte Sägezähne wie beim JP-8000 — Trance, Hymnen", he: "Seven detuned saws like the JP-8000 — trance, anthems" },
+  { id: "wave", g: "base", engine: "va", de: "Wavetable", en: "Wavetable", hd: "Wandernde Wellenformen — Vokale, Glas, Sync", he: "Moving waveforms — vowels, glass, sync" },
+  { id: "strings", g: "base", engine: "va", de: "String Machine", en: "String Machine", hd: "Streicherflächen der 70er/80er (Solina, Polymoog)", he: "70s/80s string ensembles (Solina, Polymoog)" },
+  { id: "fm", g: "base", engine: "fm", de: "FM-Synth (4 Operatoren)", en: "FM synth (4 operators)", hd: "Glocken, E-Pianos, Digitalbässe, Metall", he: "Bells, e-pianos, digital basses, metal" },
+  { id: "ep", g: "base", engine: "ep", de: "E-Piano", en: "Electric piano", hd: "Zinken-Piano mit Biss und Tremolo", he: "Tine piano with bark and tremolo" },
+  { id: "organ", g: "base", engine: "organ", de: "Orgel", en: "Organ", hd: "Neun Zugriegel, Perkussion, Leslie", he: "Nine drawbars, percussion, rotary" },
+  { id: "pluck", g: "base", engine: "pluck", de: "Saite / Pluck", en: "String / pluck", hd: "Gezupft: Gitarre, Harfe, Koto", he: "Plucked: guitar, harp, koto" },
+  // Klassiker — eigene Nachbauten im Stil der Vorbilder
+  { id: "acid", g: "classic", engine: "va", de: "TB-303 · Acid-Bass", en: "TB-303 · acid bass", hd: "Säge oder Rechteck, quietschendes 24-dB-Filter, Akzent ab starkem Anschlag. Slide: Note bis in die nächste ziehen — dann gleitet der Ton ohne neuen Anschlag.", he: "Saw or square, squelchy 24 dB filter, accent on hard hits. Slide: drag a note into the next one — it glides without retriggering." },
+  { id: "minimoog", g: "classic", engine: "va", de: "Minimoog · Bass & Lead", en: "Minimoog · bass & lead", hd: "Drei Oszillatoren, Leiterfilter mit Drive, einstimmig — der Bass- und Lead-Klassiker", he: "Three oscillators, ladder filter with drive, mono — the bass and lead classic" },
+  { id: "juno", g: "classic", engine: "va", de: "Juno-60 · Chorus-Poly", en: "Juno-60 · chorus poly", hd: "Säge + Puls + Sub aus einem Oszillator, Hochpass, PWM — und der typische Chorus", he: "Saw + pulse + sub from one oscillator, high-pass, PWM — and that chorus" },
+  { id: "jupiter", g: "classic", engine: "va", de: "Jupiter-8 · Brass & Flächen", en: "Jupiter-8 · brass & pads", hd: "Zwei Oszillatoren, Sync und Kreuzmodulation, breite Polyklänge", he: "Two oscillators, sync and cross-mod, wide poly sounds" },
+  { id: "prophet", g: "classic", engine: "va", de: "Prophet-5 · warme Poly-Klänge", en: "Prophet-5 · warm poly sounds", hd: "Weiche Flächen, Keys, Poly-Mod-Glocken", he: "Soft pads, keys, poly-mod bells" },
+  { id: "obx", g: "classic", engine: "va", de: "OB-Xa · Rock-Brass", en: "OB-Xa · rock brass", hd: "Helles 12-dB-Filter, große Sägezahn-Akkorde (Jump)", he: "Bright 12 dB filter, big saw chords (Jump)" },
+  { id: "sh101", g: "classic", engine: "va", de: "SH-101 · Mono-Bass & Bleeps", en: "SH-101 · mono bass & bleeps", hd: "Ein Oszillator mit Säge, Puls und Sub — Bässe, Blubbern, Arp-Leads", he: "One oscillator with saw, pulse and sub — basses, blips, arp leads" },
+  { id: "ms20", g: "classic", engine: "va", de: "MS-20 · schreiende Filter", en: "MS-20 · screaming filters", hd: "Hochpass und Tiefpass hintereinander, viel Resonanz und Dreck", he: "High-pass into low-pass, lots of resonance and grit" },
+  { id: "odyssey", g: "classic", engine: "va", de: "ARP Odyssey · Leads", en: "ARP Odyssey · leads", hd: "Bissige Sync-Leads, Bässe, Ringmodulator-Klänge", he: "Biting sync leads, basses, ring-mod tones" },
+  { id: "cs80", g: "classic", engine: "va", de: "CS-80 · Blade-Runner-Brass", en: "CS-80 · Blade Runner brass", hd: "Langsam öffnendes Filter, Vibrato am Modrad, viel Anschlagdynamik", he: "Slowly opening filter, vibrato on the mod wheel, lots of velocity" },
+  { id: "taurus", g: "classic", engine: "va", de: "Taurus · Bass-Pedal", en: "Taurus · bass pedals", hd: "Drei Oszillatoren tief gestimmt — Fundament für Rock und Prog", he: "Three oscillators tuned low — the foundation for rock and prog" },
+  { id: "ppg", g: "classic", engine: "va", de: "PPG Wave · Wavetable", en: "PPG Wave · wavetable", hd: "Digitale Wellen, die wandern — glasig, vokal, kühl", he: "Digital waves that move — glassy, vocal, cool" },
+  { id: "dx7", g: "classic", engine: "fm", de: "DX7 · FM-Klassiker", en: "DX7 · FM classics", hd: "E-Piano, Bass, Glocken, Orgel aus vier Operatoren", he: "E-piano, bass, bells, organ from four operators" },
+  { id: "m1", g: "classic", engine: "fm", de: "M1 · House-Orgel", en: "M1 · house organ", hd: "Die perkussive House-Orgel der 90er und ihre Verwandten", he: "The percussive 90s house organ and its relatives" },
+  { id: "rhodes", g: "classic", engine: "ep", de: "Rhodes · E-Piano", en: "Rhodes · electric piano", hd: "Zinken-Piano: Mark I, Suitcase mit Stereo-Tremolo, Dyno", he: "Tine piano: Mark I, suitcase with stereo tremolo, Dyno" },
+  { id: "wurli", g: "classic", engine: "ep", de: "Wurlitzer · E-Piano", en: "Wurlitzer · electric piano", hd: "Zungen-Piano: näselnd, bissig, mit Tremolo", he: "Reed piano: nasal, barky, with tremolo" },
+  { id: "b3", g: "classic", engine: "organ", de: "B3 · Tonrad-Orgel", en: "B3 · tonewheel organ", hd: "Klassische Zugriegel-Registrierungen mit Leslie", he: "Classic drawbar registrations with rotary" },
+  { id: "clav", g: "classic", engine: "pluck", de: "Clavinet · Funk-Keys", en: "Clavinet · funk keys", hd: "Hell angeschlagene, schnell gedämpfte Saiten", he: "Brightly struck, quickly damped strings" },
+  { id: "drums", g: "drums", engine: "drums", de: "Drum-Machine", en: "Drum machine", hd: "16 Pads, alle synthetisch — TR-808, TR-909, 606, CR-78, 80er, Trap, Techno, Lo-Fi", he: "16 pads, all synthetic — TR-808, TR-909, 606, CR-78, 80s, trap, techno, lo-fi" },
 ];
 
 // Standard-Patch eines Motors aus dem Schema
@@ -189,12 +237,13 @@ export function defaults(engine) {
 }
 
 // ---- Werks-Presets ----
-const P = (model, de, en, patch) => ({ model, de, en, patch });
+// o.ch: Chorus der Spur (gehört zum Klang des Vorbilds, z. B. Juno) — wird beim Wählen des Presets gesetzt
+const P = (model, de, en, patch, o = {}) => ({ model, de, en, patch, ...o });
 export const PRESETS = [
   // Analog Poly
   P("poly", "Warme Fläche", "Warm pad", { o1w: "saw", o2w: "saw", o2lvl: 0.7, o2fine: 9, cut: 1400, res: 0.15, fenv: 0.2, aa: 0.6, ad: 1.2, as: 0.8, ar: 1.6, fa: 0.8, fd: 2, fs: 0.5, l1dest: "pitch", l1amt: 0.05, l1rate: 4.5, unidet: 0.3, voices: 8 }),
   P("poly", "80er-Brass", "80s brass", { o1w: "saw", o2w: "saw", o2lvl: 0.8, o2fine: 6, cut: 900, res: 0.1, fenv: 0.55, fa: 0.05, fd: 0.5, fs: 0.4, aa: 0.03, ad: 0.4, as: 0.8, ar: 0.3 }),
-  P("poly", "PWM-Streicher", "PWM strings", { o1w: "square", o1pw: 0.4, o2w: "square", o2pw: 0.6, o2lvl: 0.7, o2fine: 5, l1dest: "pw", l1amt: 0.6, l1rate: 0.7, cut: 3200, res: 0.05, fenv: 0, aa: 0.4, as: 0.9, ar: 1.2 }),
+  P("poly", "PWM-Streicher", "PWM strings", { vol: 0.6, o1w: "square", o1pw: 0.4, o2w: "square", o2pw: 0.6, o2lvl: 0.7, o2fine: 5, l1dest: "pw", l1amt: 0.6, l1rate: 0.7, cut: 3200, res: 0.05, fenv: 0, aa: 0.4, as: 0.9, ar: 1.2 }),
   P("poly", "Glasklare Keys", "Glassy keys", { o1w: "square", o1pw: 0.25, o2w: "tri", o2oct: 1, o2lvl: 0.5, cut: 2600, res: 0.25, fenv: 0.35, fd: 0.6, fs: 0.1, aa: 0.002, ad: 0.9, as: 0.3, ar: 0.6 }),
   P("poly", "Sync-Lead", "Sync lead", { o1w: "saw", o2w: "saw", o2lvl: 0.9, o1lvl: 0.3, o2sync: true, o2semi: 7, cut: 5000, res: 0.2, fenv: 0.25, l2dest: "off", aa: 0.003, as: 0.85, ar: 0.25, mode: "legato", glide: 0.05 }),
   P("poly", "Dunkler Drone", "Dark drone", { o1w: "saw", o2w: "square", o2oct: -1, o2lvl: 0.7, cut: 420, res: 0.55, l1dest: "cut", l1amt: 0.35, l1rate: 0.12, aa: 2, as: 1, ar: 4, noise: 0.1 }),
@@ -205,12 +254,109 @@ export const PRESETS = [
   P("mono", "Reese", "Reese bass", { mode: "mono", o1w: "saw", o1oct: -1, o2w: "saw", o2oct: -1, o2lvl: 0.9, o2fine: 22, uni: 3, unidet: 0.25, cut: 600, res: 0.15, fenv: 0.1, drive: 0.35, as: 1, ar: 0.2 }),
   P("mono", "Sub 808", "808 sub", { mode: "mono", glide: 0.04, o1w: "sine", o1oct: -1, o1lvl: 1, cut: 3000, res: 0, fenv: 0, aa: 0.002, ad: 1.8, as: 0, ar: 0.4, drive: 0.35 }),
   // Acid
-  P("acid", "Acid Classic", "Acid classic", { mode: "mono", glide: 0.06, o1w: "saw", cut: 380, res: 0.82, fenv: 0.55, fd: 0.22, fs: 0, accent: 0.7, aa: 0.002, ad: 0.3, as: 0.9, ar: 0.08, drive: 0.2 }),
-  P("acid", "Acid Rechteck", "Acid square", { mode: "mono", glide: 0.06, o1w: "square", o1pw: 0.5, cut: 320, res: 0.86, fenv: 0.6, fd: 0.18, fs: 0, accent: 0.8, ad: 0.3, as: 0.9, ar: 0.08, drive: 0.3 }),
-  P("acid", "Acid verzerrt", "Acid distorted", { mode: "mono", glide: 0.05, o1w: "saw", cut: 500, res: 0.88, fenv: 0.65, fd: 0.25, fs: 0.05, accent: 0.8, drive: 0.75, as: 0.9, ar: 0.06 }),
+  P("acid", "303 Klassisch (Säge)", "303 classic (saw)", { mode: "legato", glide: 0.06, fkey: 0.1, o1w: "saw", cut: 380, res: 0.82, fenv: 0.55, fd: 0.22, fs: 0, accent: 0.7, aa: 0.002, ad: 0.3, as: 0.9, ar: 0.08, drive: 0.2 }),
+  P("acid", "303 Rechteck", "303 square", { mode: "legato", glide: 0.06, fkey: 0.1, o1w: "square", o1pw: 0.5, cut: 320, res: 0.86, fenv: 0.6, fd: 0.18, fs: 0, accent: 0.8, ad: 0.3, as: 0.9, ar: 0.08, drive: 0.3 }),
+  P("acid", "303 verzerrt", "303 distorted", { mode: "legato", glide: 0.05, fkey: 0.1, o1w: "saw", cut: 500, res: 0.88, fenv: 0.65, fd: 0.25, fs: 0.05, accent: 0.8, drive: 0.75, as: 0.9, ar: 0.06 }),
+  P("acid", "303 Squelch (hohe Resonanz)", "303 squelch (high resonance)", { mode: "legato", glide: 0.06, fkey: 0.1, o1w: "saw", cut: 240, res: 0.93, fenv: 0.72, fd: 0.32, fs: 0, accent: 0.85, aa: 0.002, ad: 0.3, as: 0.9, ar: 0.06, drive: 0.3 }),
+  P("acid", "303 tief & rund", "303 deep & round", { mode: "legato", glide: 0.07, fkey: 0.1, o1w: "square", cut: 210, res: 0.6, fenv: 0.38, fd: 0.5, fs: 0.05, accent: 0.5, aa: 0.002, ad: 0.4, as: 0.9, ar: 0.08, drive: 0.15 }),
+  P("acid", "303 kurz & knackig", "303 short & snappy", { mode: "legato", glide: 0.05, fkey: 0.1, o1w: "saw", cut: 330, res: 0.8, fenv: 0.6, fd: 0.1, fs: 0, accent: 0.8, aa: 0.002, ad: 0.16, as: 0.25, ar: 0.04, drive: 0.25 }),
+  P("acid", "303 hypnotisch (lang)", "303 hypnotic (long)", { mode: "legato", glide: 0.08, fkey: 0.1, o1w: "saw", cut: 280, res: 0.87, fenv: 0.5, fd: 0.9, fs: 0.08, accent: 0.6, aa: 0.002, ad: 0.5, as: 0.9, ar: 0.08, drive: 0.2, l1dest: "cut", l1sync: "4/1", l1shape: "tri", l1amt: 0.12 }),
+  // ===== Klassiker (3.16) — eigene Nachbauten, die Namen nennen das Vorbild =====
+  // Minimoog: drei Oszillatoren, Leiterfilter, Drive
+  P("minimoog", "Moog-Bass klassisch", "Classic Moog bass", { mode: "mono", o1w: "saw", o1oct: -1, o1lvl: 0.8, o2w: "saw", o2oct: -1, o2fine: -6, o2lvl: 0.75, o3w: "square", o3oct: -2, o3fine: 0, o3lvl: 0.45,
+    cut: 300, res: 0.22, fenv: 0.45, fkey: 0.4, fd: 0.35, fs: 0.2, aa: 0.002, ad: 0.5, as: 0.85, ar: 0.08, drive: 0.35 }),
+  P("minimoog", "Funk-Bass gezupft", "Plucked funk bass", { vol: 1.0, mode: "mono", o1w: "saw", o1oct: -1, o2w: "square", o2oct: -1, o2fine: 4, o2lvl: 0.6, cut: 190, res: 0.35, fenv: 0.7, fkey: 0.4, fd: 0.17, fs: 0, ad: 0.32, as: 0.35, ar: 0.06, drive: 0.3 }),
+  P("minimoog", "Gleitender Lead (Lucky Man)", "Gliding lead (Lucky Man)", { mode: "legato", glide: 0.22, o1w: "square", o1pw: 0.5, o2w: "saw", o2fine: 6, o2lvl: 0.75, o3w: "saw", o3oct: -1, o3lvl: 0.35,
+    cut: 1700, res: 0.3, fenv: 0.2, fkey: 0.5, fd: 0.6, fs: 0.6, as: 0.95, ar: 0.3, l1dest: "pitch", l1rate: 5.2, l1amt: 0.025, drive: 0.3 }),
+  P("minimoog", "Singender Lead", "Singing lead", { mode: "legato", glide: 0.07, o1w: "saw", o2w: "saw", o2fine: 8, o2lvl: 0.8, o3w: "saw", o3oct: 1, o3fine: -4, o3lvl: 0.3,
+    cut: 2400, res: 0.45, fenv: 0.3, fkey: 0.5, fd: 0.5, fs: 0.5, as: 0.9, ar: 0.25, drive: 0.4 }),
+  P("minimoog", "Quinten-Lead", "Fifths lead", { mode: "legato", glide: 0.05, o1w: "saw", o2w: "saw", o2semi: 7, o2fine: 3, o2lvl: 0.6, o3w: "saw", o3oct: -1, o3lvl: 0.45, cut: 2000, res: 0.3, fenv: 0.3, fd: 0.4, fs: 0.5, as: 0.9, ar: 0.25, drive: 0.3 }),
+  P("minimoog", "Sub-Bass rund", "Round sub bass", { mode: "mono", o1w: "tri", o1oct: -1, o1lvl: 0.9, o3w: "sine", o3oct: -2, o3fine: 0, o3lvl: 0.6, cut: 700, res: 0.1, fenv: 0.1, ad: 0.6, as: 0.9, ar: 0.1, drive: 0.2 }),
+  // Juno-60: Säge + Puls + Sub aus einem Oszillator, Hochpass, Chorus
+  P("juno", "Juno-Fläche (Chorus II)", "Juno pad (chorus II)", { o1w: "saw", o1lvl: 0.65, o2w: "square", o2fine: 0, o2pw: 0.5, o2lvl: 0.45, sub: 0.3, l1dest: "pw", l1rate: 0.6, l1amt: 0.5, hpf: 120,
+    cut: 1800, res: 0.15, fenv: 0.15, fa: 0.5, fd: 1.5, fs: 0.6, aa: 0.5, ad: 1, as: 0.85, ar: 1.5, voices: 6 }, { ch: 0.65 }),
+  P("juno", "Juno-Bass (Sub)", "Juno bass (sub)", { mode: "mono", o1w: "square", o1oct: -1, o1pw: 0.5, o1lvl: 0.7, sub: 0.7, cut: 360, res: 0.2, fenv: 0.4, fd: 0.25, fs: 0.1, ad: 0.3, as: 0.7, ar: 0.06 }, { ch: 0.15 }),
+  P("juno", "Juno-Brass", "Juno brass", { o1w: "saw", o1lvl: 0.8, sub: 0.2, cut: 700, res: 0.12, fenv: 0.55, fa: 0.08, fd: 0.6, fs: 0.4, aa: 0.04, ad: 0.5, as: 0.85, ar: 0.4, voices: 6 }, { ch: 0.45 }),
+  P("juno", "Juno-Streicher", "Juno strings", { o1w: "saw", o1lvl: 0.8, hpf: 300, cut: 3500, res: 0.05, fenv: 0, aa: 0.45, as: 1, ar: 1.2, voices: 6 }, { ch: 0.8 }),
+  P("juno", "Juno-Glocken-Arp", "Juno bell arp", { o1w: "square", o1pw: 0.25, o1lvl: 0.8, cut: 2200, res: 0.3, fenv: 0.4, fd: 0.2, fs: 0, aa: 0.002, ad: 0.35, as: 0, ar: 0.3, arp: "up", arprate: "1/16", arpoct: 2, arpgate: 0.6, voices: 6 }, { ch: 0.5 }),
+  P("juno", "Hoover (Alpha Juno)", "Hoover (Alpha Juno)", { mode: "legato", glide: 0.15, o1w: "square", o1pw: 0.3, uni: 4, unidet: 0.6, unispread: 0.8, l1dest: "pw", l1rate: 2, l1amt: 0.5, cut: 3000, res: 0.15, fenv: 0.1, drive: 0.35, as: 1, ar: 0.4 }, { ch: 0.5 }),
+  // Jupiter-8
+  P("jupiter", "Jupiter-Brass", "Jupiter brass", { vol: 0.7, o1w: "saw", o2w: "saw", o2fine: 8, o2lvl: 0.85, cut: 800, res: 0.1, fenv: 0.6, fa: 0.1, fd: 0.7, fs: 0.45, aa: 0.06, ad: 0.5, as: 0.85, ar: 0.4, voices: 8 }, { ch: 0.25 }),
+  P("jupiter", "Jupiter-Fläche", "Jupiter pad", { o1w: "saw", o2w: "square", o2pw: 0.45, o2fine: 6, o2lvl: 0.7, cut: 1500, res: 0.2, fenv: 0.15, l1dest: "cut", l1rate: 0.2, l1amt: 0.1, aa: 1.2, ad: 1.5, as: 0.9, ar: 2.5, voices: 8 }, { ch: 0.4 }),
+  P("jupiter", "Sync-Lead", "Sync lead", { mode: "legato", glide: 0.04, o1w: "saw", o1lvl: 0.3, o2w: "saw", o2sync: true, o2semi: 9, o2lvl: 0.9, cut: 4500, res: 0.2, fenv: 0.25, as: 0.9, ar: 0.25, l1dest: "pitch", l1rate: 5.5, l1amt: 0.02 }),
+  P("jupiter", "Unisono-Bass", "Unison bass", { mode: "mono", o1w: "saw", o1oct: -1, o2w: "saw", o2oct: -1, o2fine: 10, o2lvl: 0.8, uni: 4, unidet: 0.2, unispread: 0.4, cut: 450, res: 0.25, fenv: 0.5, fd: 0.3, fs: 0.2, ad: 0.4, as: 0.85, ar: 0.1 }),
+  P("jupiter", "Kreuzmodulierte Glocke", "Cross-mod bell", { o1w: "tri", o2w: "square", o2oct: 1, o2semi: 7, o2lvl: 0.2, fm: 0.55, cut: 6000, res: 0.1, fenv: 0, aa: 0.002, ad: 1.6, as: 0, ar: 1.2, voices: 8 }, { ch: 0.3 }),
+  // Prophet-5
+  P("prophet", "Prophet-Fläche warm", "Warm Prophet pad", { o1w: "saw", o2w: "square", o2pw: 0.45, o2fine: 6, o2lvl: 0.7, cut: 1200, res: 0.2, fenv: 0.25, fa: 0.9, fd: 2, fs: 0.5, aa: 0.7, as: 0.9, ar: 2, l1dest: "pitch", l1rate: 4, l1amt: 0.015, voices: 5 }),
+  P("prophet", "Prophet-Keys", "Prophet keys", { o1w: "saw", o2w: "saw", o2fine: 5, o2lvl: 0.7, cut: 1600, res: 0.2, fenv: 0.35, fd: 0.7, fs: 0.2, aa: 0.003, ad: 1.2, as: 0.4, ar: 0.5, voices: 5 }),
+  P("prophet", "Poly-Mod-Glocke", "Poly-mod bell", { o1w: "square", o1pw: 0.5, o2w: "tri", o2oct: 1, o2semi: 7, o2lvl: 0.1, fm: 0.5, cut: 4000, res: 0.15, fenv: 0.2, fd: 0.8, fs: 0, aa: 0.002, ad: 2, as: 0, ar: 1.5, voices: 5 }),
+  P("prophet", "Prophet-Brass", "Prophet brass", { vol: 0.7, o1w: "saw", o2w: "square", o2pw: 0.35, o2fine: 7, o2lvl: 0.8, cut: 750, res: 0.15, fenv: 0.55, fa: 0.06, fd: 0.6, fs: 0.5, aa: 0.04, ad: 0.4, as: 0.85, ar: 0.35, voices: 5 }),
+  P("prophet", "Sync-Kreischer", "Sync screamer", { mode: "legato", glide: 0.05, o1w: "saw", o1lvl: 0.25, o2w: "saw", o2sync: true, o2oct: 1, o2semi: 5, o2lvl: 0.85, cut: 4000, res: 0.3, fenv: 0.2, as: 0.9, ar: 0.3 }),
+  // OB-Xa
+  P("obx", "Jump-Brass", "Jump brass", { vol: 0.6, o1w: "saw", o2w: "saw", o2fine: 10, o2lvl: 0.9, ftype: "lp12", cut: 2600, res: 0.1, fenv: 0.25, fa: 0.01, fd: 0.4, fs: 0.7, aa: 0.01, ad: 0.3, as: 0.9, ar: 0.35, voices: 8 }, { ch: 0.2 }),
+  P("obx", "OB-Fläche", "OB pad", { vol: 0.55, o1w: "saw", o2w: "saw", o2fine: 9, o2lvl: 0.85, ftype: "lp12", uni: 2, unidet: 0.2, unispread: 0.8, cut: 1600, res: 0.15, fenv: 0.15, aa: 0.8, as: 0.9, ar: 2, voices: 8 }),
+  P("obx", "OB-Bass", "OB bass", { mode: "mono", o1w: "saw", o1oct: -1, o2w: "saw", o2oct: -1, o2fine: 8, o2lvl: 0.8, ftype: "lp12", cut: 500, res: 0.3, fenv: 0.5, fd: 0.25, fs: 0.2, ad: 0.35, as: 0.8, ar: 0.08 }),
+  P("obx", "OB-Streicher", "OB strings", { vol: 0.6, o1w: "saw", o2w: "square", o2pw: 0.4, o2fine: 6, o2lvl: 0.6, ftype: "lp12", cut: 3200, res: 0.05, fenv: 0, l1dest: "pw", l1rate: 0.8, l1amt: 0.4, aa: 0.5, as: 1, ar: 1.4, voices: 8 }, { ch: 0.35 }),
+  // SH-101
+  P("sh101", "101-Bass", "101 bass", { mode: "mono", o1w: "saw", o1oct: -1, o1lvl: 0.6, o2w: "square", o2oct: -1, o2fine: 0, o2lvl: 0.5, sub: 0.7, cut: 350, res: 0.3, fenv: 0.5, fkey: 0.5, fd: 0.22, fs: 0.1, ad: 0.25, as: 0.7, ar: 0.05 }),
+  P("sh101", "101-Blubb", "101 bubble", { mode: "legato", glide: 0.05, o1w: "square", o1oct: -1, o1pw: 0.5, sub: 0.4, cut: 260, res: 0.65, fenv: 0.55, fd: 0.16, fs: 0, ad: 0.2, as: 0.6, ar: 0.05 }),
+  P("sh101", "101-Lead (PWM)", "101 lead (PWM)", { mode: "legato", glide: 0.04, o1w: "square", o1pw: 0.3, l1dest: "pw", l1rate: 3, l1amt: 0.4, cut: 2500, res: 0.25, fenv: 0.2, as: 0.9, ar: 0.2 }),
+  P("sh101", "101-Blip", "101 blip", { mode: "mono", o1w: "square", o1pw: 0.5, cut: 900, res: 0.75, fenv: 0.6, fd: 0.07, fs: 0, ad: 0.12, as: 0, ar: 0.05, arp: "up", arprate: "1/16", arpoct: 2 }),
+  // MS-20
+  P("ms20", "MS-20-Schrei", "MS-20 scream", { mode: "mono", o1w: "saw", o2w: "square", o2oct: -1, o2lvl: 0.5, ftype: "lp12", hpf: 300, cut: 1200, res: 0.85, fenv: 0.4, fd: 0.4, fs: 0.3, drive: 0.6, as: 0.9, ar: 0.2 }),
+  P("ms20", "MS-20-Bass dreckig", "Dirty MS-20 bass", { mode: "mono", o1w: "saw", o1oct: -1, o2w: "square", o2oct: -1, o2lvl: 0.6, ftype: "lp12", cut: 400, res: 0.6, fenv: 0.5, fd: 0.25, fs: 0.15, drive: 0.8, ad: 0.35, as: 0.8, ar: 0.08 }),
+  P("ms20", "MS-20-Lead", "MS-20 lead", { mode: "legato", glide: 0.07, o1w: "saw", ftype: "lp12", hpf: 200, cut: 1800, res: 0.7, fenv: 0.25, drive: 0.5, l1dest: "pitch", l1rate: 5, l1amt: 0.02, as: 0.9, ar: 0.25 }),
+  // ARP Odyssey
+  P("odyssey", "Odyssey-Sync-Lead", "Odyssey sync lead", { mode: "legato", glide: 0.05, o1w: "square", o1pw: 0.35, o1lvl: 0.4, o2w: "saw", o2sync: true, o2semi: 7, o2lvl: 0.8, cut: 3000, res: 0.35, fenv: 0.3, as: 0.9, ar: 0.25, l1dest: "pitch", l1rate: 5.5, l1amt: 0.025 }),
+  P("odyssey", "Odyssey-Bass", "Odyssey bass", { mode: "mono", o1w: "square", o1oct: -1, o2w: "saw", o2oct: -1, o2fine: 5, o2lvl: 0.7, cut: 500, res: 0.5, fenv: 0.5, fd: 0.2, fs: 0.1, ad: 0.3, as: 0.8, ar: 0.08 }),
+  P("odyssey", "Ringmodulator", "Ring modulator", { o1w: "sine", o2w: "sine", o2semi: 7, o2fine: 30, o2lvl: 0.25, fm: 0.8, cut: 5000, res: 0.1, fenv: 0, aa: 0.005, ad: 1.2, as: 0.3, ar: 0.8 }),
+  // CS-80
+  P("cs80", "Blade-Runner-Brass", "Blade Runner brass", { vol: 0.6, o1w: "saw", o2w: "square", o2pw: 0.4, o2fine: 9, o2lvl: 0.7, uni: 2, unidet: 0.15, unispread: 0.7, hpf: 60, cut: 700, res: 0.3, fenv: 0.55, fvel: 0.7, fa: 0.4, fd: 1.5, fs: 0.55,
+    aa: 0.15, ad: 1, as: 0.9, ar: 2.5, velamp: 0.8, l1dest: "pitch", l1rate: 5, l1amt: 0.015, voices: 8 }, { ch: 0.3 }),
+  P("cs80", "CS-80-Fläche", "CS-80 pad", { vol: 0.7, o1w: "saw", o2w: "saw", o2fine: 10, o2lvl: 0.8, uni: 2, unidet: 0.2, unispread: 0.8, cut: 1500, res: 0.2, fenv: 0.2, fa: 1.2, fd: 2, fs: 0.6, aa: 1.5, as: 0.9, ar: 3, voices: 8 }, { ch: 0.35 }),
+  P("cs80", "Vangelis-Lead", "Vangelis lead", { mode: "legato", glide: 0.12, o1w: "saw", o2w: "saw", o2fine: 7, o2lvl: 0.7, cut: 2000, res: 0.35, fenv: 0.2, fvel: 0.8, velamp: 0.9, l1dest: "pitch", l1rate: 5, l1amt: 0.04, as: 0.9, ar: 0.6 }),
+  // Taurus
+  P("taurus", "Taurus-Bass", "Taurus bass", { mode: "mono", o1w: "saw", o1oct: -1, o2w: "saw", o2oct: -1, o2fine: 9, o2lvl: 0.75, o3w: "sine", o3oct: -2, o3fine: 0, o3lvl: 0.55, sub: 0.3,
+    cut: 450, res: 0.25, fenv: 0.3, fd: 0.8, fs: 0.5, aa: 0.01, ad: 1, as: 0.9, ar: 0.6, drive: 0.3 }),
+  P("taurus", "Taurus-Drone", "Taurus drone", { mode: "mono", o1w: "saw", o1oct: -1, o2w: "saw", o2oct: -1, o2fine: 12, o2lvl: 0.8, o3w: "tri", o3oct: -2, o3fine: 0, o3lvl: 0.6, cut: 320, res: 0.3, fenv: 0.1, l1dest: "cut", l1rate: 0.15, l1amt: 0.15, aa: 0.3, as: 1, ar: 2 }),
+  // PPG Wave
+  P("ppg", "PPG-Fläche", "PPG pad", { o1w: "wt", wtset: "sync", wtpos: 0.3, wtlfo: 0.4, l2rate: 0.2, o2w: "wt", o2fine: 8, o2lvl: 0.5, cut: 5000, res: 0.1, fenv: 0, aa: 0.6, as: 0.9, ar: 1.8, voices: 8 }),
+  P("ppg", "PPG-Glocke", "PPG bell", { o1w: "wt", wtset: "bell", wtpos: 0.9, wtenv: -0.6, cut: 8000, res: 0.05, fenv: 0, fd: 1.5, fs: 0, aa: 0.002, ad: 2, as: 0, ar: 1.6 }),
+  P("ppg", "PPG-Stimme", "PPG voice", { o1w: "wt", wtset: "vocal", wtpos: 0, wtenv: 0.5, fd: 1.5, fs: 0.3, o2w: "wt", o2fine: -7, o2lvl: 0.6, cut: 6000, res: 0.1, fenv: 0, aa: 0.2, as: 0.85, ar: 1.2 }),
+  P("ppg", "PPG-Bass", "PPG bass", { mode: "mono", o1w: "wt", o1oct: -1, wtset: "fold", wtpos: 0.35, wtenv: 0.4, fd: 0.25, fs: 0.2, sub: 0.4, cut: 2500, res: 0.15, fenv: 0.15, ad: 0.4, as: 0.85, ar: 0.1 }),
+  // DX7
+  P("dx7", "DX-E-Piano (hell)", "DX e-piano (bright)", { algo: 5, op1ratio: 1, op2ratio: 1, op2lvl: 0.45, op2dec: 1.2, op2sus: 0.1, op3ratio: 1, op3lvl: 0.75, op4ratio: 14, op4lvl: 0.35, op4dec: 0.22, op4sus: 0,
+    op1dec: 3, op1sus: 0.12, op3dec: 2.5, op3sus: 0.1, op1rel: 0.45, op3rel: 0.45, op2vel: 0.8, op4vel: 0.9 }),
+  P("dx7", "Slap-Bass (Lately)", "Slap bass (Lately)", { algo: 5, op1ratio: 0.5, op1sus: 0.6, op1dec: 1.2, op2ratio: 0.5, op2lvl: 0.6, op2dec: 0.3, op2sus: 0.1, op3ratio: 0.5, op3lvl: 0.45, op3dec: 0.5, op3sus: 0.2, op4ratio: 1.5, op4lvl: 0.45, op4dec: 0.12, op4sus: 0, op1rel: 0.12, op3rel: 0.12, fb: 0.25 }),
+  P("dx7", "Kristall-Glocken", "Crystal bells", { algo: 6, op4ratio: 3.5, op4lvl: 0.4, op4dec: 3, op4sus: 0, op1ratio: 1, op2ratio: 2, op2lvl: 0.5, op3ratio: 4, op3lvl: 0.35, op1dec: 4, op1sus: 0, op2dec: 3, op2sus: 0, op3dec: 2, op3sus: 0, op1rel: 1.5, op2rel: 1.5, op3rel: 1.2 }),
+  P("dx7", "FM-Orgel (alle hörbar)", "FM organ (all audible)", { algo: 8, op1ratio: 0.5, op1lvl: 0.6, op2ratio: 1, op2lvl: 0.8, op3ratio: 2, op3lvl: 0.45, op4ratio: 3, op4lvl: 0.3, op1sus: 1, op2sus: 1, op3sus: 1, op4sus: 1, op1att: 0.005, op2att: 0.005, op3att: 0.005, op4att: 0.005, op1rel: 0.08, op2rel: 0.08, op3rel: 0.08, op4rel: 0.08 }),
+  P("dx7", "Harmonika", "Harmonica", { algo: 1, op1ratio: 1, op2ratio: 1, op2lvl: 0.5, op2att: 0.06, op2sus: 0.7, op3ratio: 2, op3lvl: 0.3, op3sus: 0.6, op4ratio: 1, op4lvl: 0.15, fb: 0.4, op1att: 0.04, op1sus: 0.9, op1rel: 0.15, l1dest: "pitch", l1rate: 5.5, l1amt: 0.02 }),
+  // M1
+  P("m1", "House-Orgel", "House organ", { algo: 8, op1ratio: 1, op1lvl: 0.75, op1dec: 0.35, op1sus: 0.5, op2ratio: 2, op2lvl: 0.6, op2dec: 0.25, op2sus: 0.3, op3ratio: 3, op3lvl: 0.45, op3dec: 0.15, op3sus: 0.12, op4ratio: 4, op4lvl: 0.35, op4dec: 0.08, op4sus: 0,
+    op1rel: 0.12, op2rel: 0.1, op3rel: 0.08, op4rel: 0.05, op1att: 0.001, op2att: 0.001, op3att: 0.001, op4att: 0.001 }),
+  P("m1", "House-Orgel (kurz)", "House organ (short)", { algo: 8, op1ratio: 1, op1lvl: 0.8, op1dec: 0.2, op1sus: 0.15, op2ratio: 2, op2lvl: 0.6, op2dec: 0.15, op2sus: 0.05, op3ratio: 3, op3lvl: 0.45, op3dec: 0.1, op3sus: 0, op4ratio: 4, op4lvl: 0.35, op4dec: 0.06, op4sus: 0,
+    op1rel: 0.08, op2rel: 0.06, op3rel: 0.05, op4rel: 0.04, op1att: 0.001, op2att: 0.001, op3att: 0.001, op4att: 0.001 }),
+  P("m1", "Glocken-Fläche", "Bell pad", { algo: 7, op4ratio: 7, op4lvl: 0.3, op4dec: 2, op4sus: 0, op3ratio: 1, op3lvl: 0.5, op3dec: 3, op3sus: 0.2, op1ratio: 1, op1lvl: 0.6, op1att: 0.6, op1sus: 0.9, op2ratio: 2, op2lvl: 0.4, op2att: 0.8, op2sus: 0.8, op1rel: 1.5, op2rel: 1.5, op3rel: 1.5 }),
+  // Rhodes
+  P("rhodes", "Mark I", "Mark I", { tine: 0.45, bark: 0.35, bell: 0.25, decay: 5, tone: 0.6, l1dest: "off" }),
+  P("rhodes", "Suitcase (Stereo-Tremolo)", "Suitcase (stereo tremolo)", { tine: 0.5, bark: 0.4, bell: 0.3, decay: 4.5, tone: 0.65, l1dest: "pan", l1amt: 0.6, l1rate: 5 }),
+  P("rhodes", "Dyno (glockig)", "Dyno (bell-like)", { tine: 0.7, bark: 0.5, bell: 0.6, decay: 4, tone: 0.85, l1dest: "pan", l1amt: 0.25, l1rate: 4 }),
+  P("rhodes", "Ballade (weich)", "Ballad (soft)", { tine: 0.3, bark: 0.1, bell: 0.15, decay: 6, tone: 0.45, l1dest: "pan", l1amt: 0.2, l1rate: 3.5 }),
+  // Wurlitzer
+  P("wurli", "200A", "200A", { vol: 1.0, tine: 0.55, tinedec: 0.4, bark: 0.9, bell: 0.1, decay: 2.5, tone: 0.8, rel: 0.15, l1dest: "amp", l1amt: 0.35, l1rate: 5.5 }),
+  P("wurli", "Trocken", "Dry", { vol: 1.0, tine: 0.5, tinedec: 0.4, bark: 0.75, bell: 0.1, decay: 2.5, tone: 0.75, rel: 0.15, l1dest: "off" }),
+  P("wurli", "Soul (viel Biss)", "Soul (lots of bark)", { vol: 1.0, tine: 0.6, tinedec: 0.35, bark: 1, bell: 0.05, decay: 2, tone: 0.9, rel: 0.12, l1dest: "amp", l1amt: 0.5, l1rate: 6 }),
+  // B3
+  P("b3", "Jazz 888000000 (Perk. 3.)", "Jazz 888000000 (perc. 3rd)", { db1: 8, db2: 8, db3: 8, db4: 0, db5: 0, db6: 0, db7: 0, db8: 0, db9: 0, perc: true, perc3: true, percfast: true, vib: "c3", leslie: "slow", drive: 0.15 }),
+  P("b3", "Blues 888800000", "Blues 888800000", { db1: 8, db2: 8, db3: 8, db4: 8, db5: 0, db6: 0, db7: 0, db8: 0, db9: 0, perc: true, perc3: false, percfast: true, vib: "c3", leslie: "slow", drive: 0.35, click: 0.4 }),
+  P("b3", "Rock 888888888 (Leslie schnell)", "Rock 888888888 (fast rotary)", { db1: 8, db2: 8, db3: 8, db4: 8, db5: 8, db6: 8, db7: 8, db8: 8, db9: 8, click: 0.5, vib: "c3", leslie: "fast", drive: 0.6 }),
+  P("b3", "Ballade 008600000", "Ballad 008600000", { db1: 0, db2: 0, db3: 8, db4: 6, db5: 0, db6: 0, db7: 0, db8: 0, db9: 0, click: 0.15, vib: "v2", leslie: "slow", drive: 0 }),
+  // Clavinet
+  P("clav", "Clavinet D6", "Clavinet D6", { vol: 0.7, bright: 0.9, damp: 0.2, decay: 1.2, pos: 0.06, body: 0.1, rel: 0.08, velb: 0.8 }),
+  P("clav", "Funk gedämpft", "Funk muted", { vol: 0.55, bright: 0.8, damp: 0.55, decay: 0.5, pos: 0.05, body: 0.08, rel: 0.05, velb: 0.9 }),
   // Supersaw
   P("super", "Trance-Hymne", "Trance anthem", { o1w: "saw", uni: 7, unidet: 0.45, unispread: 0.9, o2w: "saw", o2oct: 1, o2lvl: 0.25, cut: 7000, res: 0.1, fenv: 0.1, aa: 0.01, ad: 0.6, as: 0.85, ar: 0.6, voices: 8 }),
-  P("super", "Hoover", "Hoover", { mode: "legato", glide: 0.12, o1w: "pulse", o1pw: 0.3, uni: 5, unidet: 0.7, unispread: 0.8, l1dest: "pw", l1amt: 0.5, l1rate: 2, cut: 3000, res: 0.15, drive: 0.4, as: 1, ar: 0.4 }),
+  P("super", "Hoover", "Hoover", { mode: "legato", glide: 0.12, o1w: "square", o1pw: 0.3, uni: 5, unidet: 0.7, unispread: 0.8, l1dest: "pw", l1amt: 0.5, l1rate: 2, cut: 3000, res: 0.15, drive: 0.4, as: 1, ar: 0.4 }),
   P("super", "Supersaw-Pluck", "Supersaw pluck", { o1w: "saw", uni: 7, unidet: 0.35, unispread: 0.8, cut: 900, res: 0.2, fenv: 0.6, fd: 0.3, fs: 0, aa: 0.002, ad: 0.4, as: 0, ar: 0.35 }),
   // Wavetable
   P("wave", "Sprechende Fläche", "Talking pad", { o1w: "wt", wtset: "vocal", wtpos: 0.1, wtlfo: 0.9, l2rate: 0.15, o2w: "wt", o2fine: 9, o2lvl: 0.6, cut: 6000, res: 0.1, fenv: 0, aa: 0.8, as: 0.9, ar: 1.8 }),
@@ -218,7 +364,7 @@ export const PRESETS = [
   P("wave", "Wavefolder-Bass", "Wavefolder bass", { mode: "mono", o1w: "wt", o1oct: -1, wtset: "fold", wtpos: 0.2, wtenv: 0.6, fd: 0.3, fs: 0.1, sub: 0.5, cut: 3000, res: 0.15, fenv: 0.2, as: 0.9, ar: 0.12 }),
   P("wave", "Sync-Sweep", "Sync sweep", { o1w: "wt", wtset: "sync", wtpos: 0, wtenv: 0.8, fd: 1.2, fs: 0.2, cut: 7000, as: 0.8, ar: 0.5 }),
   // Strings
-  P("strings", "Solina-Streicher", "Ensemble strings", { o1w: "saw", o2w: "saw", o2oct: 1, o2lvl: 0.5, o2fine: 4, uni: 3, unidet: 0.25, unispread: 0.9, cut: 4500, res: 0, fenv: 0, ftype: "lp12", aa: 0.35, as: 1, ar: 1.4, l1dest: "pitch", l1amt: 0.04, l1rate: 5.5 }),
+  P("strings", "Solina-Streicher", "Ensemble strings", { vol: 0.65, o1w: "saw", o2w: "saw", o2oct: 1, o2lvl: 0.5, o2fine: 4, uni: 3, unidet: 0.25, unispread: 0.9, cut: 4500, res: 0, fenv: 0, ftype: "lp12", aa: 0.35, as: 1, ar: 1.4, l1dest: "pitch", l1amt: 0.04, l1rate: 5.5 }),
   P("strings", "Dunkle Celli", "Dark cellos", { o1w: "saw", o1oct: -1, o2w: "saw", o2lvl: 0.6, o2fine: 6, uni: 2, unidet: 0.2, cut: 1300, res: 0.1, fenv: 0.15, aa: 0.5, as: 1, ar: 1.2 }),
   // FM
   P("fm", "FM-E-Piano", "FM e-piano", { algo: 5, op1ratio: 1, op2ratio: 1, op2lvl: 0.35, op2dec: 1.4, op2sus: 0.1, op3ratio: 1, op3lvl: 0.7, op4ratio: 14, op4lvl: 0.25, op4dec: 0.25, op4sus: 0, op1dec: 3, op1sus: 0.15, op3dec: 3, op3sus: 0.15, op1rel: 0.4, op3rel: 0.4 }),
@@ -239,7 +385,7 @@ export const PRESETS = [
   // Pluck
   P("pluck", "Akustikgitarre", "Acoustic guitar", { bright: 0.55, damp: 0.35, decay: 3.5, pos: 0.18, body: 0.45 }),
   P("pluck", "Harfe", "Harp", { bright: 0.45, damp: 0.25, decay: 6, pos: 0.35, body: 0.2, rel: 3 }),
-  P("pluck", "Koto", "Koto", { bright: 0.8, damp: 0.15, decay: 2.5, pos: 0.08, body: 0.3, l1dest: "pitch", l1amt: 0.03 }),
+  P("pluck", "Koto", "Koto", { vol: 0.65, bright: 0.8, damp: 0.15, decay: 2.5, pos: 0.08, body: 0.3, l1dest: "pitch", l1amt: 0.03 }),
   P("pluck", "Gedämpft (Arp)", "Muted (arp)", { bright: 0.4, damp: 0.7, decay: 0.6, pos: 0.25, body: 0.25, rel: 0.1 }),
 ];
 

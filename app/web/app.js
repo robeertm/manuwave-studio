@@ -197,6 +197,7 @@ async function refreshBridge() {
   // 3.2: sobald der Mac (mit 3.2-Brücke) da ist — einmal Urheberangaben und Archiv lesen
   if (macCan("settings") && !state.rightsAsked) { state.rightsAsked = true; macJob("settings", {}, { timeoutMs: 45000 }).then(j => applySettings(j.result)).catch(() => { state.rightsAsked = false; }); }
   if (macCan("archiv") && !state.archivAsked) { state.archivAsked = true; checkMacOnly(); }
+  if (macCan("midi") && !state.midiAsked) { state.midiAsked = true; setTimeout(syncMidi, 4000); }   // 3.16
   // 3.6: was gelöscht wurde, während der Mac weg war — jetzt nachholen (alle 10 s geprüft, läuft nur einmal gleichzeitig)
   else if (macCan("loeschen") && delPending().length) flushMacDeletes(true).then(checkMacOnly);
   scheduleFinish(state.finishing ? 5000 : 1500);
@@ -2115,10 +2116,10 @@ function paintMaster() {
 }
 
 window.mwsLibrary = {
-  async add({ title, blob, bpm, keyscale, caption, duration, project, note }) {
+  async add({ title, blob, bpm, keyscale, caption, duration, project, note, derived }) {
     const rec = {
       id: "sb" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), created: Date.now(), title: title || "Track", variant: "",
-      group: "", note: note || "", source: "eigen", sbProject: project || "",
+      group: "", note: note || "", source: derived ? "" : "eigen", derived: !!derived, sbProject: project || "",
       request: { caption: caption || "", bpm: bpm || 0, keyscale: keyscale || "", duration: Math.round(duration || 0) },
       result: { bpm: bpm || 0, keyscale: keyscale || "", duration: duration || 0, caption: caption || "" },
       favorite: false, blob, peaks: await computePeaks(blob), folder: targetFolder(), wm: "", coverState: "",
@@ -2130,7 +2131,44 @@ window.mwsLibrary = {
     return rec;
   },
   master(id) { showTab("master"); openMaster(id); },
+  // 3.16: Songs mit MIDI-Abbild für "Selber machen"
+  async midiTracks() { return (await libAll()).filter(r => r.midi && r.midi.tracks).sort((a, b) => (b.created || 0) - (a.created || 0))
+    .map(r => ({ id: r.id, title: r.title, variant: r.variant || "", bpm: r.midi.bpm || 0 })); },
+  get: (id) => libGet(id),
 };
+
+// ---- 3.16: MIDI-Abbild — jeder KI-Song wird auf dem Mac in Noten übersetzt (Drums, Bass, Akkorde, Melodie) ----
+// Der Mac rechnet im Hintergrund, nur wenn er sonst nichts tut; der Browser holt fertige Abbilder ab (je Abgleich 10).
+const MIDI_V = 1;
+async function syncMidi() {
+  if (!macCan("midi") || state.midiBusy) return;
+  state.midiBusy = true;
+  try {
+    const all = await libAll();
+    const want = all.filter(r => r.source !== "eigen" && !r.derived && goodArchived((r.result || {}).archived) && !(r.midi && r.midiV === MIDI_V) && r.midiState !== "none")
+      .sort((a, b) => (b.created || 0) - (a.created || 0)).slice(0, 10);
+    if (!want.length) return;
+    const j = await macJob("midi", { archived: want.map(r => r.result.archived) }, { timeoutMs: 90000 });
+    const data = JSON.parse(await (await fetchBlob(`/api/render/${j.id}/audio`)).text());
+    let changed = false;
+    for (const r of want) {
+      const it = (data.items || {})[r.result.archived] || {};
+      if (it.state === "ok" && it.data) { await libPatch(r.id, { midi: it.data, midiFile: it.mid || "", midiV: data.v || MIDI_V, midiState: "ok" }); changed = true; }
+      else if (it.state && it.state !== r.midiState) { await libPatch(r.id, { midiState: it.state }); changed = true; }
+    }
+    if (changed) { renderLibrary(); if (window.mwsSelber && window.mwsSelber.refreshLib) window.mwsSelber.refreshLib(); }
+  } catch (e) { /* nächster Abgleich */ }
+  finally { state.midiBusy = false; }
+}
+setInterval(syncMidi, 120000);
+function downloadMidi(rec) {
+  const bin = atob(rec.midiFile || ""), u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([u8], { type: "audio/midi" }));
+  a.download = (rec.title || "Track").replace(/[\\/:*?"<>|]+/g, "").trim() + (rec.variant ? " " + rec.variant : "") + ".mid";
+  document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
 
 // ---- Tab, Trackwahl, Laden ----
 function showTab(name) {
@@ -2755,8 +2793,8 @@ function libRow(rec, fl) {
   head.append(el("span", "lib-meta", [r.bpm || q.bpm ? `${r.bpm || q.bpm} BPM` : "", r.keyscale || q.keyscale || "",
     fmtDur(masteredOk(rec) && rec.masteredDur ? rec.masteredDur : r.duration_real || r.duration || q.duration || 0), seed != null ? `Seed ${seed}` : "",
     /xl/.test(r.dit || "") ? "XL" : "",
-    rec.source === "eigen" ? "🎹 selbst gespielt" : g > 1 ? (q.inference_steps > 50 ? "Maximal" : "Studio") : "ungeführt",
-    r.ende ? "Ende geglättet" : "", qaLabel(r.qa), rec.wm ? "🔏 Wasserzeichen" : "", rec.master ? "🎚 gemastert" : "",
+    rec.source === "eigen" ? "🎹 selbst gespielt" : rec.derived ? "🎼 nachgespielt (KI-Komposition)" : g > 1 ? (q.inference_steps > 50 ? "Maximal" : "Studio") : "ungeführt",
+    r.ende ? "Ende geglättet" : "", qaLabel(r.qa), rec.midi ? "🎼 MIDI" : rec.midiState === "pending" ? "🎼 MIDI folgt" : "", rec.wm ? "🔏 Wasserzeichen" : "", rec.master ? "🎚 gemastert" : "",
     state.finishing === rec.id ? "✨ wird veredelt …" : rec.coverState === "pending" ? "🎨 Cover entsteht …" : "",
     r.render_s ? `in ${fmtDur(r.render_s)} gerechnet` : "", fname ? "📁 " + fname : ""].filter(Boolean).join(" · ")));
   const cv = el("canvas", "lib-wave");
@@ -2772,7 +2810,11 @@ function libRow(rec, fl) {
   btn("🎨", "Cover groß ansehen — und bei Bedarf ein neues malen lassen", () => openCover(rec.id));
   btn(rec.web ? "🌐 online" : "🌐", rec.web ? `Öffentlich auf Fahrstuhlmusik: ${rec.web.url} — klicken für Link, neu veröffentlichen oder zurückziehen`
     : "Auf Fahrstuhlmusik veröffentlichen — öffentlich und kostenlos zum Anhören (gemasterte Fassung)", (e) => webTrack(rec, e.currentTarget), "web-btn" + (rec.web ? " on" : ""));
-  if (rec.source === "eigen") btn("🎹 Projekt öffnen", "Das Projekt öffnen, aus dem dieser Track entstanden ist", () => { showTab("selber"); if (window.mwsSelber && rec.sbProject) window.mwsSelber.open(rec.sbProject); });
+  if (rec.midi) {
+    btn("🎹 Spielen", "Das MIDI-Abbild dieses Songs auf den Instrumenten öffnen — Drums, Bass, Akkorde und Melodie im Tab „Selber machen“", () => { showTab("selber"); if (window.mwsSelber) window.mwsSelber.fromMidi(rec); });
+    if (rec.midiFile) btn("⬇︎ MIDI", "MIDI-Datei (4 Spuren, im Takt) — für jede DAW", () => downloadMidi(rec));
+  }
+  if (rec.source === "eigen" || rec.sbProject) btn("🎹 Projekt öffnen", "Das Projekt öffnen, aus dem dieser Track entstanden ist", () => { showTab("selber"); if (window.mwsSelber && rec.sbProject) window.mwsSelber.open(rec.sbProject); });
   else btn("⤴︎ Weiterarbeiten", "Diesen Track zum aktuellen machen — ändern oder neue Versionen, mit seinem Charakter", () => continueFrom(rec));
   const delBtn = btn("🗑", rec.favorite ? "★ Favorit — geschützt. Erst den Stern entfernen, dann löschen." : "Löschen — auch auf dem Mac (Papierkorb)", () => deleteTracks([rec.id]), "danger");
   delBtn.disabled = !!rec.favorite;

@@ -73,7 +73,7 @@ HOST = os.environ.get("HOST", "0.0.0.0")      # 3.11: lokale Installation → 12
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, "web")
 
-APP_VERSION = "3.15.0"
+APP_VERSION = "3.16.1"
 BRIDGE_FILE = next((p for p in (os.path.join(ROOT, "bridge", n) for n in ("neonforge_bridge.py", "manuwave_bridge.py"))
                     if os.path.isfile(p)), os.path.join(ROOT, "bridge", "manuwave_bridge.py"))
 BUILD_INFO_FILE = os.path.join(WEB, "build-info.json")
@@ -188,6 +188,7 @@ BRIDGE_SEEN_S = 45                        # so lange gilt der Mac als verbunden
 RUNNING_STALE_S = 15 * 60                 # ohne Lebenszeichen → als verloren werten
 QUEUED_TTL = 2 * 3600                     # 3.2: ein nie abgeholter Auftrag verfällt (sonst hält er Upload + Platz ewig)
 NS_UPLOAD_CAP = 192 * 1024 * 1024         # 3.2: wartende Uploads je Kopplung
+FILE_JSON = "application/vnd.manuwave.file+json"   # 3.16: ein JSON-ERGEBNIS als Datei (MIDI-Abbilder ~100 KB je Track)
 MAX_JSON_BODY = 256 * 1024                # JSON-Körper — Briefe/Texte sind weit kleiner
 DURATION_RANGE = (10.0, 600.0)   # 3.14: über 240 s baut die Brücke in Abschnitten an
 
@@ -258,9 +259,9 @@ def clean_brief_request(raw: dict) -> dict:
     return out
 
 
-BRIEF_LANE = {"brief", "settings", "export", "verify", "archiv", "loeschen", "web", "web_weg", "master_merken"}
-NEW_KINDS = {"settings", "export", "verify", "cover", "nachruesten", "archiv", "loeschen", "web", "web_weg", "master_merken"}
-KIND_SINCE = {"loeschen": "3.6", "web": "3.10", "web_weg": "3.10", "master_merken": "3.12.3"}     # ab welcher Brücke eine Art geht (für die Meldung)
+BRIEF_LANE = {"brief", "settings", "export", "verify", "archiv", "loeschen", "web", "web_weg", "master_merken", "midi"}
+NEW_KINDS = {"settings", "export", "verify", "cover", "nachruesten", "archiv", "loeschen", "web", "web_weg", "master_merken", "midi"}
+KIND_SINCE = {"loeschen": "3.6", "web": "3.10", "web_weg": "3.10", "master_merken": "3.12.3", "midi": "3.16"}     # ab welcher Brücke eine Art geht (für die Meldung)
 
 
 def lane_of(kind: str) -> str:
@@ -337,6 +338,13 @@ def clean_job(kind: str, raw) -> dict:
         if not keep:
             raise ValueError("Keine Regler")
         return {"items": keep}
+    if kind == "midi":
+        # 3.16: MIDI-Abbilder abholen — nur Archivpfade in der erwarteten Form (die Brücke prüft selbst noch einmal)
+        lst = (raw or {}).get("archived") if isinstance(raw, dict) else None
+        keep = [a for a in (lst if isinstance(lst, list) else []) if isinstance(a, str) and ARCHIVED_RE.match(a) and ".." not in a]
+        if not keep:
+            raise ValueError("Keine Tracks")
+        return {"archived": keep[:40]}
     if kind == "loeschen":
         # 3.6: nur Archivpfade in der erwarteten Form — die Brücke prüft selbst noch einmal, dass sie in renders/ liegen
         lst = (raw or {}).get("archived") if isinstance(raw, dict) else None
@@ -1093,9 +1101,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     j["pending_meta"] = data if isinstance(data, dict) else None
             self._json(200 if j else 404, {"ok": bool(j)})
             return
-        # result: Audio-Bytes (render, export), ZIP (3.9: Veröffentlichungspaket) oder JSON (understand, settings …)
+        # result: Audio-Bytes (render, export), ZIP (3.9: Veröffentlichungspaket), JSON-Datei (3.16: MIDI-Abbilder,
+        #         größer als ein JSON-Körper) oder JSON (understand, settings …)
         ctype = (self.headers.get("Content-Type") or "").lower()
-        if ctype.startswith("audio/") or ctype.split(";")[0].strip() == "application/zip":
+        if ctype.startswith("audio/") or ctype.split(";")[0].strip() in ("application/zip", FILE_JSON):
             audio = self._raw_body(MAX_AUDIO_BYTES)
             if audio is None:
                 self._json(413, {"error": "too_big"})
@@ -1104,7 +1113,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 j = BROKER._bridge_job(ns, jid)
                 meta = (j or {}).get("pending_meta")
             base_ct = ctype.split(";")[0].strip()
-            mime = base_ct if (re.fullmatch(r"audio/[\w.+-]{1,40}", base_ct) or base_ct == "application/zip") else "audio/wav"
+            mime = "application/json" if base_ct == FILE_JSON else base_ct if (re.fullmatch(r"audio/[\w.+-]{1,40}", base_ct) or base_ct == "application/zip") else "audio/wav"
             ok = BROKER.finish(ns, jid, audio=audio, result_meta=meta, mime=mime)
         else:
             data = self._read_body()

@@ -6,7 +6,7 @@
 // → WAV → Bibliothek; der Mac veredelt ihn wie jeden Track, mit Herkunft "selbst eingespielt", nicht KI).
 // Die Oberfläche ist zweisprachig aus sich heraus (T(de, en)) und steht unter translate="no" — der Laufzeit-Übersetzer
 // fasst sie nicht an (Regel aus 3.12: eine Übersetzung ändert, was der Code zurückliest).
-import { SCHEMA, PAD_PARAMS, DRUM_MODELS, GM_TO_PAD, KITS, MODELS, PRESETS, defaults, demoProject } from "./selber-presets.js";
+import { SCHEMA, PAD_PARAMS, DRUM_MODELS, GM_TO_PAD, KITS, MODELS, MODEL_GROUPS, PRESETS, defaults, demoProject } from "./selber-presets.js";
 
 const EN = window.MWS_LANG === "en";
 const T = (de, en) => (EN ? en : de);
@@ -35,6 +35,12 @@ const NOTE_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A"
 const NOTE_EN = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
 const noteName = (n) => (EN ? NOTE_EN : NOTE_NAMES)[n % 12] + (Math.floor(n / 12) - 1);
 const model = (id) => MODELS.find(m => m.id === id) || MODELS[0];
+// 3.16: Instrument-Menü in Gruppen (Grundmodelle, Klassiker, Drums); disabled(m) sperrt Einträge
+const modelOptions = (sel, disabled = () => false) => MODEL_GROUPS.map(([g, de, en]) => h("optgroup", { label: EN ? en : de },
+  MODELS.filter(m => m.g === g).map(m => h("option", { value: m.id, selected: m.id === sel, disabled: disabled(m) }, EN ? m.en : m.de))));
+const KIT_ORDER = ["808", "909", "606", "cr78", "80s", "trap", "techno", "lofi"];
+// Werks-Preset auf eine Spur legen (Klang + Chorus des Vorbilds, z. B. Juno)
+function presetChorus(t, pr) { if (pr && pr.ch != null) { t.chorus = pr.ch; applyAllTracks(); } }
 const dbGain = (db) => (db <= -60 ? 0 : Math.pow(10, db / 20));
 
 const S = {
@@ -109,7 +115,7 @@ function newTrack(modelId, name) {
   const used = new Set(S.project.tracks.map(t => t.color));
   return { id: uid(), kind: m.engine === "drums" ? "drums" : "synth", model: m.id, name: name || T(m.de, m.en), color: COLORS.find(c => !used.has(c)) || COLORS[0],
     patch: Object.assign(defaults(m.engine), (PRESETS.find(p => p.model === m.id) || {}).patch || {}), presetName: (PRESETS.find(p => p.model === m.id) || {})[EN ? "en" : "de"] || "",
-    vol: -8, pan: 0, mute: false, solo: false, rev: 0.12, dly: 0, eq: { lo: 0, mid: 0, hi: 0 }, chorus: 0 };
+    vol: -8, pan: 0, mute: false, solo: false, rev: 0.12, dly: 0, eq: { lo: 0, mid: 0, hi: 0 }, chorus: (PRESETS.find(p => p.model === m.id) || {}).ch || 0 };
 }
 function emptyProject() {
   const p = { v: 1, id: uid(), name: T("Neues Projekt", "New project"), bpm: 120, swing: 0.5, key: "", genre: "", tracks: [], patterns: { A: { bars: 4, notes: {} } },
@@ -451,6 +457,7 @@ function fromPos(p, x) {
 }
 function fmt(p, v) {
   const u = p.u || "";
+  if (p.k === "hpf" && v <= 21) return T("aus", "off");
   if (u === "Hz") return v >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 1 : 2).replace(".", EN ? "." : ",") + " kHz" : (v < 10 ? v.toFixed(2) : Math.round(v)) + " Hz";
   if (u === "s") return v < 1 ? Math.round(v * 1000) + " ms" : v.toFixed(2).replace(".", EN ? "." : ",") + " s";
   if (u === "%") return p.min < 0 ? (v > 0 ? "+" : "") + Math.round(v * 100) + " %" : Math.round(v * 100) + " %";
@@ -464,7 +471,7 @@ function fmt(p, v) {
 function knob(p, value, onChange, opts = {}) {
   const lab = EN ? p.en : p.de;
   const id = "sbK" + uid();
-  const wrap = h("div", { class: "sb-knob" + (opts.small ? " small" : ""), title: lab });
+  const wrap = h("div", { class: "sb-knob" + (opts.small ? " small" : ""), title: lab + T(" — an die Stelle am Bogen klicken · fein: Shift + senkrecht ziehen oder Mausrad · Alt-Klick = Standard", " — click the spot on the arc · fine: Shift + drag vertically, or the mouse wheel · Alt-click = default") });
   const R = opts.small ? 15 : 19, C = 2 * Math.PI * R, A = 0.75;     // 270°-Bogen
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   const size = (R + 5) * 2; svg.setAttribute("viewBox", `0 0 ${size} ${size}`); svg.setAttribute("width", size); svg.setAttribute("height", size);
@@ -490,19 +497,33 @@ function knob(p, value, onChange, opts = {}) {
   };
   const set = (nv, fire = true) => { nv = clamp(nv, p.min, p.max); if (nv === v) return; v = nv; paint(); if (fire) onChange(v); };
   wrap.setValue = (nv) => { v = nv; paint(); };
+  // 3.16: in den Regler klicken setzt den Wert dorthin (Winkel am 270°-Bogen), Ziehen folgt dem Kreis;
+  // mit Shift: fein, senkrecht ziehen wie bisher. Die Lücke unten rastet am näheren Ende ein.
+  const posAt = (e, prev) => {
+    const r = face.getBoundingClientRect(), dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+    if (dx * dx + dy * dy < 9) return prev == null ? toPos(p, v) : prev;   // genau in der Mitte: Winkel unbestimmt, Wert bleibt
+    const a = ((Math.atan2(dy, dx) * 180 / Math.PI - 135) % 360 + 360) % 360;
+    if (a <= 270) return a / 270;
+    return prev == null ? (a > 315 ? 0 : 1) : (prev < 0.5 ? 0 : 1);   // in der Lücke: nicht von 0 nach 100 % springen
+  };
+  // Maus. 🔴 3.16.0 hatte beim Umbau die pointerup-Zeilen verloren: das Ziehen endete nie, der Wert klebte an der Maus.
+  // Fein einstellen: Shift gedrückt halten und senkrecht ziehen, oder Mausrad. Standard: Alt-Klick (ein Doppelklick
+  // setzte zurück, sobald man zweimal schnell klickte).
   let drag = null;
   face.addEventListener("pointerdown", (e) => {
     if (S.learn && opts.learn) { e.preventDefault(); learnPick(opts.learn, lab, wrap); return; }
-    e.preventDefault(); face.focus(); face.setPointerCapture(e.pointerId); drag = { y: e.clientY, x0: toPos(p, v) };
+    e.preventDefault(); face.focus();
+    if (e.altKey) { set(p.def); return; }
+    if (e.shiftKey) { face.setPointerCapture(e.pointerId); drag = { y: e.clientY, x0: toPos(p, v) }; return; }
+    set(fromPos(p, posAt(e, null)));
   });
   face.addEventListener("pointermove", (e) => {
     if (!drag) return;
-    const range = e.shiftKey ? 900 : 180;
-    set(fromPos(p, drag.x0 + (drag.y - e.clientY) / range));
+    if (!(e.buttons & 1)) { end(); return; }                     // Taste schon los (Fenster verlassen o. Ä.): nicht weiter folgen
+    set(fromPos(p, drag.x0 + (drag.y - e.clientY) / 900));
   });
   const end = () => { if (drag) { drag = null; if (opts.onEnd) opts.onEnd(v); } };
-  face.addEventListener("pointerup", end); face.addEventListener("pointercancel", end);
-  face.addEventListener("dblclick", () => set(p.def));
+  face.addEventListener("pointerup", end); face.addEventListener("pointercancel", end); face.addEventListener("lostpointercapture", end);
   face.addEventListener("wheel", (e) => { e.preventDefault(); set(fromPos(p, toPos(p, v) - Math.sign(e.deltaY) * (e.shiftKey ? 0.005 : 0.03))); }, { passive: false });
   face.addEventListener("keydown", (e) => {
     const stp = e.shiftKey ? 0.01 : 0.05;
@@ -560,14 +581,16 @@ function shell() {
         h("button", { id: "sbExport", type: "button", class: "ghost btn-s", title: T("Projekt als Datei sichern", "Back up the project as a file"), text: T("⬇︎ Datei", "⬇︎ File") }),
         h("button", { id: "sbImport", type: "button", class: "ghost btn-s", title: T("Projekt aus Datei laden", "Load a project from a file"), text: T("⬆︎ Datei", "⬆︎ File") }),
         h("input", { id: "sbImportFile", type: "file", accept: ".json,application/json", hidden: true }),
-        h("button", { id: "sbDel", type: "button", class: "ghost btn-s danger", text: T("🗑", "🗑"), title: T("Projekt löschen", "Delete project") })),
+        h("button", { id: "sbDel", type: "button", class: "ghost btn-s danger", text: T("🗑", "🗑"), title: T("Projekt löschen", "Delete project") }),
+        h("select", { id: "sbFromLib", class: "sb-fromlib", "aria-label": T("Song aus der Bibliothek auf die Instrumente legen", "Put a library song on the instruments"),
+          title: T("Jeder KI-Song bekommt auf dem Mac ein MIDI-Abbild — hier wird daraus ein Projekt mit Drums, Bass, Akkorden und Melodie", "Every AI song gets a MIDI image on your computer — this turns it into a project with drums, bass, chords and melody") })),
       h("span", { id: "sbSaved", class: "sub small", role: "status" })),
     h("div", { id: "sbTransport", class: "sb-transport" }),
     h("div", { class: "sb-main" },
       h("div", { class: "sb-tracks-wrap" },
         h("div", { class: "sb-head" }, h("h3", { text: T("Spuren", "Tracks") }),
           h("select", { id: "sbAddModel", "aria-label": T("Instrument der neuen Spur", "Instrument for the new track") },
-            MODELS.map(m => h("option", { value: m.id }, EN ? m.en : m.de))),
+            modelOptions("poly")),
           h("button", { id: "sbAdd", type: "button", class: "ghost btn-s", text: T("＋ Spur", "＋ Track") })),
         h("div", { id: "sbTracks", class: "sb-tracks" })),
       h("div", { id: "sbEditor", class: "sb-editor" })),
@@ -579,6 +602,8 @@ function shell() {
   );
   q("#sbName").addEventListener("input", (e) => { S.project.name = e.target.value.slice(0, 80) || T("Projekt", "Project"); changed("none"); renderProjects(); });
   q("#sbProjects").addEventListener("change", (e) => openProject(e.target.value));
+  q("#sbFromLib").addEventListener("change", async (e) => { const id = e.target.value; e.target.value = ""; if (!id || !window.mwsLibrary) return;
+    const rec = await window.mwsLibrary.get(id); if (rec) await fromMidi(rec); });
   q("#sbNew").onclick = async () => { await save(); stop(); emptyProject(); S.sel = S.project.tracks[0].id; S.pat = "A"; S.undo = []; await afterLoad(); status(T("Neues Projekt angelegt.", "New project created.")); };
   q("#sbDup").onclick = async () => { await save(); const c = JSON.parse(JSON.stringify(S.project)); c.id = uid(); c.name = S.project.name + T(" (Kopie)", " (copy)"); c.created = Date.now(); S.project = c; await save(); await afterLoad(); status(T("Kopie angelegt — du arbeitest jetzt in der Kopie.", "Copy created — you are now working in the copy.")); };
   q("#sbDel").onclick = async () => {
@@ -613,7 +638,7 @@ function shell() {
 function renderAll() {
   if (!S.built) return;
   q("#sbName").value = S.project.name;
-  renderProjects(); renderTransport(); renderTracks(); renderEditor(); renderKeys(); renderSong(); renderBounce();
+  renderProjects(); renderTransport(); renderTracks(); renderEditor(); renderKeys(); renderSong(); renderBounce(); renderFromLib();
 }
 async function renderProjects() {
   const sel = q("#sbProjects"); if (!sel) return;
@@ -622,6 +647,71 @@ async function renderProjects() {
   all.sort((a, b) => (b.changed || 0) - (a.changed || 0));
   sel.innerHTML = "";
   for (const p of all) sel.append(h("option", { value: p.id, selected: p.id === S.project.id }, (p.id === S.project.id ? S.project.name : p.name) || "—"));
+}
+// ---------- 3.16: Songs aus der Bibliothek (MIDI-Abbild vom Mac) ----------
+async function renderFromLib() {
+  const sel = q("#sbFromLib"); if (!sel) return;
+  const list = window.mwsLibrary && window.mwsLibrary.midiTracks ? await window.mwsLibrary.midiTracks().catch(() => []) : [];
+  sel.innerHTML = "";
+  sel.append(h("option", { value: "" }, list.length ? T(`🎼 Song aus der Bibliothek (${list.length}) …`, `🎼 Song from the library (${list.length}) …`)
+    : T("🎼 Songs aus der Bibliothek: MIDI-Abbilder folgen vom Mac", "🎼 Library songs: MIDI images will come from your computer")));
+  for (const r of list) sel.append(h("option", { value: r.id }, r.title + (r.variant ? " · " + r.variant : "") + (r.bpm ? ` · ${Math.round(r.bpm)} BPM` : "")));
+  sel.disabled = !list.length;
+}
+// Welche Klänge ein Abbild bekommt — je Richtung ein passendes Kit, sonst Klassiker, die überall tragen
+function kitFor(caption) {
+  const c = String(caption || "").toLowerCase();
+  return /trap|drill|hip.?hop|rap/.test(c) ? "trap" : /lo.?fi|chill|jazz/.test(c) ? "lofi" : /techno|industrial/.test(c) ? "techno"
+    : /house|trance|edm|dance|disco|electro|club/.test(c) ? "909" : /80s|synthwave|retro|new wave/.test(c) ? "80s" : "808";
+}
+function trackWith(model, presetDe, name, o = {}) {
+  const t = newTrack(model, name), pr = PRESETS.find(p => p.model === model && p.de === presetDe);
+  if (pr) { t.patch = Object.assign(defaults(model === "drums" ? "drums" : MODELS.find(m => m.id === model).engine), JSON.parse(JSON.stringify(pr.patch))); t.presetName = EN ? pr.en : pr.de; if (pr.ch != null) t.chorus = pr.ch; }
+  return Object.assign(t, o);
+}
+// Ein MIDI-Abbild (Spuren auf dem 1/16-Raster) → neues Projekt; Patterns zu je 16 Takten, höchstens 8 (= 128 Takte)
+export function projectFromMidi(rec) {
+  const M = rec.midi || {}, T0 = M.tracks || {};
+  const cap = (rec.result || {}).caption || (rec.request || {}).caption || "";
+  const kit = kitFor(cap);
+  const drums = trackWith("drums", "", "Drums", { vol: -6, rev: 0.06 });
+  drums.patch = Object.assign(defaults("drums"), { kit: JSON.parse(JSON.stringify(KITS[kit].kit)), kitName: kit }); drums.presetName = EN ? KITS[kit].en : KITS[kit].de;
+  const tracks = [drums,
+    trackWith("minimoog", "Moog-Bass klassisch", T("Bass", "Bass"), { vol: -9, rev: 0 }),
+    trackWith("prophet", "Prophet-Keys", T("Akkorde", "Chords"), { vol: -15, rev: 0.25, chorus: 0.2 }),
+    trackWith("minimoog", "Singender Lead", T("Melodie", "Melody"), { vol: -12, rev: 0.3, dly: 0.15 })];
+  const src = { [tracks[0].id]: T0.drums || [], [tracks[1].id]: (T0.bass || []).map(n => ({ ...n, n: n.n + 12 })),   // Bass-Klänge stehen eine Oktave tiefer
+    [tracks[2].id]: T0.chords || [], [tracks[3].id]: T0.melody || [] };
+  const PAT = 16 * SPB, all = Object.values(src).flat();
+  const end = all.reduce((m, n) => Math.max(m, n.s + (n.l || 1)), 0);
+  const nPat = clamp(Math.ceil(end / PAT), 1, LETTERS.length);
+  const patterns = {};
+  for (let i = 0; i < nPat; i++) {
+    const left = end - i * PAT;
+    patterns[LETTERS[i]] = { bars: clamp(Math.ceil(Math.min(PAT, left) / SPB), 1, 16), notes: {} };
+  }
+  for (const [tid, ns] of Object.entries(src)) for (const n of ns) {
+    const i = Math.floor(n.s / PAT); if (n.s < 0 || i >= nPat) continue;
+    const P = patterns[LETTERS[i]], s0 = n.s - i * PAT, lim = P.bars * SPB;
+    if (s0 >= lim) continue;
+    (P.notes[tid] = P.notes[tid] || []).push({ s: s0, l: clamp(n.l || 1, 1, lim - s0), n: n.n, v: clamp(n.v || 0.8, 0.1, 1) });
+  }
+  return { v: 1, id: uid(), name: (rec.title || "Song") + T(" (MIDI-Abbild)", " (MIDI image)"), bpm: clamp(Math.round((M.bpm || 120) * 100) / 100, 40, 240),
+    swing: 0.5, key: (rec.result || {}).keyscale || (rec.request || {}).keyscale || "", genre: cap.split(",")[0].trim().slice(0, 40), tracks, patterns,
+    song: Object.keys(patterns).map(p => ({ p, r: 1 })), fx: { revSize: 0.55, revDecay: 2.2, dlyTime: "3/16", dlyFb: 0.3, dlyTone: 0.5 }, master: { vol: 0 },
+    fromTrack: rec.id, cut: Math.ceil(end / PAT) > LETTERS.length, created: Date.now(), changed: Date.now() };
+}
+async function fromMidi(rec) {
+  await init();
+  if (!rec || !rec.midi) { status(T("Für diesen Song gibt es noch kein MIDI-Abbild — dein Mac rechnet es, sobald er frei ist.", "There is no MIDI image for this song yet — your computer makes one as soon as it is free.")); return; }
+  const have = (await dbAll("projects").catch(() => [])).find(p => p.fromTrack === rec.id);
+  if (have) { await openProject(have.id); status(T(`„${have.name}“ gibt es schon — geöffnet.`, `“${have.name}” already exists — opened.`)); return; }
+  await save(); stop();
+  S.project = fixProject(projectFromMidi(rec)); S.undo = []; S.redo = [];
+  await save(); await afterLoad();
+  S.songMode = true; renderTransport();          // ein ganzer Song: Wiedergabe als Song, nicht als Schleife
+  status(T(`🎼 „${rec.title}“ liegt jetzt auf den Instrumenten — ${S.project.bpm} BPM, ${Object.keys(S.project.patterns).length} Teile.`, `🎼 “${rec.title}” is now on the instruments — ${S.project.bpm} BPM, ${Object.keys(S.project.patterns).length} parts.`)
+    + (S.project.cut ? T(" Der Song ist länger als 128 Takte — der Rest fehlt.", " The song is longer than 128 bars — the rest is left out.") : ""));
 }
 async function openProject(id) {
   if (id === S.project.id) return;
@@ -643,8 +733,8 @@ function renderTransport() {
   const el = q("#sbTransport"); if (!el) return;
   el.innerHTML = "";
   const P = S.project;
-  const bpm = h("input", { id: "sbBpm", type: "number", min: "40", max: "240", step: "1", value: P.bpm, class: "sb-bpm", "aria-label": "BPM" });
-  bpm.addEventListener("change", () => { P.bpm = clamp(Math.round(+bpm.value || 120), 40, 240); bpm.value = P.bpm; post({ t: "tempo", bpm: P.bpm, swing: P.swing }); if (S.g) applyFx(S.g, P); changed("none"); renderSong(); });
+  const bpm = h("input", { id: "sbBpm", type: "number", min: "40", max: "240", step: "0.01", value: P.bpm, class: "sb-bpm", "aria-label": "BPM" });
+  bpm.addEventListener("change", () => { P.bpm = clamp(Math.round((+bpm.value || 120) * 100) / 100, 40, 240); bpm.value = P.bpm; post({ t: "tempo", bpm: P.bpm, swing: P.swing }); if (S.g) applyFx(S.g, P); changed("none"); renderSong(); });
   const tap = h("button", { type: "button", class: "ghost btn-s", text: "Tap", title: T("Im Takt tippen", "Tap the tempo") });
   tap.onclick = () => { const now = performance.now(); S.taps = (S.taps || []).filter(x => now - x < 3000); S.taps.push(now);
     if (S.taps.length >= 3) { const d = (S.taps[S.taps.length - 1] - S.taps[0]) / (S.taps.length - 1); P.bpm = clamp(Math.round(60000 / d), 40, 240); bpm.value = P.bpm; post({ t: "tempo", bpm: P.bpm }); if (S.g) applyFx(S.g, P); changed("none"); } };
@@ -686,7 +776,8 @@ function renderPatterns() {
     el.append(b);
   }
   const bars = h("select", { id: "sbBars", "aria-label": T("Länge des Patterns", "Pattern length") },
-    [1, 2, 4, 8].map(n => h("option", { value: n, selected: n === curPat().bars }, n + (n === 1 ? T(" Takt", " bar") : T(" Takte", " bars")))));
+    // 3.16: bis 16 Takte (ein MIDI-Abbild teilt den Song in 16-Takt-Teile); eine krumme Länge (letzter Teil) steht mit drin
+    [...new Set([1, 2, 4, 8, 16, curPat().bars])].sort((x, y) => x - y).map(n => h("option", { value: n, selected: n === curPat().bars }, n + (n === 1 ? T(" Takt", " bar") : T(" Takte", " bars")))));
   bars.onchange = () => { snap(); curPat().bars = +bars.value; changed(); renderEditor(); renderSong(); };
   const more = h("select", { "aria-label": T("Pattern-Aktionen", "Pattern actions"), class: "sb-more" },
     h("option", { value: "" }, "⋯"), h("option", { value: "dup" }, T("Kopieren nach nächstem freien", "Copy to next free")),
@@ -805,11 +896,12 @@ function renderEditor() {
   const t = curTrack();
   if (!t) { el.append(h("p", { class: "sub", text: T("Leg links eine Spur an.", "Add a track on the left.") })); return; }
   const m = model(t.model);
-  const msel = h("select", { id: "sbModel", "aria-label": T("Instrument", "Instrument") }, MODELS.map(x => h("option", { value: x.id, selected: x.id === t.model, disabled: (x.engine === "drums") !== (t.kind === "drums") }, EN ? x.en : x.de)));
+  const msel = h("select", { id: "sbModel", "aria-label": T("Instrument", "Instrument") }, modelOptions(t.model, (x) => (x.engine === "drums") !== (t.kind === "drums")));
   msel.onchange = () => {
     snap();
     const nm = model(msel.value), pr = PRESETS.find(p => p.model === nm.id);
-    t.model = nm.id; t.patch = Object.assign(defaults(nm.engine), pr ? pr.patch : {}); t.presetName = pr ? (EN ? pr.en : pr.de) : "";
+    t.model = nm.id; t.patch = Object.assign(defaults(nm.engine), pr ? JSON.parse(JSON.stringify(pr.patch)) : {}); t.presetName = pr ? (EN ? pr.en : pr.de) : "";
+    presetChorus(t, pr);
     post({ t: "patch", tr: t.id, patch: t.patch }); changed("none"); renderTracks(); renderEditor();
   };
   const user = S.userPresets || [];
@@ -820,13 +912,14 @@ function renderEditor() {
     user.filter(p => p.model === t.model).length ? h("optgroup", { label: T("Meine Klänge", "My sounds") }, user.filter(p => p.model === t.model).map(p => h("option", { value: "u" + p.id }, p.name))) : null);
   psel.onchange = () => {
     const v = psel.value; if (!v) return;
-    let patch, name;
-    if (v[0] === "f") { const p = presets[+v.slice(1)]; patch = p.patch; name = EN ? p.en : p.de; }
+    let patch, name, fac = null;
+    if (v[0] === "f") { const p = fac = presets[+v.slice(1)]; patch = p.patch; name = EN ? p.en : p.de; }
     else { const p = user.find(x => "u" + x.id === v); patch = p.patch; name = p.name; }
     snap();
     if (t.kind === "drums") t.patch = Object.assign(defaults("drums"), JSON.parse(JSON.stringify(patch)));
     else t.patch = Object.assign(defaults(m.engine), JSON.parse(JSON.stringify(patch)));
     t.patch.engine = m.engine; t.presetName = name;
+    presetChorus(t, fac);
     post({ t: "patch", tr: t.id, patch: t.patch }); changed("none"); renderEditor();
   };
   const savePre = h("button", { type: "button", class: "ghost btn-s", text: T("💾 Als Klang merken", "💾 Save sound"), title: T("Diesen Klang unter „Meine Klänge“ speichern", "Save this sound under “My sounds”") });
@@ -841,7 +934,7 @@ function renderEditor() {
       .map(([k, l]) => h("button", { type: "button", role: "tab", class: S.tab === k ? "on" : "", "aria-selected": String(S.tab === k), text: l, onclick: () => { S.tab = k; lsSet(LS_UI, { tab: k }); renderEditor(); } })));
   el.append(h("div", { class: "sb-ehead", style: `--c:${t.color}` },
     h("span", { class: "sb-tdot" }), h("b", { class: "sb-etitle", text: t.name }), msel, psel, savePre, tabs),
-    h("p", { class: "sub small sb-ehint", text: EN ? m.he : m.hd }));
+    h("p", { class: "sub small sb-ehint", text: (EN ? m.he : m.hd) + (m.g === "classic" ? T(" · Eigener Nachbau, der Name nennt das Vorbild.", " · Our own recreation; the name refers to the original.") : "") }));
   const body = h("div", { id: "sbEBody", class: "sb-ebody" });
   el.append(body);
   if (S.tab === "notes") (t.kind === "drums" ? renderDrumGrid : renderPianoRoll)(body, t);
@@ -907,7 +1000,8 @@ function renderPadPanel(bodyIn) {
   let box = q("#sbPadPanel", body);
   if (!box) { box = h("section", { id: "sbPadPanel", class: "sb-panel sb-padpanel" }); body.append(box); }
   box.innerHTML = "";
-  const kitSel = h("select", { id: "sbKit", "aria-label": T("Kit", "Kit") }, Object.entries(KITS).map(([k, v]) => h("option", { value: k, selected: k === t.patch.kitName }, EN ? v.en : v.de)));
+  const kitSel = h("select", { id: "sbKit", "aria-label": T("Kit", "Kit") }, [...KIT_ORDER, ...Object.keys(KITS).filter(k => !KIT_ORDER.includes(k))].filter(k => KITS[k])
+    .map(k => h("option", { value: k, selected: k === t.patch.kitName }, EN ? KITS[k].en : KITS[k].de)));
   kitSel.onchange = () => { snap(); t.patch.kit = JSON.parse(JSON.stringify(KITS[kitSel.value].kit)); t.patch.kitName = kitSel.value; post({ t: "patch", tr: t.id, patch: t.patch }); changed("none"); renderEditor(); };
   const pads = h("div", { class: "sb-pads" });
   t.patch.kit.forEach((k, i) => {
@@ -1155,13 +1249,14 @@ function renderKeys() {
     h("span", { class: "sb-wheels" },
       h("label", { class: "sb-cap", for: "sbBendW", text: "Pitch" }), h("input", { id: "sbBendW", type: "range", min: -1, max: 1, step: 0.01, value: 0, class: "sb-wheel" }),
       h("label", { class: "sb-cap", for: "sbModW", text: "Mod" }), h("input", { id: "sbModW", type: "range", min: 0, max: 1, step: 0.01, value: 0, class: "sb-wheel" })));
-  const kb = h("div", { class: "sb-kb", id: "sbKb", "aria-label": T("Tastatur", "Keyboard"), "data-oct": String(S.octave) });
+  const octs = kbOctaves();
+  const kb = h("div", { class: "sb-kb", id: "sbKb", "aria-label": T("Tastatur", "Keyboard"), "data-oct": String(S.octave), "data-octs": String(octs) });
   el.append(oct, kb);
   const bw = q("#sbBendW"), mw = q("#sbModW");
   bw.oninput = () => { const tt = curTrack(); if (tt) post({ t: "bend", tr: tt.id, v: +bw.value }); };
   bw.onchange = bw.onpointerup = () => { bw.value = 0; const tt = curTrack(); if (tt) post({ t: "bend", tr: tt.id, v: 0 }); };
   mw.oninput = () => { const tt = curTrack(); if (tt) post({ t: "mod", tr: tt.id, v: +mw.value }); };
-  const lo = 48 + S.octave * 12, n0 = lo, n1 = lo + 36;
+  const lo = (octs >= 4 ? 36 : 48) + S.octave * 12, n0 = lo, n1 = lo + octs * 12;
   const whites = []; for (let n = n0; n <= n1; n++) if (![1, 3, 6, 8, 10].includes(n % 12)) whites.push(n);
   const W = 100 / whites.length;
   let wi = 0;
@@ -1182,6 +1277,8 @@ function renderKeys() {
   renderKbInfo(); paintKeys();
   if (t && t.kind === "drums") el.classList.add("drums"); else el.classList.remove("drums");
 }
+// 3 Oktaven am Handy, 4 am Laptop, 5 (61 Tasten, C2–C7 wie ein Keystation 61) auf breiten Monitoren
+function kbOctaves() { const w = (q("#sbKeys") || {}).clientWidth || innerWidth; return w >= 1250 ? 5 : w >= 860 ? 4 : 3; }
 function renderKbInfo() {
   const e = q("#sbKbInfo"); if (!e) return;
   const t = curTrack();
@@ -1254,7 +1351,10 @@ function renderBounce() {
       h("label", { class: "lbl" }, T("Tonart (optional)", "Key (optional)"), keyIn),
       h("label", { class: "lbl" }, T("Ende", "End"), tail)),
     h("div", { class: "sb-row" }, go, msg),
-    h("p", { class: "sub small", text: T("Der Browser rechnet dein Stück Sample für Sample (schneller als Echtzeit) und legt es in die Bibliothek. Dann kannst du es mastern, exportieren und veröffentlichen wie jeden Track — dein Mac gibt ihm Cover, Tags und Wasserzeichen und vermerkt „selbst eingespielt“ statt „KI-erzeugt“.",
+    // 3.16: ein Projekt aus dem MIDI-Abbild eines KI-Songs bleibt KI — die Noten hat die Musik-KI geschrieben
+    P.fromTrack ? h("p", { class: "sub small sb-derived", text: T("🎼 Dieses Projekt beruht auf dem MIDI-Abbild eines KI-Songs. Der Track wird darum als „KI-erzeugt“ gekennzeichnet, nicht als „selbst eingespielt“ — die Komposition stammt von der Musik-KI, auch wenn du Klänge und Noten änderst.",
+      "🎼 This project is based on the MIDI image of an AI song. The track is therefore labelled “AI-generated”, not “self-played” — the composition comes from the music AI, even if you change sounds and notes.") })
+    : h("p", { class: "sub small", text: T("Der Browser rechnet dein Stück Sample für Sample (schneller als Echtzeit) und legt es in die Bibliothek. Dann kannst du es mastern, exportieren und veröffentlichen wie jeden Track — dein Mac gibt ihm Cover, Tags und Wasserzeichen und vermerkt „selbst eingespielt“ statt „KI-erzeugt“.",
       "The browser renders your piece sample by sample (faster than real time) and puts it in the library. Master, export and publish it like any track — your computer adds cover, tags and watermark and marks it “self-played”, not “AI-generated”.") }));
 }
 function encodeWav24(buf) {
@@ -1305,10 +1405,14 @@ async function bounce() {
     const fade = Math.min(2400, end); for (let c = 0; c < 2; c++) { const d = cut.getChannelData(c); for (let i = 0; i < fade; i++) d[end - fade + i] *= 1 - i / fade; }
     const blob = encodeWav24(cut);
     const used = P.tracks.filter(t => !t.mute && Object.values(P.patterns).some(p => (p.notes[t.id] || []).length)).map(t => t.name);
-    const caption = [P.genre, "self-played", "synthesizer"].filter(Boolean).join(", ");
+    const derived = !!P.fromTrack;            // 3.16: aus dem MIDI-Abbild eines KI-Songs → bleibt KI-gekennzeichnet
+    const caption = [P.genre, derived ? "" : "self-played", "synthesizer"].filter(Boolean).join(", ");
+    const src = P.name.replace(/ \((MIDI-Abbild|MIDI image)\)$/, "");
     const rec = await window.mwsLibrary.add({
-      title, blob, bpm: P.bpm, keyscale: P.key || "", caption, duration: end / 48000, project: P.id,
-      note: T("Selbst eingespielt in Manuwave Studio — ", "Self-played in Manuwave Studio — ") + used.join(", "),
+      title, blob, bpm: P.bpm, keyscale: P.key || "", caption, duration: end / 48000, project: P.id, derived,
+      note: derived ? T(`Auf den Instrumenten von Manuwave Studio nachgespielt — nach dem MIDI-Abbild des KI-Songs „${src}“ (Komposition KI-erzeugt) — `,
+        `Replayed on the Manuwave Studio instruments — from the MIDI image of the AI song “${src}” (composition AI-generated) — `) + used.join(", ")
+        : T("Selbst eingespielt in Manuwave Studio — ", "Self-played in Manuwave Studio — ") + used.join(", "),
     });
     msg.textContent = T(`Fertig in ${((performance.now() - t0) / 1000).toFixed(1)} s — „${title}“ liegt in der Bibliothek (${fmtDur(end / 48000)}).`,
       `Done in ${((performance.now() - t0) / 1000).toFixed(1)} s — “${title}” is in the library (${fmtDur(end / 48000)}).`);
@@ -1338,15 +1442,20 @@ async function init() {
   if (!last) save();
   document.addEventListener("keydown", onKeyDown, true);
   document.addEventListener("keyup", onKeyUp, true);
-  window.addEventListener("resize", () => { if (tabVisible()) paintEditor(); });
+  window.addEventListener("resize", () => {
+    if (!tabVisible()) return;
+    paintEditor();
+    const kb = q("#sbKb"); if (kb && kb.dataset.octs !== String(kbOctaves())) renderKeys();
+  });
   document.addEventListener("visibilitychange", () => { if (document.hidden) { for (const n of [...S.held.keys()]) noteOff(n); } });
   initMidi();
 }
 export function showSelber(on) {
   const v = q("#selberView"); if (!v) return;
+  const app = document.getElementById("app"); if (app) app.classList.toggle("sb-wide", !!on);   // 3.16: volle Breite (auch ohne :has)
   if (on) { init().then(() => { paintEditor(); }); }
   else { if (S.held.size) for (const n of [...S.held.keys()]) noteOff(n); }
 }
 if (tabVisible()) showSelber(true);
-window.mwsSelber = { show: showSelber, state: S, stop: () => stop(), buildGraph,
+window.mwsSelber = { show: showSelber, state: S, stop: () => stop(), buildGraph, fromMidi: async (rec) => { await init(); await fromMidi(rec); }, refreshLib: () => renderFromLib(),
   async open(id) { await init(); if (id && id !== S.project.id) { const p = await dbGet("projects", id).catch(() => null); if (p) { await openProject(id); } else status(T("Das Projekt gibt es in diesem Browser nicht mehr.", "That project no longer exists in this browser.")); } } };

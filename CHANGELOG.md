@@ -3,6 +3,53 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.16.1 — 2026-10-17 (bridge 3.16.0)
+
+### Fixed
+- **Knobs stuck to the mouse.** 3.16.0 lost the release handler when the knobs were rebuilt: after a click the value
+  kept following the pointer. Knobs now react to the click only — the value jumps to the clicked spot on the arc and
+  stays there. Fine moves: Shift + vertical drag, or the mouse wheel. The default is now Alt-click (a double-click reset
+  the knob whenever you clicked twice quickly).
+- In WebKit (Safari) a long instrument name still pushed mute/solo out of the track row; the row's grid column can now
+  shrink.
+- *Song from the library* is filled as soon as the tab opens (not only after loading a project).
+
+## 3.16.0 — 2026-10-17 (bridge 3.16.0)
+
+### Added
+- **MIDI image of every AI song.** The bridge turns each AI track into notes in the background, only while the
+  computer is otherwise idle (any new job stops it at once; it resumes later): Demucs separates drums, bass, vocals
+  and the rest, Basic Pitch (ONNX) finds the notes, pYIN follows the bass line and per-band onsets give kick, snare and
+  hi-hats. The tempo is **measured** around the requested one — the music AI rarely hits it exactly (137.94 instead of
+  136 BPM in one song, three beats off after 3:45) — and every note is placed along the tracked beats. Result next to
+  the WAV: `<name>.midi.json` and a type-1 MIDI file. Checked against a song with a known answer: tempo within 0.01 %,
+  kicks 95 % found / 88 % right, bass 83 % (pitch class).
+  - Library: 🎼 marks songs with a MIDI image; **🎹 Play** opens it on the instruments, **⬇︎ MIDI** downloads the file.
+  - *Make your own*: **Song from the library** lists every song with a MIDI image. A song becomes a project with drums
+    (kit chosen by genre), Minimoog bass, Prophet chords and Minimoog melody, in parts of 16 bars, played as a song.
+  - Installer step **MIDI image** (optional, about 1.5 GB, `--skip-midi` / `-SkipMidi`).
+  - **Honest labels stay honest:** a track rendered from a MIDI image is *not* labelled self-played — the composition
+    came from the music AI. It keeps the AI label, its note names the source song, and *Create track* says so before
+    you render.
+- **18 classic instruments** in *Make your own*, each with its own factory sounds (110 in all): TB-303, Minimoog,
+  Juno-60, Jupiter-8, Prophet-5, OB-Xa, SH-101, MS-20, ARP Odyssey, CS-80, Taurus, PPG Wave, DX7, M1 house organ,
+  Rhodes, Wurlitzer, B3, Clavinet — our own recreations; the names refer to the instruments that inspired them.
+  The instrument menu is grouped (basic models, classics, drums). Juno and other presets bring their chorus.
+- **Drum kits** TR-606, CR-78, 80s (TR-707/LinnDrum style) and trap, next to TR-808, TR-909, techno and lo-fi.
+- **Oscillator 3** and a **high-pass before the filter** on the analog engine.
+- **Full width:** the tab uses the whole monitor; from 1800 px tracks, editor and song sit side by side. The on-screen
+  keyboard shows three, four or five octaves (C2–C7, like a 61-key controller) depending on the width.
+- **Knobs:** click anywhere on the arc and the value jumps there; drag along the circle (Shift = fine, vertical);
+  knobs grow under the mouse.
+- Pattern length up to 16 bars; tempo with two decimals.
+
+### Fixed
+- The **Level** knob had no effect on the analog, FM, electric piano and plucked-string engines (only organ and drums
+  used it). It now works everywhere; the default (80 %) sounds exactly as before.
+- A triangle wave under deep FM (phase running backwards) drifted into a large DC offset (peak +7 dBFS).
+- In the track list a long instrument name pushed the mute/solo buttons out of the row.
+- Four factory sounds peaked above 0 dBFS on a chord; every factory sound now stays below −0.5 dBFS.
+
 ## 3.15.0 — 2026-10-17 (bridge 3.15.0)
 
 ### Added
