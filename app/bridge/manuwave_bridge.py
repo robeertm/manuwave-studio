@@ -58,7 +58,7 @@ try:
 except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.14.0"
+BRIDGE_VERSION = "3.15.0"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
@@ -1518,7 +1518,14 @@ def track_tags(cfg: dict, info: dict) -> dict:
         "key": _short_key(info.get("keyscale") or ""),
         "comment": "",
     }
-    if r["ai_note"]:
+    if info.get("source") == "eigen":
+        # 3.15: selbst eingespielt — die Musik ist keine KI; nur ein KI-Cover wird genannt
+        tags["encoded_by"] = "Manuwave Studio (selbst eingespielt)"
+        if r["ai_note"]:
+            tags["ai"] = "Musik selbst eingespielt in Manuwave Studio%s" % (
+                ", Cover: KI-erzeugt (" + info["cover_model"] + ")" if info.get("cover_model") else "")
+            tags["comment"] = tags["ai"]
+    elif r["ai_note"]:
         tags["ai"] = "KI-erzeugt mit Manuwave Studio (Musik: ACE-Step 1.5%s)" % (
             ", Cover: " + info["cover_model"] if info.get("cover_model") else "")
         tags["comment"] = tags["ai"]
@@ -1939,6 +1946,7 @@ def info_from_archive(wav_path: str, given: dict = None) -> dict:
         "seed": res.get("seed") if res.get("seed") is not None else (req.get("seed") or g.get("seed") or 0),
         "created": created,
         "cover_model": (d.get("cover") or {}).get("model", ""),
+        "source": "eigen" if (meta.get("source") == "eigen" or g.get("source") == "eigen") else "",
     }
 
 
@@ -2338,13 +2346,14 @@ def archive_upload(cfg: dict, audio: bytes, given: dict) -> str:
     except OSError:
         names = []
     for n in names:
-        if n.startswith("aus-browser_") and n.endswith(".json"):
+        if (n.startswith("aus-browser_") or n.startswith("selbst_")) and n.endswith(".json"):
             wav0 = os.path.join(folder, n[:-5] + ".wav")
             if os.path.isfile(wav0) and _read_json(os.path.join(folder, n)).get("upload_sha256") == digest:
                 log("derselbe Track kam schon einmal aus dem Browser — %s wird weiterbenutzt" % rel_home(wav0))
                 return wav0
     clean = lambda v, n: re.sub(r"[^\w\-äöüÄÖÜß]+", "", str(v or "").replace(" ", "_"))[:n]  # noqa: E731
-    base = "aus-browser_%s%s_%s" % (clean(given.get("title"), 50) or "Manuwave_Studio",
+    eigen = given.get("source") == "eigen"
+    base = ("selbst_" if eigen else "aus-browser_") + "%s%s_%s" % (clean(given.get("title"), 50) or "Manuwave_Studio",
                                     ("_" + clean(given.get("variant"), 4)) if clean(given.get("variant"), 4) else "",
                                     clean(given.get("seed"), 12) or secrets.token_hex(3))
     # Audit 3.2: nie eine vorhandene Datei überschreiben (gleicher Titel, Variante, Seed am selben Tag)
@@ -2358,9 +2367,12 @@ def archive_upload(cfg: dict, audio: bytes, given: dict) -> str:
     with os.fdopen(fd, "wb") as f:
         f.write(audio)
     meta = {k: given.get(k) for k in ("title", "variant", "note") if given.get(k)}
+    if eigen:
+        meta["source"] = "eigen"
     req = {k: given.get(k) for k in ("caption", "lyrics", "bpm", "keyscale", "seed") if given.get(k)}
     with open(wav[:-4] + ".json", "w", encoding="utf-8") as f:
-        json.dump({"request": req, "meta": meta, "result": {}, "herkunft": "aus dem Browser nachgereicht", "upload_sha256": digest},
+        json.dump({"request": req, "meta": meta, "result": {},
+                   "herkunft": "selbst eingespielt in Manuwave Studio" if eigen else "aus dem Browser nachgereicht", "upload_sha256": digest},
                   f, indent=2, ensure_ascii=False)
     return wav
 
@@ -2718,6 +2730,7 @@ def release_package(cfg: dict, path: str, res: dict, info: dict, opts: dict, fin
     cover_model = (d.get("cover") or {}).get("model", "")
     cov_lic = next(((n, l, u) for k, n, l, u in MODEL_LICENSES if k in cover_model), None)
     imported = meta.get("source") == "import"
+    eigen = meta.get("source") == "eigen" or info.get("source") == "eigen"     # 3.15: selbst eingespielt
     herkunft = meta.get("herkunft") or {}
     mastered = res.get("master") or {}
     wm = (d.get("wasserzeichen") or {}).get("id") or fin.get("id") or ""
@@ -2729,6 +2742,12 @@ def release_package(cfg: dict, path: str, res: dict, info: dict, opts: dict, fin
 
     # ---- Metadaten fürs Hochladen ----
     ki = [
+        "[ ] Musik — selbst eingespielt (Synthesizer und Drum-Machine in Manuwave Studio, keine KI)",
+        "[ ] Gesamter Ton / Aufnahme — selbst eingespielt",
+        "[ ] Liedtext — entfällt (instrumental)" if instrumental else ("[ ] Liedtext — von %s selbst geschrieben" % owner),
+        "[x] Cover — mit KI erzeugt (%s)" % (cov_lic[0] if cov_lic else cover_model or "Bildmodell"),
+        "Nicht als KI anzugeben: Mastering in Manuwave Studio",
+    ] if eigen else [
         "[x] Musik — mit KI erzeugt (%s)" % ACE_LICENSE[0],
         "[x] Gesamter Ton / Aufnahme — mit KI erzeugt" + (" (inkl. Gesang)" if not instrumental else ""),
         ("[ ] Liedtext — von %s selbst geschrieben" % owner) if text_eigen else
@@ -2762,8 +2781,9 @@ def release_package(cfg: dict, path: str, res: dict, info: dict, opts: dict, fin
         "",
         "WICHTIG",
         "  • Keine Nachahmung anderer Künstler, keine Massen-Uploads — sonst sperren Vertriebe und Plattformen.",
+        *(["  • Selbst eingespielte Musik: bei der GEMA anmeldbar, Bandcamp & Co. nehmen sie."] if eigen else [
         "  • Bandcamp, AudioJungle und Pond5 nehmen (Stand Oktober 2026) keine KI-erzeugte Musik.",
-        "  • GEMA: rein KI-erzeugte Teile sind nicht anmeldbar%s." % (" — dein eigener Text kann es sein" if text_eigen else ""),
+        "  • GEMA: rein KI-erzeugte Teile sind nicht anmeldbar%s." % (" — dein eigener Text kann es sein" if text_eigen else "")]),
         "  • Wasserzeichen-Kennung (unhörbar im Audio): %s" % (wm or "—"),
         "  • SHA-256 der Audiodatei: %s" % sha,
     ]) + "\n"
@@ -2778,10 +2798,19 @@ def release_package(cfg: dict, path: str, res: dict, info: dict, opts: dict, fin
         ("Schritte / Führung", _h("%s / %s" % (req.get("inference_steps") or "Standard", req.get("guidance_scale") or result.get("guidance_scale") or "Standard"))),
         ("Cover", ("%s — %s<br><span class='klein'>%s</span>" % (_h(cov_lic[0]), _h(cov_lic[1]), _h(cov_lic[2]))) if cov_lic else _h(cover_model or "—")),
     ]
+    if eigen:
+        entstehung = [
+            ("Erzeugt am", _h(created or "—")),
+            ("Musik", _h("selbst eingespielt von %s — Synthesizer und Drum-Machine von Manuwave Studio (Klang wird im Browser "
+                         "berechnet, keine Samples, keine KI)" % owner)),
+            ("Programm", _h("Manuwave Studio · Tab „Selber machen“")),
+            ("Cover", ("%s — %s<br><span class='klein'>%s</span>" % (_h(cov_lic[0]), _h(cov_lic[1]), _h(cov_lic[2]))) if cov_lic else _h(cover_model or "—")),
+        ]
     if imported and herkunft:
         entstehung.append(("Ursprung", _h("%s, Eintrag %s, Datei %s, erzeugt %s" % (herkunft.get("programm", ""), herkunft.get("id", ""),
                                                                                  herkunft.get("datei", ""), herkunft.get("erzeugt", "")))))
-    mensch = ["Idee, Vorgaben (Richtung, Länge, Stimme) und Auswahl dieser Fassung aus den erzeugten Versionen: %s" % owner]
+    mensch = (["Komposition, Einspielung, Klanggestaltung und Arrangement: %s" % owner] if eigen else
+              ["Idee, Vorgaben (Richtung, Länge, Stimme) und Auswahl dieser Fassung aus den erzeugten Versionen: %s" % owner])
     if text_eigen:
         mensch.insert(0, "Liedtext: von %s selbst geschrieben" % owner)
     ms_names = {"bass": "Bässe %+.1f dB", "tone": "Tonfarbe %+.1f", "treble": "Höhen %+.1f dB", "soft": "Weich %.0f",
@@ -2811,7 +2840,7 @@ def release_package(cfg: dict, path: str, res: dict, info: dict, opts: dict, fin
                     ("Titel", _h(title)), ("Künstler", _h(artist)), ("Rechteinhaber", _h(owner)), ("Dauer", _h(_fmt_dur(dur))),
                     ("Tempo / Tonart", _h("%s BPM / %s" % (tags.get("bpm") or "—", tags.get("keyscale") or info.get("keyscale") or "—"))),
                     ("Sprache", _h("Instrumental" if instrumental else lang)), ("Copyright", _h(cpy))])
-                + "<h2>Entstehung (KI)</h2>" + _rows(entstehung)
+                + ("<h2>Entstehung</h2>" if eigen else "<h2>Entstehung (KI)</h2>") + _rows(entstehung)
                 + "<h2>Menschlicher Anteil</h2><p>" + "<br>".join("• " + _h(x) for x in mensch) + "</p>"
                 + ("<h2>Bearbeitung</h2><p>%s</p>" % _h(" · ".join(bearbeitung)) if bearbeitung else "")
                 + "<h2>Datei und Nachweis</h2>" + _rows([
@@ -2822,10 +2851,13 @@ def release_package(cfg: dict, path: str, res: dict, info: dict, opts: dict, fin
                     ("Archiv", _h(rel_home(path)))])
                 + "<h2>Beschreibung beim Erzeugen</h2><p class='klein'>%s</p>" % _h(info.get("caption") or "—")
                 + ("<h2>Liedtext</h2><pre>%s</pre>" % _h(info.get("lyrics")) if not instrumental else "")
-                + "<h2>Rechtlicher Hinweis</h2><p class='klein'>Rein KI-erzeugte Bestandteile sind in Deutschland nach derzeitiger "
+                + ("<h2>Rechtlicher Hinweis</h2><p class='klein'>Die Musik ist selbst eingespielt und damit ein eigenes Werk von %s. "
+                   "KI-erzeugt ist nur das Cover (Lizenz siehe oben). Dieser Nachweis ist keine Rechtsberatung.</p></body></html>" % _h(owner)
+                   if eigen else
+                   "<h2>Rechtlicher Hinweis</h2><p class='klein'>Rein KI-erzeugte Bestandteile sind in Deutschland nach derzeitiger "
                   "Auffassung nicht urheberrechtlich geschützt; geschützt sein können die menschlichen Beiträge oben. Die eingesetzten "
                   "Modelle erlauben die kommerzielle Nutzung (Lizenzen siehe oben, geprüft am 15.10.2026). Dieser Nachweis ist "
-                  "keine Rechtsberatung.</p></body></html>")
+                  "keine Rechtsberatung.</p></body></html>"))
 
     # ---- Lizenzvorlage für Firmen ----
     blank = "______________________________"
@@ -2851,11 +2883,14 @@ def release_package(cfg: dict, path: str, res: dict, info: dict, opts: dict, fin
               + "<h2>§ 5 Verwertungsgesellschaften</h2><p>Der Titel ist bei keiner Verwertungsgesellschaft (z. B. GEMA) angemeldet. "
                 "Für die vereinbarte Nutzung fallen nach Kenntnis des Lizenzgebers keine Vergütungen an Verwertungsgesellschaften an. "
                 "Bei Rückfragen einer Verwertungsgesellschaft stellt der Lizenzgeber diese Lizenz und den Herkunftsnachweis zur Verfügung.</p>"
-              + "<h2>§ 6 Entstehung mit KI</h2><p>Der Titel wurde mit Hilfe künstlicher Intelligenz erzeugt (Musik: %s%s). "
+              + ("<h2>§ 6 Entstehung</h2><p>Der Titel wurde vom Lizenzgeber selbst komponiert und eingespielt (Synthesizer und "
+                 "Drum-Machine von Manuwave Studio, keine KI). Der Lizenzgeber versichert, dass er keine bestehenden Werke bewusst "
+                 "nachgeahmt hat.</p>" if eigen else
+                 "<h2>§ 6 Entstehung mit KI</h2><p>Der Titel wurde mit Hilfe künstlicher Intelligenz erzeugt (Musik: %s%s). "
                 "Der Lizenzgeber versichert, dass die eingesetzten Werkzeuge die kommerzielle Nutzung erlauben und dass er keine "
                 "bestehenden Werke oder Künstler bewusst nachgeahmt hat. Der Lizenznehmer nimmt zur Kenntnis, dass rein KI-erzeugte "
                 "Bestandteile nach derzeitiger Rechtslage keinen urheberrechtlichen Schutz genießen.</p>" % (
-                    _h(ACE_LICENSE[0]), (_h("; Liedtext: %s" % owner) if text_eigen else ""))
+                    _h(ACE_LICENSE[0]), (_h("; Liedtext: %s" % owner) if text_eigen else "")))
               + "<h2>§ 7 Haftung</h2><p>Der Lizenzgeber haftet für Vorsatz und grobe Fahrlässigkeit. Werden gegen den Lizenznehmer "
                 "Ansprüche Dritter wegen der vertragsgemäßen Nutzung erhoben, informieren sich die Parteien unverzüglich.</p>"
               + "<h2>§ 8 Schluss</h2><p>Es gilt deutsches Recht. Änderungen bedürfen der Textform.</p>"
@@ -3139,8 +3174,10 @@ def web_publish(cfg, path, req, tick=None):
     meta = {"title": title, "artist": tags.get("artist") or "",
             "genre": tags.get("genre") or "", "bpm": tags.get("bpm") or "0", "key": tags.get("key") or "", "lyrics": lyrics,
             "note": info.get("note") or "", "language": (LANG_DE.get(lang, lang) if lyrics.strip() else "Instrumental"),
-            "tools": "Manuwave Studio · ACE-Step 1.5" + (" · " + cov_name if cov_name else ""),
-            "ai_note": "KI-erzeugt", "ext_id": rel_home(path)}
+            "tools": ("Manuwave Studio · selbst eingespielt" if info.get("source") == "eigen" else "Manuwave Studio · ACE-Step 1.5")
+            + (" · " + cov_name if cov_name else ""),
+            "ai_note": ("Musik selbst eingespielt" + (" · Cover KI-erzeugt" if cov_name else "")) if info.get("source") == "eigen" else "KI-erzeugt",
+            "ext_id": rel_home(path)}
     if meta["note"]:
         if tick:
             tick("Notiz wird übersetzt …")
