@@ -3,6 +3,40 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.15.0 — 2026-10-17 (bridge 3.15.0)
+
+### Added
+- **Make your own** — a third tab for making music by hand, in the browser:
+  - **Ten synthesizers with every knob:** analog poly and mono (two oscillators, sub, noise, hard sync, FM, unison up
+    to seven voices with detune and stereo width, drive, 24 dB ladder or 12 dB state-variable filter in low-pass,
+    high-pass, band-pass and notch, filter and amp envelopes, two LFOs with tempo sync and sample & hold, glide,
+    poly/mono/legato), acid bass (accent, slide), supersaw, wavetable (six band-limited sets), string machine,
+    4-operator FM (eight algorithms, feedback, per-operator envelopes and velocity), electric piano (tine, bell, bark,
+    tremolo), tonewheel organ (nine drawbars, percussion, key click, vibrato/chorus, rotary speaker with inertia) and a
+    plucked string (Karplus-Strong with body resonance). An arpeggiator (up, down, up & down, as played, random;
+    1/4–1/32 and triplets; 1–4 octaves; latch) on every synth. 40 factory sounds; your own sounds can be saved.
+  - **Drum machine:** 16 synthesized pads (808/909-style kicks, snares, clap, hats with choke, toms, rim, cowbell,
+    cymbals, shaker, tambourine, conga, clave, zap, lo-fi noise), four kits, per-pad level, pan, tune, decay, tone, snap.
+  - **Sequencer:** up to 16 tracks, eight patterns of 1–8 bars, piano roll and step grid, swing, quantize, transpose,
+    undo/redo, song arranger. Mixer with volume, pan, mute/solo, three-band EQ, chorus, shared reverb and tempo-synced
+    ping-pong delay, limiter at −1.5 dBFS.
+  - **Playing and recording:** Web MIDI (velocity, pitch bend, mod wheel, sustain, CC 7 volume, transport buttons from
+    a keyboard's DAW port, MIDI learn for every knob), the computer keyboard as a fallback (A W S E D … = one octave,
+    Z/X octave, C/V velocity), an on-screen keyboard, loop recording with count-in, metronome and quantize.
+  - **Create track:** renders the song or a looped pattern offline into a 24-bit/48 kHz WAV and adds it to the
+    library — then mastering, export, release package and publishing work as for every track.
+  - Projects are stored in the browser (own IndexedDB, autosave) and can be backed up and restored as a file. A demo
+    project opens the first time.
+  - The engine is one AudioWorklet: sequencer, instruments and drums run on the audio thread, so timing holds when the
+    tab is in the background, and the offline render matches what you hear sample for sample.
+
+### Changed
+- **Honest labels for self-played music.** Tracks from *Make your own* carry the origin `eigen` to the bridge: they are
+  stored as `selbst_…` in the archive, the tags say "music self-played in Manuwave Studio" (only an AI cover is
+  mentioned), the release package ticks nothing as AI music, the proof of origin and the licence template describe
+  the track as the author's own work, and Fahrstuhlmusik labels it "self-played".
+- The library marks these tracks “🎹 self-played” and offers *Open project* instead of *Continue working*.
+
 ## 3.14.0 — 2026-10-17 (bridge 3.14.0)
 
 ### Added

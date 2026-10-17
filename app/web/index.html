@@ -6,6 +6,7 @@
 <title>Manuwave Studio — Musik-KI</title>
 <script src="i18n.js"></script>
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="selber.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎛️</text></svg>">
 </head>
 <body>
@@ -31,10 +32,11 @@
     <button id="pairNoteBtn" class="primary btn-s" type="button">Mac koppeln</button>
   </div>
 
-  <!-- 3.4.1: zwei Tabs — Studio (Erzeugen, aktueller Track, Bibliothek) und Mastering -->
+  <!-- 3.4.1: Tabs — Studio (Erzeugen, aktueller Track, Bibliothek), Mastering; 3.15: Selber machen (Synthesizer, Drums, MIDI) -->
   <nav id="tabs" class="tabs" role="tablist" aria-label="Bereiche">
     <button id="tabStudio" class="tab on" type="button" role="tab" aria-selected="true" aria-controls="studioView" data-tab="studio">🎼 Studio</button>
     <button id="tabMaster" class="tab" type="button" role="tab" aria-selected="false" aria-controls="masterView" data-tab="master">🎚 Mastering</button>
+    <button id="tabSelber" class="tab" type="button" role="tab" aria-selected="false" aria-controls="selberView" data-tab="selber">🎹 Selber machen</button>
   </nav>
 
   <div id="studioView" class="view" role="tabpanel" aria-labelledby="tabStudio">
@@ -319,6 +321,9 @@
     </div>
   </section>
 
+  <!-- ============ SELBER MACHEN (3.15): Synthesizer, Drum-Machine, Loops, Song, MIDI — baut web/selber.js ============ -->
+  <section id="selberView" class="card sb hidden" role="tabpanel" aria-labelledby="tabSelber" translate="no"></section>
+
   <!-- Jetzt läuft: immer sichtbar, egal wohin die Liste beim Neuzeichnen rückt -->
   <div id="nowBar" class="now-bar hidden" role="region" aria-label="Jetzt läuft">
     <button id="nowPlay" class="lib-play on" type="button" title="Pause / weiter">⏸</button>
@@ -466,5 +471,6 @@
 </div>
 
 <script type="module" src="app.js"></script>
+<script type="module" src="selber.js"></script>
 </body>
 </html>

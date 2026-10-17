@@ -163,7 +163,7 @@ function trackInfo(rec) {
   return { archived: r.archived || "", title: rec.title || "Track", variant: rec.variant || "", note: rec.note || "",
     caption: r.caption || q.caption || "", lyrics: q.lyrics || "", bpm: r.bpm || q.bpm || 0,
     keyscale: r.keyscale || q.keyscale || "", seed: seed != null ? seed : -1,
-    created: localDay(rec.created || Date.now()) };
+    created: localDay(rec.created || Date.now()), ...(rec.source === "eigen" ? { source: "eigen" } : {}) };
 }
 // 🔴 Audit 3.2: toISOString() ist UTC — ein Track von 00:30 Uhr wäre einen Tag zu früh datiert.
 function localDay(t) { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
@@ -2114,13 +2114,34 @@ function paintMaster() {
   paintMasterWave(ms.playing ? msNow() : ms.pos);
 }
 
+window.mwsLibrary = {
+  async add({ title, blob, bpm, keyscale, caption, duration, project, note }) {
+    const rec = {
+      id: "sb" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), created: Date.now(), title: title || "Track", variant: "",
+      group: "", note: note || "", source: "eigen", sbProject: project || "",
+      request: { caption: caption || "", bpm: bpm || 0, keyscale: keyscale || "", duration: Math.round(duration || 0) },
+      result: { bpm: bpm || 0, keyscale: keyscale || "", duration: duration || 0, caption: caption || "" },
+      favorite: false, blob, peaks: await computePeaks(blob), folder: targetFolder(), wm: "", coverState: "",
+    };
+    await libPut(rec);
+    state.fresh.add(rec.id);
+    await renderLibrary();
+    scheduleFinish(600);
+    return rec;
+  },
+  master(id) { showTab("master"); openMaster(id); },
+};
+
 // ---- Tab, Trackwahl, Laden ----
 function showTab(name) {
-  const master = name === "master";
-  $("#studioView").classList.toggle("hidden", master);
+  const master = name === "master", selber = name === "selber";
+  if (!$("#selberView").classList.contains("hidden") && !selber && window.mwsSelber) window.mwsSelber.show(false);
+  $("#studioView").classList.toggle("hidden", master || selber);
   $("#masterView").classList.toggle("hidden", !master);
-  [["#tabStudio", !master], ["#tabMaster", master]].forEach(([id, on]) => { $(id).classList.toggle("on", on); $(id).setAttribute("aria-selected", String(on)); });
-  try { localStorage.setItem(LS_TAB, master ? "master" : "studio"); } catch (e) {}
+  $("#selberView").classList.toggle("hidden", !selber);
+  [["#tabStudio", !master && !selber], ["#tabMaster", master], ["#tabSelber", selber]].forEach(([id, on]) => { $(id).classList.toggle("on", on); $(id).setAttribute("aria-selected", String(on)); });
+  try { localStorage.setItem(LS_TAB, master ? "master" : selber ? "selber" : "studio"); } catch (e) {}
+  if (selber) { msLeave().catch(() => {}); if (window.mwsSelber) window.mwsSelber.show(true); return; }
   if (!master) {                       // zurück ins Studio: was eingestellt ist, gilt dort sofort
     msLeave().catch(() => {}).then(() => renderLibrary());
     return;
@@ -2734,7 +2755,7 @@ function libRow(rec, fl) {
   head.append(el("span", "lib-meta", [r.bpm || q.bpm ? `${r.bpm || q.bpm} BPM` : "", r.keyscale || q.keyscale || "",
     fmtDur(masteredOk(rec) && rec.masteredDur ? rec.masteredDur : r.duration_real || r.duration || q.duration || 0), seed != null ? `Seed ${seed}` : "",
     /xl/.test(r.dit || "") ? "XL" : "",
-    g > 1 ? (q.inference_steps > 50 ? "Maximal" : "Studio") : "ungeführt",
+    rec.source === "eigen" ? "🎹 selbst gespielt" : g > 1 ? (q.inference_steps > 50 ? "Maximal" : "Studio") : "ungeführt",
     r.ende ? "Ende geglättet" : "", qaLabel(r.qa), rec.wm ? "🔏 Wasserzeichen" : "", rec.master ? "🎚 gemastert" : "",
     state.finishing === rec.id ? "✨ wird veredelt …" : rec.coverState === "pending" ? "🎨 Cover entsteht …" : "",
     r.render_s ? `in ${fmtDur(r.render_s)} gerechnet` : "", fname ? "📁 " + fname : ""].filter(Boolean).join(" · ")));
@@ -2751,7 +2772,8 @@ function libRow(rec, fl) {
   btn("🎨", "Cover groß ansehen — und bei Bedarf ein neues malen lassen", () => openCover(rec.id));
   btn(rec.web ? "🌐 online" : "🌐", rec.web ? `Öffentlich auf Fahrstuhlmusik: ${rec.web.url} — klicken für Link, neu veröffentlichen oder zurückziehen`
     : "Auf Fahrstuhlmusik veröffentlichen — öffentlich und kostenlos zum Anhören (gemasterte Fassung)", (e) => webTrack(rec, e.currentTarget), "web-btn" + (rec.web ? " on" : ""));
-  btn("⤴︎ Weiterarbeiten", "Diesen Track zum aktuellen machen — ändern oder neue Versionen, mit seinem Charakter", () => continueFrom(rec));
+  if (rec.source === "eigen") btn("🎹 Projekt öffnen", "Das Projekt öffnen, aus dem dieser Track entstanden ist", () => { showTab("selber"); if (window.mwsSelber && rec.sbProject) window.mwsSelber.open(rec.sbProject); });
+  else btn("⤴︎ Weiterarbeiten", "Diesen Track zum aktuellen machen — ändern oder neue Versionen, mit seinem Charakter", () => continueFrom(rec));
   const delBtn = btn("🗑", rec.favorite ? "★ Favorit — geschützt. Erst den Stern entfernen, dann löschen." : "Löschen — auch auf dem Mac (Papierkorb)", () => deleteTracks([rec.id]), "danger");
   delBtn.disabled = !!rec.favorite;
   row.append(sel, pb, mid, act);
@@ -2781,7 +2803,8 @@ async function webTrack(rec, anchor) {
   if (!macCan("web")) return setMsg($("#libMsg"), "Veröffentlichen braucht die Brücke 3.10 auf deinem Mac (⚙️ › Mac einrichten).", "err");
   if (rec.web) return webMenu(rec, anchor);
   if (!confirm(`„${rec.title}${rec.variant ? " · " + rec.variant : ""}“ auf Fahrstuhlmusik veröffentlichen?\n\n` +
-      "Jeder kann ihn dort kostenlos anhören. Hochgeladen wird die gemasterte Fassung mit Cover, Liedtext und deiner Notiz, gekennzeichnet als KI-erzeugt. Zurückziehen geht jederzeit.")) return;
+      (rec.source === "eigen" ? "Jeder kann ihn dort kostenlos anhören. Hochgeladen wird die gemasterte Fassung mit Cover und deiner Notiz, gekennzeichnet als selbst eingespielt (Cover: KI). Zurückziehen geht jederzeit."
+        : "Jeder kann ihn dort kostenlos anhören. Hochgeladen wird die gemasterte Fassung mit Cover, Liedtext und deiner Notiz, gekennzeichnet als KI-erzeugt. Zurückziehen geht jederzeit."))) return;
   webRun(rec, "web");
 }
 async function webRun(rec, kind) {
@@ -2948,7 +2971,7 @@ function init() {
   bindMaster();
   libReady = libSplitOld();
   msRecoverPending();
-  try { if (localStorage.getItem(LS_TAB) === "master") showTab("master"); } catch (e) {}
+  try { const lt = localStorage.getItem(LS_TAB); if (lt === "master" || lt === "selber") showTab(lt); } catch (e) {}
   $("#expFormats").addEventListener("change", updExpNote);
   $("#expToAlac").onclick = () => { $("#expFmt-alac").checked = true; updExpNote(); $("#expFmt-alac").focus(); };
   $("#exportDlg").addEventListener("click", (e) => { if (e.target.id === "exportDlg") closeExport(); });
@@ -2989,6 +3012,7 @@ function init() {
   };
   document.addEventListener("keydown", (e) => {
     if (e.code !== "Space" || ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(e.target.tagName)) return;
+    if (!$("#selberView").classList.contains("hidden")) return;
     if (!$("#masterView").classList.contains("hidden")) { e.preventDefault(); $("#msPlay").click(); return; }   // im Mastering-Tab die Vorschau
     if (player.id) { e.preventDefault(); togglePause(); }
   });
