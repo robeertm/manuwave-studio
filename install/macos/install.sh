@@ -213,7 +213,7 @@ if [ "$MIDI" = 1 ]; then
      && { [ -x "$MP" ] || uv venv -q --python 3.12 "$MWS_HOME/midi"; } \
      && uv pip install -q --python "$MP" torch torchaudio demucs==4.1.0 onnxruntime librosa mir_eval pretty_midi scipy resampy soundfile \
      && uv pip install -q --python "$MP" --no-deps basic-pitch==0.4.0 \
-     && TORCH_HOME="$MWS_HOME/midi/torch" "$MP" -c "from demucs.pretrained import get_model as g; g('htdemucs'); import basic_pitch.inference" >/dev/null 2>&1; then
+     && HF_HOME="$MWS_HOME/midi/hf" TORCH_HOME="$MWS_HOME/midi/torch" "$MP" -c "from demucs.pretrained import get_model as g; g('htdemucs'); import basic_pitch.inference" >/dev/null 2>&1; then
     ok "MIDI image ready"
   else warn "MIDI image not available — songs stay audio only"; fi
 else warn "skipped (--skip-midi): songs stay audio only"; fi
