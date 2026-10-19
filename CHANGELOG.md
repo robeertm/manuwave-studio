@@ -3,6 +3,24 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.17.1 — 2026-10-19 (bridge 3.17.0)
+
+### Added
+- **Loop machine: knobs show what is sounding.** A glowing dot and a thin arc from the set value mark the live value, and
+  the number shows it: the wobble on *Frequency*, the autopilot's breakdown low-pass and build-up high-pass on *DJ
+  filter*, and for the oscillator the sounding frequency (key snap, glide, drift, LFO), pulse width, FM amount, level (gate,
+  LFO) and pan. The engine reports the oscillator values about 30 times a second.
+- **Oscilloscopes** at every group of knobs — generator, filter, tone, space, channel (left/right after the fader),
+  instrument sound, master, microphone, and an LFO trace for the oscillator. Only visible ones are drawn.
+- **Auto mix**: two bars of listening (ear-weighted loudness before the fader), then each generator's volume goes to a
+  target for its role and style. Runs by itself for *Surprise me*, *Take over the rest* and when the autopilot brings a
+  generator in (hand-set volumes stay); the *Mix* button sets all of them.
+
+### Changed
+- The on-screen keyboard always sits at the bottom of the screen, full width, with two to five octaves depending on the
+  width, and can be folded away. On screens 1800 px and wider the loop machine no longer borrows the three-column layout
+  of *Make your own*, which had put the keyboard into a side column and left the cards two abreast.
+
 ## 3.17.0 — 2026-10-19 (bridge 3.17.0)
 
 ### Added

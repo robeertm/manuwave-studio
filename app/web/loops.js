@@ -28,9 +28,9 @@ function h(tag, attrs, ...kids) {
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const uid = () => Math.random().toString(36).slice(2, 9);
 const dbGain = (db) => (db <= -60 ? 0 : Math.pow(10, db / 20));
-const MAX_GEN = 12, SPB = 16, HEADROOM = 0.6;
+const MAX_GEN = 12, SPB = 16, HEADROOM = 0.6, SCOPE_N = 2048;
 const COLORS = ["#ff4d94", "#22e3c3", "#7c5cff", "#ffb347", "#5cc8ff", "#b6f36a", "#ff7a59", "#e07cff", "#4dd6ff", "#ffd84d", "#8ef0c9", "#ff9ec7"];
-const LS_LAST = "mws_lp_last", LS_MAP = "mws_lp_midimap";
+const LS_LAST = "mws_lp_last", LS_MAP = "mws_lp_midimap", LS_KB = "mws_lp_kbsmall";
 const ROOTS = EN ? ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"] : ["C", "C♯", "D", "Es", "E", "F", "F♯", "G", "As", "A", "B", "H"];
 const SCALES = [["minor", "Moll", "minor"], ["major", "Dur", "major"], ["dorian", "Dorisch", "Dorian"], ["phrygian", "Phrygisch", "Phrygian"],
   ["lydian", "Lydisch", "Lydian"], ["mixolydian", "Mixolydisch", "Mixolydian"], ["harmonic", "Harmonisch Moll", "harmonic minor"],
@@ -320,8 +320,18 @@ function makeChain(g) {
   inp.connect(drive); drive.connect(hp); hp.connect(lp); lp.connect(lo); lo.connect(mid); mid.connect(hi); hi.connect(pan); pan.connect(fader);
   fader.connect(S.g.bus); fader.connect(sEcho); fader.connect(sRev);
   const an = c.createAnalyser(); an.fftSize = 256; fader.connect(an);
+  // 3.17.1: Oszillogramme je Reglergruppe — das Signal genau an dieser Stelle der Kette
+  const scope = (src, out) => { const a = c.createAnalyser(); a.fftSize = SCOPE_N; a.smoothingTimeConstant = 0; src.connect(a, out || 0); return a; };
+  const spSum = c.createGain(); eOut.connect(spSum); sRev.connect(spSum);
+  const split = c.createChannelSplitter(2); fader.connect(split);
+  // Lautheit für den Auto-Mix: vor dem Fader, gehörgerecht gewichtet (K-Filter: Hochpass 38 Hz + Höhenanhebung +4 dB ab 1,5 kHz)
+  const kHP = c.createBiquadFilter(), kSh = c.createBiquadFilter(); kHP.type = "highpass"; kHP.frequency.value = 38; kHP.Q.value = 0.5;
+  kSh.type = "highshelf"; kSh.frequency.value = 1500; kSh.gain.value = 4; hi.connect(kHP); kHP.connect(kSh);
+  const wobAn = c.createAnalyser(); wobAn.fftSize = 32; wobG.connect(wobAn);
+  const sc = { src: scope(inp), filt: scope(lp), tone: scope(hi), space: scope(spSum), L: scope(split, 0), R: scope(split, 1) };
   const ch = { inp, drive, hp, lp, lo, mid, hi, pan, fader, wob, wobG, sEcho, dL, dR, fbL, fbR, sRev, an, buf: new Float32Array(256), driveV: -1,
-    dispose() { try { inp.disconnect(); fader.disconnect(); eOut.disconnect(); sRev.disconnect(); wob.stop(); } catch (e) { /* schon weg */ } } };
+    sc, kAn: scope(kSh), wobAn, wobBuf: new Float32Array(32),
+    dispose() { try { inp.disconnect(); fader.disconnect(); eOut.disconnect(); sRev.disconnect(); hi.disconnect(); wobG.disconnect(); wob.stop(); } catch (e) { /* schon weg */ } } };
   S.chains.set(g.id, ch);
   applyFx(g, true);
 }
@@ -331,7 +341,7 @@ function driveCurve(a) {
   for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1; cv[i] = Math.tanh(k * x) / norm; }
   return cv;
 }
-function applyFx(g, now0) {
+function applyFx(g, now0, slow) {
   const ch = S.chains.get(g.id); if (!ch) return;
   const f = g.fx, now = S.ctx.currentTime, tc = now0 ? 0.001 : 0.025, bpm = S.set.bpm;
   ch.lp.frequency.setTargetAtTime(clamp(f.cut, 40, 20000), now, tc);
@@ -348,7 +358,7 @@ function applyFx(g, now0) {
   ch.sEcho.gain.setTargetAtTime(f.echo, now, tc); ch.sRev.gain.setTargetAtTime(f.rev, now, tc);
   ch.pan.pan.setTargetAtTime(clamp(f.pan, -1, 1), now, tc);
   const anySolo = S.set.gens.some(x => x.solo);
-  ch.fader.gain.setTargetAtTime((g.mute || (anySolo && !g.solo)) ? 0 : dbGain(f.vol), now, tc);
+  ch.fader.gain.setTargetAtTime((g.mute || (anySolo && !g.solo)) ? 0 : dbGain(f.vol), now, slow ? 0.35 : tc);
 }
 function applyMaster(now0) {
   if (!S.g) return;
@@ -368,8 +378,9 @@ function syncAll() {
 }
 function onEngine(d) {
   switch (d.t) {
-    case "bar": S.bar = d.bar; S.barTime = d.time; S.spb = d.spb; autopilotBar(d); paintBar(); { const w = S.barWait; S.barWait = []; for (const f of w) f(d); } break;
+    case "bar": S.bar = d.bar; S.barTime = d.time; S.spb = d.spb; autopilotBar(d); mixBar(d); paintBar(); { const w = S.barWait; S.barWait = []; for (const f of w) f(d); } break;
     case "pos": S.step = d.step; paintPos(); break;
+    case "live": S.live = d.v; break;
     case "run": S.running = d.on; if (!d.on) { S.states.clear(); S.bar = -1; } paintTransport(); paintCards(); break;
     case "state": S.states.set(d.id, d); paintCard(genById(d.id)); paintTransport(); break;
     case "seedarm": status(T(`🎼 Einzählen … ab Takt ${d.at + 1} spielst du ein.`, `🎼 Count-in … you play from bar ${d.at + 1}.`)); S.recArm = { id: d.id, at: d.at, kind: "seed" }; paintCards(); break;
@@ -416,7 +427,7 @@ function setGenParam(g, k, v, spec) {
   post({ t: "gp", id: g.id, k, v, regen: !!(spec && spec.regen) });
   changed();
 }
-function setFx(g, k, v) { g.fx[k] = v; applyFx(g); changed(); }
+function setFx(g, k, v) { g.fx[k] = v; if (k === "vol") g.volHand = true; applyFx(g); changed(); }
 function addGen(kind, o) {
   const g = newGen(kind, o);
   if (!g) { status(T("Höchstens 12 Generatoren.", "At most 12 generators.")); return null; }
@@ -577,6 +588,7 @@ async function takeOver(src) {
   for (const g of S.set.gens) if (["beat", "bass", "chords", "arp"].includes(g.kind)) post({ t: "start", id: g.id });
   if (src) post({ t: "start", id: src.id });
   S.set.auto.on = true; paintTransport(); changed();
+  autoMix();
   status(T(`🪄 Die Maschine übernimmt: ${ROOTS[S.set.root]}-${S.set.scale === "major" ? "Dur" : "Moll"}, ${T(st.de, st.en)}, ${S.set.bpm} BPM — Beat, Bass und Akkorde setzen am nächsten Takt ein, der Autopilot arrangiert.`,
     `🪄 The machine takes over: ${ROOTS[S.set.root]} ${S.set.scale}, ${st.en}, ${S.set.bpm} BPM — beat, bass and chords come in on the next bar, the autopilot arranges.`));
 }
@@ -593,6 +605,7 @@ async function surprise() {
   syncAll(); renderCards(); paintTransport();
   for (const g of added) post({ t: "start", id: g.id });
   S.set.auto.on = true; changed();
+  autoMix();                                                  // 3.17.1: nicht alle gleich laut — ausmischen, sobald sie spielen
   status(T(`🎲 ${st.de} in ${ROOTS[S.set.root]}-${S.set.scale === "major" ? "Dur" : "Moll"}, ${st.bpm} BPM — dreh an allem, was dir gefällt.`, `🎲 ${st.en} in ${ROOTS[S.set.root]} ${S.set.scale}, ${st.bpm} BPM — turn whatever you like.`));
 }
 function pickLead() { const L = ["mono|Leiter-Lead", "minimoog|Singender Lead", "sh101|101-Lead (PWM)", "ppg|PPG-Stimme", "odyssey|Odyssey-Sync-Lead", "cs80|Vangelis-Lead"]; return L[Math.floor(Math.random() * L.length)]; }
@@ -629,7 +642,7 @@ function autopilotBar(d) {
     const goOut = outG.length > 1 || (outG.length && off.length) ? outG[Math.floor(Math.random() * outG.length)] : null;
     const goIn = off.length ? off[Math.floor(Math.random() * off.length)] : null;
     if (goOut) post({ t: "stop", id: goOut.id });
-    if (goIn) post({ t: "start", id: goIn.id });
+    if (goIn) { post({ t: "start", id: goIn.id }); autoMix({ ids: [goIn.id] }); }
     say((goIn ? goIn.name + " kommt" : "") + (goIn && goOut ? ", " : "") + (goOut ? goOut.name + " geht" : ""), (goIn ? goIn.name + " comes in" : "") + (goIn && goOut ? ", " : "") + (goOut ? goOut.name + " leaves" : ""));
   } else {
     const ton = on.filter(g => ["bass", "chords", "arp", "melody", "beat"].includes(g.kind));
@@ -917,8 +930,11 @@ function knob(p, value, onChange, opts = {}) {
   const R = 15, C = 2 * Math.PI * R, A = 0.75, size = (R + 5) * 2;
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("viewBox", `0 0 ${size} ${size}`); svg.setAttribute("width", size); svg.setAttribute("height", size);
   const mk = (cls) => { const c = document.createElementNS("http://www.w3.org/2000/svg", "circle"); c.setAttribute("cx", size / 2); c.setAttribute("cy", size / 2); c.setAttribute("r", R); c.setAttribute("class", cls); svg.append(c); return c; };
-  const track = mk("kt"), arc = mk("ka"); track.setAttribute("stroke-dasharray", `${C * A} ${C}`);
+  const track = mk("kt"), arc = mk("ka"), marc = mk("km"); track.setAttribute("stroke-dasharray", `${C * A} ${C}`);
   const dot = document.createElementNS("http://www.w3.org/2000/svg", "line"); dot.setAttribute("class", "kd"); svg.append(dot);
+  // 3.17.1: was gerade KLINGT (Wobble, Autopilot, LFO, Einrasten, Tor …) — leuchtender Punkt + dünner Bogen vom eingestellten Wert
+  const mdot = document.createElementNS("http://www.w3.org/2000/svg", "circle"); mdot.setAttribute("class", "kl"); mdot.setAttribute("r", "3"); svg.append(mdot);
+  marc.style.visibility = mdot.style.visibility = "hidden";
   const face = h("div", { class: "sb-kface", id, role: "slider", tabindex: "0", "aria-label": lab, "aria-valuemin": p.min, "aria-valuemax": p.max }); face.append(svg);
   const val = h("span", { class: "sb-kval" });
   wrap.append(face, h("label", { class: "sb-klab", for: id, text: lab }), val);
@@ -930,8 +946,22 @@ function knob(p, value, onChange, opts = {}) {
     dot.setAttribute("x1", cx + Math.cos(ang) * (R - 7)); dot.setAttribute("y1", cy + Math.sin(ang) * (R - 7)); dot.setAttribute("x2", cx + Math.cos(ang) * (R + 1)); dot.setAttribute("y2", cy + Math.sin(ang) * (R + 1));
     val.textContent = fmt(p, v); face.setAttribute("aria-valuenow", v); face.setAttribute("aria-valuetext", fmt(p, v));
   };
-  const set = (nv) => { nv = clamp(nv, p.min, p.max); if (nv === v) return; v = nv; paint(); onChange(v); };
-  wrap.setValue = (nv) => { v = nv; paint(); };
+  let live = null, liveShown = false, liveT = 0, touchT = 0;
+  const paintLive = () => {
+    const x0 = clamp(toPos(p, v), 0, 1), x1 = live == null ? x0 : clamp(toPos(p, live), 0, 1), show = Math.abs(x1 - x0) > 0.006;
+    if (show !== liveShown) { liveShown = show; marc.style.visibility = mdot.style.visibility = show ? "visible" : "hidden"; wrap.classList.toggle("mod", show); if (!show) val.textContent = fmt(p, v); }
+    if (!show) return;
+    const a0 = Math.min(x0, x1), a1 = Math.max(x0, x1), cx = size / 2, ang = (135 + x1 * 270) * Math.PI / 180;
+    marc.setAttribute("stroke-dasharray", `${Math.max(0.001, (a1 - a0) * C * A)} ${C}`); marc.setAttribute("stroke-dashoffset", `${-a0 * C * A}`);
+    mdot.setAttribute("cx", cx + Math.cos(ang) * R); mdot.setAttribute("cy", cx + Math.sin(ang) * R);
+    // die Zahl zeigt den klingenden Wert (ruhig: höchstens ~8× je Sekunde); kurz nach dem Drehen den eingestellten
+    const now = performance.now();
+    if (now - touchT > 1500 && now - liveT > 120) { liveT = now; val.textContent = fmt(p, live); }
+  };
+  const set = (nv) => { nv = clamp(nv, p.min, p.max); touchT = performance.now(); if (nv === v) return; v = nv; paint(); paintLive(); onChange(v); };
+  wrap.setValue = (nv) => { v = nv; paint(); paintLive(); };
+  wrap.setLive = (lv) => { live = lv == null || !isFinite(lv) ? null : lv; paintLive(); };
+  wrap.liveValue = () => (liveShown ? live : null);
   const posAt = (e) => {
     const r = face.getBoundingClientRect(), dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
     if (dx * dx + dy * dy < 9) return toPos(p, v);
@@ -982,7 +1012,7 @@ function control(g, p, isFx) {
 // =====================================================================================================
 // Oberfläche
 // =====================================================================================================
-function status(t) { const e = q("#lpMsg"); if (e) { e.textContent = t; clearTimeout(S.msgT); S.msgT = setTimeout(() => { if (e.textContent === t) e.textContent = ""; }, 12000); } }
+function status(t) { const e = q("#lpMsg"); S.msgAt = Date.now(); if (e) { e.textContent = t; clearTimeout(S.msgT); S.msgT = setTimeout(() => { if (e.textContent === t) e.textContent = ""; }, 12000); } }
 function shell() {
   const v = q("#loopView"); v.innerHTML = "";
   v.append(
@@ -1004,10 +1034,11 @@ function shell() {
         text: T("🤖 KI baut weiter", "🤖 AI takes over"), onclick: () => { S.ki.open = !S.ki.open; renderKi(); if (S.ki.open) q("#lpKi").scrollIntoView({ block: "nearest" }); } }),
       h("button", { id: "lpSurprise", type: "button", class: "ghost btn-s", title: T("Eine zufällige Richtung, Tonart und Generatoren — sofort", "A random style, key and generators — right away"), text: T("🎲 Überrasch mich", "🎲 Surprise me"), onclick: surprise })),
     h("div", { id: "lpCards", class: "lp-cards" }),
-    h("div", { id: "lpKeys", class: "lp-keys" }),
     h("p", { id: "lpMsg", class: "status sb-msg", role: "status" }),
     h("p", { class: "sub small lp-help", text: T("Start: ▶︎ auf einer Karte — der Generator setzt am nächsten Takt ein und läuft, bis du ■ drückst. Leertaste startet/stoppt alle. Die Computertastatur (A W S E D … K) spielt den gewählten Generator, Y/X (deutsch: Z/X) wechselt die Oktave. Jeder Regler lässt sich per „MIDI lernen“ auf einen Drehregler deines Controllers legen.",
       "Start: ▶︎ on a card — the generator comes in on the next bar and runs until you press ■. Space starts/stops all. The computer keyboard (A W S E D … K) plays the selected generator, Z/X changes octave. Every knob can be put on a controller knob via “MIDI learn”.") }),
+    // 3.17.1: die Tastatur immer unten (klebt am unteren Rand, einklappbar)
+    h("div", { id: "lpKeys", class: "lp-keys" }),
   );
   q("#lpName").addEventListener("input", (e) => { S.set.name = e.target.value.slice(0, 80) || "Set"; changed(); renderSets(); });
   q("#lpSets").addEventListener("change", (e) => openSet(e.target.value));
@@ -1069,14 +1100,16 @@ function renderTransport() {
       sel("lpProg", PROGS.map(([k, n]) => [k, n]), S.set.prog, (v) => { S.set.prog = v; syncHarmony(); changed(); }, T("Akkordfolge", "Chord progression")),
       sel("lpPer", [[1, T("1 Takt je Akkord", "1 bar per chord")], [2, T("2 Takte je Akkord", "2 bars per chord")], [4, T("4 Takte je Akkord", "4 bars per chord")]], S.set.per, (v) => { S.set.per = +v; syncHarmony(); changed(); }, T("Takte je Akkord", "Bars per chord"))),
     h("div", { class: "sb-tgroup lp-master" },
-      knob(K("dj", "DJ-Filter", "DJ filter", -1, 1, 0, { u: "%" }), S.set.master.dj, (v) => { S.set.master.dj = v; applyMaster(); changed(); }),
+      knob(K("dj", "DJ-Filter", "DJ filter", -1, 1, 0, { u: "%" }), S.set.master.dj, (v) => { S.set.master.dj = v; applyMaster(); changed(); }, { lk: "master:dj" }),
       knob(K("revDecay", "Hall-Länge", "Reverb length", 0.4, 8, 2.6, { c: "exp", u: "s" }), S.set.master.revDecay, (v) => { S.set.master.revDecay = Math.round(v * 10) / 10; applyMaster(); changed(); }),
       knob(K("mvol", "Summe", "Master", -24, 6, 0, { u: "dB" }), S.set.master.vol, (v) => { S.set.master.vol = v; applyMaster(); changed(); }),
-      h("canvas", { id: "lpMeter", class: "lp-meter", width: 14, height: 54, "aria-hidden": "true" })),
+      h("canvas", { id: "lpMeter", class: "lp-meter", width: 14, height: 54, "aria-hidden": "true" }), scopeCv("master:out", { cls: "big", title: T("Oszillogramm der Summe (nach dem Begrenzer)", "Oscilloscope of the master (after the limiter)") })),
     h("div", { class: "sb-tgroup lp-auto" },
       h("button", { id: "lpAuto", type: "button", class: "sb-tog" + (S.set.auto.on ? " on" : ""), title: T("Der Autopilot arrangiert: alle 8 Takte tauscht er Generatoren, baut Breakdowns, Steigerungen und neue Muster", "The autopilot arranges: every 8 bars it swaps generators, builds breakdowns, build-ups and new patterns"),
         text: T("🪄 Autopilot", "🪄 Autopilot"), onclick: () => { S.set.auto.on = !S.set.auto.on; if (!S.set.auto.on) resetAuto(); paintTransport(); changed(); } }),
       knob(K("amt", "Mut", "Boldness", 0, 1, 0.5, { u: "%" }), S.set.auto.amt, (v) => { S.set.auto.amt = v; changed(); }),
+      h("button", { id: "lpMix", type: "button", class: "sb-tog" + (S.mix ? " on" : ""), title: T("Auto-Mix: hört 2 Takte zu und stellt die Lautstärke jedes Generators so ein, dass es zusammen gut klingt (auch von Hand verstellte)", "Auto mix: listens for 2 bars and sets each generator's volume so it sounds good together (hand-set ones too)"),
+        text: T("🎚 Ausmischen", "🎚 Mix"), onclick: () => autoMix({ manual: true }) }),
       sel("lpStyle", Object.entries(STYLES).map(([k, s]) => [k, T(s.de, s.en)]), S.set.style || "house", (v) => { S.set.style = v; changed(); }, T("Richtung für „Rest übernehmen“", "Style for “take over the rest”")),
       h("span", { id: "lpAutoLog", class: "sub small lp-autolog" })),
     h("div", { class: "sb-tgroup sb-right" },
@@ -1092,7 +1125,7 @@ function renderTransport() {
 function paintTransport() {
   if (!q("#lpTransport") || !S.set) return;
   const tog = (id, on) => { const e = q(id); if (e) { e.classList.toggle("on", !!on); e.setAttribute("aria-pressed", String(!!on)); } };
-  tog("#lpPlayAll", S.set.gens.some(genOn)); tog("#lpRec", S.rec && S.rec.on); tog("#lpAuto", S.set.auto.on); tog("#lpLearn", S.learn); tog("#lpMetro", S.metro);
+  tog("#lpPlayAll", S.set.gens.some(genOn)); tog("#lpRec", S.rec && S.rec.on); tog("#lpAuto", S.set.auto.on); tog("#lpLearn", S.learn); tog("#lpMetro", S.metro); tog("#lpMix", !!S.mix);
   const rt = q("#lpRecTime"); if (rt) { rt.classList.toggle("on", !!(S.rec && S.rec.on)); if (!(S.rec && S.rec.on)) rt.textContent = ""; }
   const val = (id, v) => { const e = q(id); if (e && document.activeElement !== e && String(e.value) !== String(v)) e.value = v; };
   val("#lpBpm", S.set.bpm); val("#lpSwing", Math.round((S.set.swing - 0.5) * 200)); val("#lpRoot", S.set.root); val("#lpScale", S.set.scale);
@@ -1173,7 +1206,7 @@ function card(g) {
       h("button", { type: "button", class: "ghost btn-s", text: T("🎼 In Noten", "🎼 To notes"), title: T("Die gesungene/gespielte Melodie heraushören — ein Synth spielt sie und die Maschine spinnt weiter", "Hear out the sung/played melody — a synth plays it and the machine spins it on"), onclick: () => micToSeed(g) }),
       h("button", { type: "button", class: "ghost btn-s", text: T("🪄 Rest übernehmen", "🪄 Take over the rest"), onclick: () => { if (!g.nLayers) { status(T("Erst aufnehmen.", "Record first.")); return; } takeOver(g); } }),
       h("label", { class: "lp-mon" }, h("input", { type: "checkbox", onchange: (e) => { if (S.mic) S.mic.mon.gain.value = e.target.checked ? 1 : 0; } }), T(" mithören", " monitor")),
-      h("canvas", { class: "lp-micmeter", width: 60, height: 6, "aria-hidden": "true" }),
+      h("canvas", { class: "lp-micmeter", width: 60, height: 6, "aria-hidden": "true" }), scopeCv("mic:in", { title: T("Oszillogramm des Mikrofons", "Oscilloscope of the microphone") }),
       h("span", { class: "sub small lp-layers" })));
   }
   // Auswahlfelder zuerst in einer Zeile, darunter die Regler
@@ -1181,10 +1214,11 @@ function card(g) {
   const gp = h("div", { class: "lp-gen" });
   if (sels.length) { const r = h("div", { class: "lp-sels" }); for (const p of sels) r.append(control(g, p, false)); gp.append(r); }
   const kr = h("div", { class: "lp-knobs" }); for (const p of kn) kr.append(control(g, p, false)); gp.append(kr);
-  c.append(h("h4", { text: T("Generator", "Generator") }), gp);
+  c.append(h("h4", { class: "lp-h4" }, h("span", { text: T("Generator", "Generator") }), scopeCv(g.id + ":src"),
+    g.kind === "osc" ? scopeCv(g.id + ":lfo", { cls: "lfo", title: T("LFO — sein Ausschlag über die letzten Sekunden", "LFO — its swing over the last seconds") }) : null), gp);
   const fx = h("div", { class: "lp-fx" });
   for (const [id, de, en, keys] of FX_GROUPS) {
-    const grp = h("div", { class: "lp-group", "data-g": id }, h("span", { class: "lp-gcap", text: T(de, en) }));
+    const grp = h("div", { class: "lp-group", "data-g": id }, h("div", { class: "lp-gcapr" }, h("span", { class: "lp-gcap", text: T(de, en) }), scopeCv(g.id + ":" + id)));
     const row = h("div", { class: "lp-knobs" }); for (const key of keys) row.append(control(g, FX.find(p => p.k === key), true)); grp.append(row); fx.append(grp);
   }
   c.append(h("h4", { text: T("Klang live", "Live sound") }), fx);
@@ -1197,6 +1231,7 @@ function renderSynth(g, c) {
   const box = q(".lp-synth", c); if (!box) return;
   box.innerHTML = "";
   if (!g.openSynth || !g.patch) return;
+  box.append(h("h4", { class: "lp-h4" }, h("span", { text: T("Klang des Instruments", "Instrument sound") }), scopeCv(g.id + ":src")));
   for (const sec of SCHEMA[g.patch.engine] || []) {
     const row = h("div", { class: "lp-knobs" });
     for (const p of sec.p) {
@@ -1233,9 +1268,13 @@ function renderKeys() {
   const el = q("#lpKeys"); if (!el) return;
   el.innerHTML = "";
   const g = playTarget();
-  const lo = 60 + S.octave * 12;
-  const kb = h("div", { class: "lp-kb" });
-  for (let n = lo; n < lo + 25; n++) {
+  // 3.17.1: so viele Oktaven, wie die Breite hergibt (die Tastatur liegt unten über die ganze Breite), mittig um C4
+  const w = el.clientWidth || (q("#loopView") || el).clientWidth || 800, octs = w >= 1600 ? 5 : w >= 1150 ? 4 : w >= 760 ? 3 : 2;
+  const lo = 60 + S.octave * 12 - Math.floor((octs - 1) / 2) * 12;
+  S.kbOcts = octs;
+  el.classList.toggle("small", !!S.kbSmall);
+  const whites = octs * 7 + 1, kb = h("div", { class: "lp-kb", style: `--bw:${(58 / whites).toFixed(3)}%` });   // schwarze Taste ≈ 0,58 × weiße
+  for (let n = lo; n < lo + octs * 12 + 1; n++) {
     const blk = [1, 3, 6, 8, 10].includes(n % 12);
     const k = h("button", { type: "button", class: "lp-key" + (blk ? " blk" : ""), "data-n": n, "aria-label": ROOTS[n % 12] + (Math.floor(n / 12) - 1) });
     let held = null;
@@ -1246,16 +1285,165 @@ function renderKeys() {
   }
   el.append(h("div", { class: "lp-kbhead" }, h("span", { class: "sb-cap", text: T("Spielen", "Play") }),
     h("span", { class: "sub small", text: g ? T("→ ", "→ ") + g.name + (g.kind === "seed" ? T(" (● nimmt auf)", " (● records)") : "") : T("kein spielbarer Generator", "no playable generator") }),
-    h("span", { class: "sub small", text: T(`Oktave ${S.octave >= 0 ? "+" : ""}${S.octave} (Y/X)`, `Octave ${S.octave >= 0 ? "+" : ""}${S.octave} (Z/X)`) })), kb);
+    h("span", { class: "sub small", text: T(`Oktave ${S.octave >= 0 ? "+" : ""}${S.octave} (Y/X)`, `Octave ${S.octave >= 0 ? "+" : ""}${S.octave} (Z/X)`) }),
+    h("button", { id: "lpKbFold", type: "button", class: "ghost btn-s lp-kbfold", "aria-expanded": String(!S.kbSmall), title: T("Tastatur ein-/ausklappen (sie bleibt unten)", "Fold/unfold the keyboard (it stays at the bottom)"),
+      text: S.kbSmall ? "▴" : "▾", onclick: () => { S.kbSmall = !S.kbSmall; lsSet(LS_KB, S.kbSmall); renderKeys(); } })), kb);
 }
 function paintKey(n, on) { const k = q(`.lp-key[data-n="${n}"]`); if (k) k.classList.toggle("down", on); }
+
+// =====================================================================================================
+// 3.17.1: Oszillogramme — überall, wo es etwas zu regeln gibt: das Signal genau an dieser Stelle der Kette
+// =====================================================================================================
+const scopeSeen = typeof IntersectionObserver === "function" ? new IntersectionObserver((es) => { for (const e of es) e.target._vis = e.isIntersecting; }) : null;
+function scopeCv(key, opts = {}) {
+  const cv = h("canvas", { class: "lp-scope" + (opts.cls ? " " + opts.cls : ""), "data-sc": key, width: 1, height: 1, "aria-hidden": "true",
+    title: opts.title || T("Oszillogramm: das Signal an dieser Stelle", "Oscilloscope: the signal at this point") });
+  if (scopeSeen) scopeSeen.observe(cv);
+  return cv;
+}
+// Welle zeichnen: Spalten mit Min/Max (wie ein echtes Oszilloskop, Rauschen wird zur Fläche), Start am steigenden Nulldurchgang
+function drawWave(x, buf, W, H, scale, color, len) {
+  let st = 0;
+  for (let i = 1; i < buf.length - len; i++) if (buf[i - 1] < 0 && buf[i] >= 0) { st = i; break; }
+  const per = len / W, mid = H / 2;
+  x.strokeStyle = color; x.lineWidth = Math.max(1, H / 22); x.beginPath();
+  for (let c = 0; c < W; c++) {
+    let lo = 1, hi = -1; const a = st + Math.floor(c * per), b = Math.max(a + 1, st + Math.floor((c + 1) * per));
+    for (let i = a; i < b; i++) { const v = buf[i]; if (v < lo) lo = v; if (v > hi) hi = v; }
+    const y1 = mid - clamp(hi * scale, -1, 1) * mid * 0.92, y2 = mid - clamp(lo * scale, -1, 1) * mid * 0.92;
+    if (c === 0) x.moveTo(c + 0.5, y1); else x.lineTo(c + 0.5, y1);
+    if (y2 - y1 > 1) x.lineTo(c + 0.5, y2);
+  }
+  x.stroke();
+}
+function drawScopes() {
+  const dpr = Math.min(2, window.devicePixelRatio || 1), buf = S.scBuf || (S.scBuf = new Float32Array(SCOPE_N));
+  for (const cv of qa(".lp-scope")) {
+    if (cv._vis === false || !cv.isConnected) continue;
+    const W = Math.round(cv.clientWidth * dpr), H = Math.round(cv.clientHeight * dpr); if (!W || !H) continue;
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    const x = cv.getContext("2d"); x.clearRect(0, 0, W, H);
+    x.strokeStyle = "rgba(140,150,190,.18)"; x.lineWidth = 1; x.beginPath(); x.moveTo(0, H / 2 + 0.5); x.lineTo(W, H / 2 + 0.5); x.stroke();
+    const [id, what] = cv.dataset.sc.split(":");
+    if (id === "master") { if (S.g) { S.g.an.getFloatTimeDomainData(S.g.anBuf); drawWave(x, S.g.anBuf, W, H, 1.6, "#22e3c3", 512); } continue; }
+    if (id === "mic") { if (S.mic) { S.mic.an.getFloatTimeDomainData(S.mic.buf); drawWave(x, S.mic.buf, W, H, 2.5, "#ff4d94", 256); } continue; }
+    const g = genById(id), ch = S.chains.get(id); if (!g || !ch) continue;
+    if (what === "lfo") {
+      const hs = S.lfoHist && S.lfoHist[id]; if (!hs || !hs.length) continue;
+      x.strokeStyle = g.color; x.lineWidth = Math.max(1, H / 18); x.beginPath();
+      for (let i = 0; i < hs.length; i++) { const px = W - (hs.length - 1 - i) * (W / 119), py = H / 2 - hs[i] * H * 0.42; if (i) x.lineTo(px, py); else x.moveTo(px, py); }
+      x.stroke(); continue;
+    }
+    if (what === "mix") {                              // Kanal: links und rechts (Panorama sichtbar), feste Skala (Lautstärke sichtbar)
+      ch.sc.L.getFloatTimeDomainData(buf); drawWave(x, buf, W, H, 2.2, g.color, 1024);
+      ch.sc.R.getFloatTimeDomainData(buf); x.globalAlpha = 0.55; drawWave(x, buf, W, H, 2.2, "#e8ecff", 1024); x.globalAlpha = 1; continue;
+    }
+    const an = ch.sc[{ src: "src", filter: "filt", tone: "tone", space: "space" }[what]]; if (!an) continue;
+    an.getFloatTimeDomainData(buf);
+    let pk = 0; for (let i = 0; i < SCOPE_N; i += 2) { const v = Math.abs(buf[i]); if (v > pk) pk = v; }
+    cv._pk = Math.max(pk, (cv._pk || 0) * 0.94);      // Form zählt hier, nicht der Pegel: sanft nachgeführte Verstärkung
+    if (cv._pk < 2e-4) continue;
+    drawWave(x, buf, W, H, 0.9 / Math.max(cv._pk, 0.004), g.color, 1024);
+  }
+}
+
+// =====================================================================================================
+// 3.17.1: Was gerade klingt, steht an den Reglern — Wobble, Autopilot-Filter, Oszillator (Einrasten, Gleiten, Drift, LFO, Tor)
+// =====================================================================================================
+function liveTick() {
+  if (!S.g || !S.set) return;
+  const kn = (key) => { const e = q(`[data-lk="${key}"]`); return e && e.setLive ? e : null; };
+  for (const g of S.set.gens) {
+    const ch = S.chains.get(g.id); if (!ch) continue;
+    const on = genOn(g), k = kn(`${g.id}:fx:cut`);
+    if (k) {
+      let lv = null;
+      if (on && SYNC_STEPS[g.fx.wob] && g.fx.wdepth > 0) { ch.wobAn.getFloatTimeDomainData(ch.wobBuf); lv = clamp(g.fx.cut * Math.pow(2, ch.wobBuf[ch.wobBuf.length - 1] / 1200), 40, 20000); }
+      k.setLive(lv);
+    }
+    if (g.kind !== "osc") continue;
+    const L = on && S.live ? S.live[g.id] : null;
+    for (const [key, i] of [["freq", 0], ["pw", 1], ["fma", 2], ["level", 3]]) { const e = kn(`${g.id}:p:${key}`); if (e) e.setLive(L ? L[i] : null); }
+    const pe = kn(`${g.id}:fx:pan`); if (pe) pe.setLive(L && L[4] ? clamp(g.fx.pan + L[4], -1, 1) : null);
+    const hs = (S.lfoHist || (S.lfoHist = {}))[g.id] || (S.lfoHist[g.id] = []);
+    hs.push(L && g.p.ldest !== "off" ? L[5] : 0); if (hs.length > 120) hs.shift();
+  }
+  // Autopilot-Filter (Breakdown zu, Steigerung Hochpass) auf dem DJ-Filter-Regler: links = Tiefpass, rechts = Hochpass
+  const dk = kn("master:dj");
+  if (dk) {
+    const lp = S.g.apLP.frequency.value, hp = S.g.apHP.frequency.value, dj = S.set.master.dj;
+    let lv = null;
+    if (hp > 11) lv = clamp(Math.log(hp / 10) / Math.log(300), 0, 1);
+    else if (lp < 19500) lv = -clamp(Math.log(lp / 20000) / Math.log(150 / 20000), 0, 1);
+    if (lv != null && Math.sign(lv) === Math.sign(dj) && Math.abs(dj) > Math.abs(lv)) lv = dj;
+    dk.setLive(lv);
+  }
+}
+
+// =====================================================================================================
+// 3.17.1: Auto-Mix — misst 2 Takte lang, wie laut jeder Generator wirklich ist (vor dem Fader, gehörgerecht),
+// und stellt die Lautstärke auf einen Zielpegel je Rolle und Richtung. Beat und Bass tragen, Flächen liegen darunter.
+// =====================================================================================================
+const MIX_TARGET = { beat: -17, bass: -19, chords: -26, arp: -27, melody: -22, seed: -22, osc: -27, audio: -18 };
+const MIX_STYLE = { ambient: { beat: -6, chords: 4, osc: 4, arp: 2 }, lofi: { beat: -2, chords: 2 }, techno: { beat: 1, bass: 1, chords: -2 }, house: { beat: 1 },
+  trap: { bass: 2, beat: 1 }, hiphop: { bass: 1, beat: 1 }, dnb: { beat: 1, bass: 1 }, synthwave: { chords: 1, arp: 1 }, disco: { bass: 1 }, pop: { melody: 1 } };
+const mixTarget = (g) => (MIX_TARGET[g.kind] ?? -24) + ((MIX_STYLE[S.set.style] || {})[g.kind] || 0);
+function autoMix({ ids = null, manual = false } = {}) {
+  if (!S.g || !S.set) return;
+  if (manual && !S.set.gens.some(genOn) && !S.set.gens.some(genPending)) { status(T("Erst Generatoren starten — der Auto-Mix hört dem zu, was läuft.", "Start some generators first — the auto mix listens to what is playing.")); return; }
+  const want = S.set.gens.filter(g => (!ids || ids.includes(g.id)) && (manual || !g.volHand)).map(g => g.id);
+  if (!want.length) return;
+  if (manual) for (const g of S.set.gens) if (want.includes(g.id)) g.volHand = false;
+  if (S.mix && !manual) { for (const id of want) if (!S.mix.ids.includes(id)) S.mix.ids.push(id); return; }
+  S.mix = { ids: want, phase: "wait", acc: {}, waited: 0 };
+  status(T("🎚 Auto-Mix hört 2 Takte zu …", "🎚 Auto mix is listening for 2 bars …")); paintTransport();
+}
+function mixBar(d) {
+  const M = S.mix; if (!M) return;
+  if (M.phase === "wait") {
+    if (M.ids.some(id => { const g = genById(id); return g && genOn(g); })) { M.phase = "listen"; M.from = d.bar; M.acc = {}; }
+    else if (++M.waited > 8) { S.mix = null; paintTransport(); }
+    return;
+  }
+  if (d.bar - M.from >= 2) finishMix();
+}
+function mixMeasure() {
+  const M = S.mix; if (!M || M.phase !== "listen") return;
+  const buf = S.mixBuf || (S.mixBuf = new Float32Array(SCOPE_N));
+  for (const id of M.ids) {
+    const g = genById(id), ch = S.chains.get(id); if (!g || !ch || !genOn(g)) continue;
+    ch.kAn.getFloatTimeDomainData(buf); let ss = 0; for (let i = 0; i < SCOPE_N; i++) ss += buf[i] * buf[i];
+    const pw = ss / SCOPE_N; if (pw > 1e-7) (M.acc[id] || (M.acc[id] = [])).push(pw);
+  }
+}
+function finishMix() {
+  const M = S.mix; S.mix = null; const done = [];
+  for (const id of M.ids) {
+    const g = genById(id), a = M.acc[id]; if (!g || !a || a.length < 12) continue;
+    a.sort((x, y) => y - x);
+    const top = a.slice(0, Math.max(1, Math.round(a.length * 0.6)));      // laute 60 %: Pausen eines Arpeggios zählen nicht
+    const L = 10 * Math.log10(top.reduce((x, y) => x + y, 0) / top.length);
+    const v = clamp(Math.round((mixTarget(g) - L) * 2) / 2, -40, 6);
+    g.mixL = Math.round(L * 10) / 10; g.fx.vol = v; applyFx(g, false, true);
+    const k = q(`[data-lk="${g.id}:fx:vol"]`); if (k && k.setValue) k.setValue(v);
+    done.push(`${g.name} ${v > 0 ? "+" : ""}${String(v).replace(".", EN ? "." : ",")} dB`);
+  }
+  if (done.length) {
+    changed();
+    const e = q("#lpMsg"), prev = e ? e.textContent : "", msg = T("🎚 Ausgemischt: ", "🎚 Mixed: ") + done.join(" · ");
+    status(prev && !prev.startsWith("🎚") && Date.now() - (S.msgAt || 0) < 12000 ? prev + " — " + msg : msg);
+  }
+  paintTransport();
+}
 
 // ---- Pegel ----
 function meterLoop() {
   if (S.meterOn) return; S.meterOn = true;
+  let fr = 0;
   const tick = () => {
     if (!S.g) { S.meterOn = false; return; }
     if (tabVisible()) {
+      liveTick(); mixMeasure(); if (++fr % 2 === 0) drawScopes();
       const cv = q("#lpMeter");
       if (cv) { S.g.an.getFloatTimeDomainData(S.g.anBuf); let pk = 0; for (const v of S.g.anBuf) pk = Math.max(pk, Math.abs(v));
         const x = cv.getContext("2d"), H = cv.height, db = 20 * Math.log10(pk + 1e-9), f = clamp((db + 48) / 48, 0, 1);
@@ -1279,13 +1467,15 @@ function meterLoop() {
 // =====================================================================================================
 async function init() {
   if (S.ready) return; S.ready = true;
-  S.map = lsGet(LS_MAP, {}) || {};
+  S.map = lsGet(LS_MAP, {}) || {}; S.kbSmall = !!lsGet(LS_KB, false);
   let s = null; const last = lsGet(LS_LAST, null);
   try { if (last) s = await dbGet("sets", last); if (!s) { const all = await dbAll("sets"); all.sort((a, b) => (b.changed || 0) - (a.changed || 0)); s = all[0]; } } catch (e) { /* kein IndexedDB */ }
   S.set = s ? fixSet(s) : demoSet();
   shell();
   await afterLoad();
   document.addEventListener("keydown", onKeyDown, true);
+  window.addEventListener("resize", () => { clearTimeout(S.kbT); S.kbT = setTimeout(() => { const v = q("#loopView"); if (!v || v.classList.contains("hidden")) return;
+    const w = q("#lpKeys").clientWidth, octs = w >= 1600 ? 5 : w >= 1150 ? 4 : w >= 760 ? 3 : 2; if (octs !== S.kbOcts) renderKeys(); }, 200); });
   document.addEventListener("keyup", onKeyUp, true);
   document.addEventListener("visibilitychange", () => { if (document.hidden) for (const [code, x] of [...S.kbDown]) { S.kbDown.delete(code); noteOff(x.n, x.nn); } });
   initMidi();
@@ -1296,4 +1486,4 @@ export function showLoops(on) {
   else for (const [code, x] of [...S.kbDown]) { S.kbDown.delete(code); noteOff(x.n, x.nn); }
 }
 if (tabVisible()) showLoops(true);
-window.mwsLoops = { show: showLoops, state: S, startAll, stopAll, addGen: (k, o) => addGen(k, o), takeOver, surprise, yinNotes, detectKey, running: () => S.set && S.set.gens.some(genOn) };
+window.mwsLoops = { show: showLoops, state: S, startAll, stopAll, addGen: (k, o) => addGen(k, o), takeOver, surprise, yinNotes, detectKey, autoMix, running: () => S.set && S.set.gens.some(genOn) };

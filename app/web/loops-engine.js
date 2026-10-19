@@ -352,6 +352,7 @@ class OscGen extends Gen {
     const lr = OSC_SYNC[p.lsync] ? (this.eng.bpm / 60) / OSC_SYNC[p.lsync] : num(p.lrate, 0.5), ldest = p.ldest || "off", lamt = num(p.lamt, 0), lsh = p.lshape || "sine";
     const drift = num(p.drift, 0), gate = GATE[p.gate] ? GATE[p.gate] * this.eng.sps : 0, gl = num(p.gatelen, 0.5);
     const norm = 0.22 / Math.pow(uni, 0.55);
+    this.lAmp = 0;                                     // 3.17.1: was gerade klingt, für die Regler (live)
     for (let i = a; i < b; i++) {
       this.lvl += (lvlT - this.lvl) * 0.0015;
       if (this.lvl < 1e-5 && lvlT === 0) { continue; }
@@ -404,8 +405,11 @@ class OscGen extends Gen {
       const y = s * amp; this.dc += (y - this.dc) * 0.0005; const o = tanh((y - this.dc) * 1.2) * 0.85;
       const pan = ldest === "pan" ? clamp(lv * lamt, -1, 1) : 0;
       L[i] += o * (1 - pan) * 0.5 * 1.41; R2[i] += o * (1 + pan) * 0.5 * 1.41;
+      if (i === b - 1) { this.lF = f; this.lPw = pw; this.lFm = fma; this.lAmp = amp; this.lPan = pan; this.lLfo = ldest !== "off" ? lv : 0; }
     }
   }
+  // 3.17.1: klingende Werte (Frequenz mit Einrasten/Gleiten/Drift/LFO, Pulsbreite, FM, Pegel mit Tor und LFO, Panorama, LFO-Ausschlag)
+  live() { return this.active() ? [this.lF || this.f, this.lPw ?? num(this.p.pw, 0.5), this.lFm ?? num(this.p.fma, 0), this.lAmp || 0, this.lPan || 0, this.lLfo || 0] : null; }
   active() { return this.on || this.lvl > 1e-5; }
 }
 
@@ -668,6 +672,13 @@ class Loops extends AudioWorkletProcessor {
         const s = Math.sin(TAU * c.f * c.t / this.sr) * Math.exp(-c.t / (this.sr * 0.012)) * 0.35; mo[0][i] += s; if (mo[1]) mo[1][i] += s; c.t++;
       }
       this.click = this.click.filter(c => c.t < c.n);
+    }
+    // 3.17.1: etwa 30× je Sekunde die klingenden Werte der Oszillatoren an die Oberfläche (die Regler zeigen sie)
+    if ((this.clock >> 7) % 12 === 0) {
+      let v = null;
+      for (const g of this.gens) if (g.live) { const x = g.live(); if (x) (v || (v = {}))[g.id] = x; }
+      if (v || this.liveWas) this.port.postMessage({ t: "live", v: v || {} });
+      this.liveWas = !!v;
     }
     this.clock += N;
     return true;
