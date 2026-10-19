@@ -1301,3 +1301,7 @@ class Limiter extends AudioWorkletProcessor {
   }
 }
 registerProcessor("mws-limiter", Limiter);
+
+// 3.17: die Loop-Maschine (loops-engine.js) spielt mit denselben Instrumenten — sie lädt NACH dieser Datei in denselben
+// AudioWorklet-Bereich und holt sich die Bausteine hier ab (Module teilen nur globalThis, keine Namen).
+globalThis.MWS_DSP = { makeInstrument, modBlock, busy, Organ, Drums, Env, SVF, Biquad, LFO, SHAPE, lfoRate, sinp, tanh, blep, mtof, clamp, num, rnd };

@@ -73,7 +73,7 @@ HOST = os.environ.get("HOST", "0.0.0.0")      # 3.11: lokale Installation → 12
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, "web")
 
-APP_VERSION = "3.16.1"
+APP_VERSION = "3.17.0"
 BRIDGE_FILE = next((p for p in (os.path.join(ROOT, "bridge", n) for n in ("neonforge_bridge.py", "manuwave_bridge.py"))
                     if os.path.isfile(p)), os.path.join(ROOT, "bridge", "manuwave_bridge.py"))
 BUILD_INFO_FILE = os.path.join(WEB, "build-info.json")
@@ -260,8 +260,8 @@ def clean_brief_request(raw: dict) -> dict:
 
 
 BRIEF_LANE = {"brief", "settings", "export", "verify", "archiv", "loeschen", "web", "web_weg", "master_merken", "midi"}
-NEW_KINDS = {"settings", "export", "verify", "cover", "nachruesten", "archiv", "loeschen", "web", "web_weg", "master_merken", "midi"}
-KIND_SINCE = {"loeschen": "3.6", "web": "3.10", "web_weg": "3.10", "master_merken": "3.12.3", "midi": "3.16"}     # ab welcher Brücke eine Art geht (für die Meldung)
+NEW_KINDS = {"settings", "export", "verify", "cover", "nachruesten", "archiv", "loeschen", "web", "web_weg", "master_merken", "midi", "weiter"}
+KIND_SINCE = {"loeschen": "3.6", "web": "3.10", "web_weg": "3.10", "master_merken": "3.12.3", "midi": "3.16", "weiter": "3.17"}     # ab welcher Brücke eine Art geht (für die Meldung)
 
 
 def lane_of(kind: str) -> str:
@@ -310,7 +310,42 @@ def clean_track(raw) -> dict:
     return out
 
 
+WEITER_TRACKS = ("drums", "bass", "keyboard", "synth", "guitar", "strings", "percussion", "brass", "woodwinds", "fx", "backing_vocals")
+
+
+def clean_weiter(raw) -> dict:
+    """3.17: Loop-Maschine → Musik-KI. Nur bekannte Felder in ihren Grenzen (die Brücke prüft noch einmal)."""
+    raw = raw if isinstance(raw, dict) else {}
+    mode = raw.get("mode")
+    if mode not in ("fortsetzen", "gesang"):
+        raise ValueError("Unbekannter Weg")
+    out = {"mode": mode}
+    for k, n in (("caption", 500), ("lyrics", 3000)):
+        if isinstance(raw.get(k), str) and raw[k].strip():
+            out[k] = raw[k].strip()[:n]
+    ks = raw.get("keyscale")
+    if isinstance(ks, str) and re.match(r"^[A-G](?:#|b)? (?:major|minor)$", ks.strip()):
+        out["keyscale"] = ks.strip()
+    for k, lo, hi in (("bpm", 40, 220), ("duration", 20, 240)):
+        try:
+            v = float(raw.get(k))
+        except (TypeError, ValueError):
+            continue
+        if lo <= v <= hi:
+            out[k] = int(round(v)) if k == "bpm" else round(v, 1)
+    tr = raw.get("tracks")
+    if isinstance(tr, list):
+        out["tracks"] = [t for t in tr if t in WEITER_TRACKS][:8]
+    if raw.get("stimme") in ("original", "ki"):
+        out["stimme"] = raw["stimme"]
+    if isinstance(raw.get("seed"), int) and 0 <= raw["seed"] < 2 ** 31:
+        out["seed"] = raw["seed"]
+    return out
+
+
 def clean_job(kind: str, raw) -> dict:
+    if kind == "weiter":
+        return clean_weiter(raw)
     if kind == "settings":
         raw = raw if isinstance(raw, dict) else {}
         s = raw.get("set")
@@ -1002,7 +1037,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     data = json.loads(urllib.parse.unquote(self.headers.get("x-nf-job", "") or "{}"))
                 except Exception:      # auch RecursionError bei absurd verschachteltem JSON
                     data = {}
-                if not isinstance(data, dict) or data.get("kind") not in ("verify", "export", "nachruesten"):
+                if not isinstance(data, dict) or data.get("kind") not in ("verify", "export", "nachruesten", "weiter"):
                     self._json(400, {"error": "bad_request", "message": "Unbekannte Auftragsart."})
                     return
                 upload = self._raw_body(MAX_AUDIO_BYTES)
@@ -1010,8 +1045,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     self._json(413, {"error": "too_big", "message": "Datei fehlt oder ist größer als %d MB." % (MAX_AUDIO_BYTES // (1024 * 1024))})
                     return
             kind = data.get("kind") if isinstance(data, dict) else None
-            if kind not in NEW_KINDS or (kind == "verify" and upload is None) \
-                    or (upload is not None and kind not in ("verify", "export", "nachruesten", "web")):
+            if kind not in NEW_KINDS or (kind in ("verify", "weiter") and upload is None) \
+                    or (upload is not None and kind not in ("verify", "export", "nachruesten", "web", "weiter")):
                 self._json(400, {"error": "bad_request", "message": "Unbekannte Auftragsart."})
                 return
             try:

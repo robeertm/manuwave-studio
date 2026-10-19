@@ -583,6 +583,7 @@
 "📥 {0}/{1} · „{2}“ wird geholt (mit Cover, Tags, Wasserzeichen) …": "📥 {0}/{1} · fetching “{2}” (with cover, tags, watermark) …",
 "📦 Paket schnüren": "📦 Build package",
 "📦 Veröffentlichungspaket": "📦 Release package",
+"🔁 Loop-Maschine": "🔁 Loop machine",
 "🔌 Mac koppeln": "🔌 Pair computer",
 "🔌 Mac …": "🔌 Computer …",
 "🔎 Klang {0}": "🔎 Sound {0}",

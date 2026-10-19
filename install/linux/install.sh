@@ -2,7 +2,7 @@
 # Manuwave Studio — installer for Linux with an NVIDIA GPU (Debian/Ubuntu and derivatives).
 #
 #   ./install.sh [--yes] [--lm 0.6B|1.7B|4B] [--xl] [--models-from DIR] [--no-start]
-#                [--skip-writer] [--skip-image] [--skip-qa] [--skip-midi] [--home DIR]
+#                [--skip-writer] [--skip-image] [--skip-qa] [--skip-midi] [--skip-loopai] [--home DIR]
 #
 # Safe to run again. Everything lands in ~/ManuwaveStudio (or --home / $MWS_HOME); system packages
 # come from your distribution (apt asks for your password once).
@@ -13,11 +13,11 @@
 set -u
 MWS_HOME="${MWS_HOME:-$HOME/ManuwaveStudio}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-YES=0; LM=""; XL=0; MODELS_FROM=""; START=1; WRITER=1; IMAGE=1; QA=1; MIDI=1
+YES=0; LM=""; XL=0; MODELS_FROM=""; START=1; WRITER=1; IMAGE=1; QA=1; MIDI=1; LOOPAI=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes) YES=1 ;; --lm) LM="$2"; shift ;; --xl) XL=1 ;; --models-from) MODELS_FROM="$2"; shift ;;
-    --no-start) START=0 ;; --skip-writer) WRITER=0 ;; --skip-image) IMAGE=0 ;; --skip-qa) QA=0 ;; --skip-midi) MIDI=0 ;; --home) MWS_HOME="$2"; shift ;;
+    --no-start) START=0 ;; --skip-writer) WRITER=0 ;; --skip-image) IMAGE=0 ;; --skip-qa) QA=0 ;; --skip-midi) MIDI=0 ;; --skip-loopai) LOOPAI=0 ;; --home) MWS_HOME="$2"; shift ;;
     -h|--help) sed -n 2,13p "$0"; exit 0 ;; *) echo "Unknown option: $1"; exit 2 ;;
   esac; shift
 done
@@ -40,7 +40,7 @@ fetch() { local url="$1" dst="$2"; [ -s "$dst" ] && return 0; mkdir -p "$(dirnam
   curl -L --fail -C - --progress-bar -o "$dst.part" "$url" && mv "$dst.part" "$dst"; }
 
 bold "Manuwave Studio — installing into $MWS_HOME"
-bold "1/9  Checking this computer"
+bold "1/10  Checking this computer"
 [ "$(uname -m)" = "x86_64" ] || die "Only x86_64 is supported on Linux."
 command -v nvidia-smi >/dev/null || die "No NVIDIA driver found (nvidia-smi). Install the proprietary driver (≥ 550) first."
 GPU=$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -1)
@@ -52,7 +52,7 @@ ok "GPU: $GPU · RAM ${RAM_GB} GB · ${FREE_GB} GB free"
 if [ -z "$LM" ]; then if [ "$RAM_GB" -lt 12 ]; then LM="0.6B"; elif [ "$RAM_GB" -lt 24 ]; then LM="1.7B"; else LM="4B"; fi; fi
 [ "$FREE_GB" -ge 25 ] || [ -n "$MODELS_FROM" ] || die "About 25 GB of free space are needed."
 
-bold "2/9  System packages"
+bold "2/10  System packages"
 NEED=""; for p in curl ffmpeg python3 zstd audiowmark libvulkan1; do dpkg -s "$p" >/dev/null 2>&1 || NEED="$NEED $p"; done
 if [ -n "$NEED" ]; then
   ask "Install with apt:$NEED ?" || die "These packages are required."
@@ -62,7 +62,7 @@ command -v ffmpeg >/dev/null || die "ffmpeg is missing."
 command -v audiowmark >/dev/null && ln -sf "$(command -v audiowmark)" "$TOOLS/bin/audiowmark" || warn "audiowmark not available — tracks get no watermark."
 ok "ffmpeg $(ffmpeg -version | head -1 | awk '{print $3}')"
 
-bold "3/9  Music engine (prebuilt acestep.cpp)"
+bold "3/10  Music engine (prebuilt acestep.cpp)"
 if [ -x "$ENGINE/build/bin/ace-server" ]; then ok "already installed"; else
   fetch "https://github.com/$GH_REPO/releases/download/$ENGINE_TAG/acestep-linux-x64.tar.gz" "$TOOLS/src/acestep-linux-x64.tar.gz" \
     || die "Engine download failed."
@@ -71,7 +71,7 @@ if [ -x "$ENGINE/build/bin/ace-server" ]; then ok "already installed"; else
   ok "ace-server installed"
 fi
 
-bold "4/9  Music models"
+bold "4/10  Music models"
 M="$ENGINE/models"; mkdir -p "$M"
 DIT="acestep-v15-sft-Q8_0.gguf"; [ "$XL" = 1 ] && DIT="acestep-v15-xl-sft-Q8_0.gguf"
 for f in vae-BF16.gguf Qwen3-Embedding-0.6B-Q8_0.gguf "acestep-5Hz-lm-${LM}-Q8_0.gguf" "$DIT"; do
@@ -81,7 +81,7 @@ for f in vae-BF16.gguf Qwen3-Embedding-0.6B-Q8_0.gguf "acestep-5Hz-lm-${LM}-Q8_0
 done
 printf "MODE=single\nLM_FILE=acestep-5Hz-lm-%s-Q8_0.gguf\nTESTED_REV=b7ba6d9\n" "$LM" > "$MWS_HOME/engine.conf"
 
-bold "5/9  Language model for briefs and lyrics (Ollama)"
+bold "5/10  Language model for briefs and lyrics (Ollama)"
 OL="$TOOLS/ollama"
 if [ ! -x "$OL/bin/ollama" ]; then
   fetch "https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64.tgz" "$TOOLS/src/ollama-linux-amd64.tgz" || die "Ollama download failed."
@@ -95,7 +95,7 @@ if [ "$WRITER" = 1 ]; then
   kill $OP 2>/dev/null; wait $OP 2>/dev/null; ok "$WMODEL"
 fi
 
-bold "6/9  Cover art (stable-diffusion.cpp + Z-Image Turbo)"
+bold "6/10  Cover art (stable-diffusion.cpp + Z-Image Turbo)"
 if [ "$IMAGE" = 1 ]; then
   SD="$TOOLS/sd"; SM="$MWS_HOME/models/sd"; mkdir -p "$SD" "$SM"
   if [ ! -x "$SD/sd-server" ]; then
@@ -111,7 +111,7 @@ if [ "$IMAGE" = 1 ]; then
   ok "cover model ready"
 fi
 
-bold "7/9  Quality check (optional, about 1 GB)"
+bold "7/10  Quality check (optional, about 1 GB)"
 # Meta Audiobox Aesthetics (CC-BY 4.0) rates every take on the CPU; weak takes are rendered again automatically.
 if [ "$QA" = 1 ]; then
   UV="$TOOLS/bin/uv"
@@ -128,7 +128,7 @@ if [ "$QA" = 1 ]; then
   else warn "quality check not available — tracks are kept without a rating"; fi
 else warn "skipped (--skip-qa): every take is kept without a rating"; fi
 
-bold "8/9  MIDI image (optional, about 1.5 GB)"
+bold "8/10  MIDI image (optional, about 1.5 GB)"
 # Demucs (MIT) + Basic Pitch (Apache-2.0, ONNX): every AI song becomes notes — playable on the instruments, MIDI download.
 if [ "$MIDI" = 1 ]; then
   UV="$TOOLS/bin/uv"; MP="$MWS_HOME/midi/bin/python"
@@ -145,7 +145,16 @@ if [ "$MIDI" = 1 ]; then
   else warn "MIDI image not available — songs stay audio only"; fi
 else warn "skipped (--skip-midi): songs stay audio only"; fi
 
-bold "9/9  App and launcher"
+bold "9/10 Loop machine AI (optional, base model about $([ "$XL" = 1 ] && echo 5.3 || echo 2.6) GB)"
+# ACE-Step's "complete" task (a band for your sung loop) needs the base model; continuing a jam works without it.
+BASE="acestep-v15-base-Q8_0.gguf"; [ "$XL" = 1 ] && BASE="acestep-v15-xl-base-Q8_0.gguf"
+if [ "$LOOPAI" = 1 ]; then
+  if [ -s "$M/$BASE" ]; then ok "$BASE"
+  elif [ -n "$MODELS_FROM" ] && [ -s "$MODELS_FROM/$BASE" ]; then ln -sf "$MODELS_FROM/$BASE" "$M/$BASE"; ok "$BASE (linked)"
+  else echo "  ↓ $BASE"; fetch "$HF/$BASE" "$M/$BASE" && ok "$BASE" || warn "download failed — the loop machine still continues jams; run again to resume"; fi
+else warn "skipped (--skip-loopai): the loop machine continues jams, a band for your voice gets a weaker bass"; fi
+
+bold "10/10 App and launcher"
 mkdir -p "$MWS_HOME/app" && cp -a "$REPO_DIR/app/." "$MWS_HOME/app/" || die "copy failed"
 python3 "$REPO_DIR/install/common/write_config.py" "$MWS_HOME" "$APP_PORT" "$WRITER_PORT" "$WMODEL" || die "config failed"
 install -m 755 "$REPO_DIR/install/linux/manuwave-studio.sh" "$MWS_HOME/manuwave-studio.sh"

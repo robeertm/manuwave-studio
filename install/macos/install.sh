@@ -2,7 +2,7 @@
 # Manuwave Studio — installer for macOS on Apple Silicon.
 #
 #   ./install.sh [--yes] [--lm 0.6B|1.7B|4B] [--xl] [--models-from DIR] [--no-start]
-#                [--skip-writer] [--skip-image] [--skip-qa] [--skip-midi] [--home DIR]
+#                [--skip-writer] [--skip-image] [--skip-qa] [--skip-midi] [--skip-loopai] [--home DIR]
 #
 # Safe to run again: finished steps are skipped, interrupted downloads resume.
 # Everything lands in ~/ManuwaveStudio (or --home / $MWS_HOME). Nothing outside it is changed,
@@ -13,7 +13,7 @@
 set -u
 MWS_HOME="${MWS_HOME:-$HOME/ManuwaveStudio}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-YES=0; LM=""; XL=0; MODELS_FROM=""; START=1; WRITER=1; IMAGE=1; QA=1; MIDI=1
+YES=0; LM=""; XL=0; MODELS_FROM=""; START=1; WRITER=1; IMAGE=1; QA=1; MIDI=1; LOOPAI=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes) YES=1 ;;
@@ -25,6 +25,7 @@ while [ $# -gt 0 ]; do
     --skip-image) IMAGE=0 ;;
     --skip-qa) QA=0 ;;
     --skip-midi) MIDI=0 ;;
+    --skip-loopai) LOOPAI=0 ;;
     --home) MWS_HOME="$2"; shift ;;
     -h|--help) sed -n 2,12p "$0"; exit 0 ;;
     *) echo "Unknown option: $1"; exit 2 ;;
@@ -67,7 +68,7 @@ sha_ok() { [ "$(shasum -a 256 "$1" | cut -d' ' -f1)" = "$2" ]; }
 bold "Manuwave Studio — installing into $MWS_HOME"
 
 # ---- 1. This Mac ----------------------------------------------------------------
-bold "1/11 Checking this Mac"
+bold "1/12 Checking this Mac"
 [ "$(uname -m)" = "arm64" ] || die "Manuwave Studio needs a Mac with Apple silicon (M1 or newer)."
 MAJ=$(sw_vers -productVersion | cut -d. -f1); [ "$MAJ" -ge 14 ] || die "macOS 14 or newer is required."
 RAM_GB=$(( $(sysctl -n hw.memsize) / 1073741824 ))
@@ -82,7 +83,7 @@ NEED=8; [ "$LM" = "4B" ] && NEED=$((NEED+5)); [ "$XL" = 1 ] && NEED=$((NEED+6));
 ok "Language model for the music AI: $LM · sound model: $([ $XL = 1 ] && echo 'XL (best)' || echo 'standard')"
 
 # ---- 2. Apple command line tools ---------------------------------------------------
-bold "2/11 Apple command line tools"
+bold "2/12 Apple command line tools"
 if ! xcode-select -p >/dev/null 2>&1; then
   xcode-select --install >/dev/null 2>&1
   warn "A macOS window asks to install the command line tools — please click “Install”."
@@ -92,7 +93,7 @@ fi
 ok "Command line tools: $(xcode-select -p)"
 
 # ---- 3. Homebrew and packages ------------------------------------------------------
-bold "3/11 Homebrew packages (ffmpeg, cmake, Ollama, audio libraries)"
+bold "3/12 Homebrew packages (ffmpeg, cmake, Ollama, audio libraries)"
 BREW=""; for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do [ -x "$b" ] && BREW="$b" && break; done
 if [ -z "$BREW" ]; then
   ask "Homebrew is missing. Install it now? (macOS will ask for your password once)" || die "Homebrew is required."
@@ -112,7 +113,7 @@ command -v cmake >/dev/null 2>&1 || MISSING="$MISSING cmake"
 ok "ffmpeg $(ffmpeg -version | head -1 | awk '{print $3}') · cmake $(cmake --version | head -1 | awk '{print $3}') · ollama $(ollama --version 2>/dev/null | awk '{print $NF}')"
 
 # ---- 4. Watermark tool (audiowmark, GPL-3, built from the official sources) -------------
-bold "4/11 Watermark tool (audiowmark)"
+bold "4/12 Watermark tool (audiowmark)"
 if [ -x "$TOOLS/bin/audiowmark" ]; then ok "already built"; else
   SRC="$TOOLS/src"; mkdir -p "$SRC"
   fetch "$ZITA_URL" "$SRC/zita-resampler-1.11.2.tar.xz" && sha_ok "$SRC/zita-resampler-1.11.2.tar.xz" "$ZITA_SHA" || die "zita-resampler download/checksum failed."
@@ -129,7 +130,7 @@ if [ -x "$TOOLS/bin/audiowmark" ]; then ok "already built"; else
 fi
 
 # ---- 5. Music engine (acestep.cpp, MIT) -------------------------------------------
-bold "5/11 Music engine (ACE-Step 1.5 via acestep.cpp @ $ACESTEP_REV, Metal)"
+bold "5/12 Music engine (ACE-Step 1.5 via acestep.cpp @ $ACESTEP_REV, Metal)"
 if [ -x "$ENGINE/build/ace-server" ] && [ -f "$ENGINE/.mws-rev" ] && [ "$(cat "$ENGINE/.mws-rev")" = "$ACESTEP_REV" ]; then ok "already built"; else
   if [ ! -d "$ENGINE/.git" ]; then git clone --quiet "$ACESTEP_REPO" "$ENGINE" || die "git clone failed."; fi
   ( cd "$ENGINE" && git fetch --quiet origin && git checkout --quiet "$ACESTEP_REV" && git submodule update --init --recursive --quiet ) || die "checkout failed."
@@ -140,7 +141,7 @@ if [ -x "$ENGINE/build/ace-server" ] && [ -f "$ENGINE/.mws-rev" ] && [ "$(cat "$
 fi
 
 # ---- 6. Models for the music AI (MIT, from Hugging Face) ------------------------------
-bold "6/11 Music models"
+bold "6/12 Music models"
 M="$ENGINE/models"; mkdir -p "$M"
 DIT="acestep-v15-sft-Q8_0.gguf"; [ "$XL" = 1 ] && DIT="acestep-v15-xl-sft-Q8_0.gguf"
 FILES="vae-BF16.gguf Qwen3-Embedding-0.6B-Q8_0.gguf acestep-5Hz-lm-${LM}-Q8_0.gguf $DIT"
@@ -157,7 +158,7 @@ TESTED_REV=$ACESTEP_REV
 EOF
 
 # ---- 7. Writer: lyrics and production briefs (Ollama, qwen2.5) ---------------------------
-bold "7/11 Language model for briefs and lyrics"
+bold "7/12 Language model for briefs and lyrics"
 WMODEL="qwen2.5:7b-instruct"; [ "$RAM_GB" -lt 16 ] && WMODEL="qwen2.5:3b-instruct"
 if [ "$WRITER" = 1 ]; then
   export OLLAMA_MODELS="$MWS_HOME/models/ollama"; mkdir -p "$OLLAMA_MODELS"
@@ -170,7 +171,7 @@ else warn "skipped (--skip-writer): songs with sung lyrics need a language model
 unset OLLAMA_MODELS
 
 # ---- 8. Cover art (Ollama $OLLAMA_IMG_VER + FLUX.2 klein 4B, Apache-2.0) --------------
-bold "8/11 Cover art"
+bold "8/12 Cover art"
 IMG="$TOOLS/ollama-bild"
 if [ "$IMAGE" = 1 ]; then
   if [ ! -x "$IMG/ollama" ]; then
@@ -190,7 +191,7 @@ else warn "skipped (--skip-image): tracks get no cover"; fi
 # ---- 9. Quality check (optional): a listening-judgement model rates every take ----------
 # Meta Audiobox Aesthetics (CC-BY 4.0) in its own environment ($MWS_HOME/qa, PyTorch, about 1 GB). Runs on the CPU
 # after each render; weak takes are rendered again automatically. Without it the app works as before.
-bold "9/11 Quality check (optional, about 1 GB)"
+bold "9/12 Quality check (optional, about 1 GB)"
 if [ "$QA" = 1 ]; then
   command -v uv >/dev/null 2>&1 || brew install uv >/dev/null 2>&1 || true
   if command -v uv >/dev/null 2>&1 \
@@ -205,7 +206,7 @@ else warn "skipped (--skip-qa): every take is kept without a rating"; fi
 # Demucs (MIT) separates drums, bass, vocals and the rest; Basic Pitch (Apache-2.0, ONNX) finds the notes. The bridge
 # does this in the background whenever the computer is idle — the song then opens on the instruments ("Make your own")
 # and downloads as a MIDI file. Own environment ($MWS_HOME/midi, PyTorch, about 1.5 GB). Without it nothing changes.
-bold "10/11 MIDI image (optional, about 1.5 GB)"
+bold "10/12 MIDI image (optional, about 1.5 GB)"
 if [ "$MIDI" = 1 ]; then
   command -v uv >/dev/null 2>&1 || brew install uv >/dev/null 2>&1 || true
   MP="$MWS_HOME/midi/bin/python"
@@ -218,8 +219,20 @@ if [ "$MIDI" = 1 ]; then
   else warn "MIDI image not available — songs stay audio only"; fi
 else warn "skipped (--skip-midi): songs stay audio only"; fi
 
-# ---- 11. App + launcher -------------------------------------------------------------
-bold "11/11 App and launcher"
+# ---- 11. Loop machine AI (optional): the music AI plays the band for your voice -------------
+# The "complete" task of ACE-Step 1.5 turns a sung loop into a full song; it needs the base model (MIT), which the
+# fine-tuned model used for normal songs does not replace (measured: without it the bass is missing). Continuing a jam
+# works without it. Your own voice is put back on top with Demucs from step 10.
+bold "11/12 Loop machine AI (optional, base model about $([ "$XL" = 1 ] && echo 5.3 || echo 2.6) GB)"
+BASE="acestep-v15-base-Q8_0.gguf"; [ "$XL" = 1 ] && BASE="acestep-v15-xl-base-Q8_0.gguf"
+if [ "$LOOPAI" = 1 ]; then
+  if [ -s "$M/$BASE" ]; then ok "$BASE"
+  elif [ -n "$MODELS_FROM" ] && [ -s "$MODELS_FROM/$BASE" ]; then ln -f "$MODELS_FROM/$BASE" "$M/$BASE" 2>/dev/null || ln -s "$MODELS_FROM/$BASE" "$M/$BASE"; ok "$BASE (linked)"
+  else echo "  ↓ $BASE"; fetch "$HF/$BASE" "$M/$BASE" && ok "$BASE" || warn "download failed — the loop machine still continues jams; run again to resume"; fi
+else warn "skipped (--skip-loopai): the loop machine continues jams, a band for your voice gets a weaker bass"; fi
+
+# ---- 12. App + launcher -------------------------------------------------------------
+bold "12/12 App and launcher"
 rsync -a --delete --exclude "__pycache__" "$REPO_DIR/app/" "$MWS_HOME/app/" || die "copy failed"
 /usr/bin/python3 "$REPO_DIR/install/common/write_config.py" "$MWS_HOME" "$APP_PORT" "$WRITER_PORT" "$WMODEL" "$IMAGE_PORT" || die "config failed"
 cp "$REPO_DIR/install/macos/Manuwave Studio.command" "$MWS_HOME/Manuwave Studio.command" && chmod +x "$MWS_HOME/Manuwave Studio.command"

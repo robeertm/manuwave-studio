@@ -1873,7 +1873,7 @@ const msKeyNow = () => recKey(ms.rec, msClean());
 const msGain = () => ms.m.gain != null ? ms.m.gain : (ms.prev && ms.prev.key === msKeyNow() ? ms.prev.gain : ms.lastAutoGain);
 
 // ---- Speichern: jede Änderung sofort (3.5), aber NUR echte Änderungen ----
-const LS_TAB = "nf_tab";                       // "studio" | "master"
+const LS_TAB = "nf_tab";                       // "studio" | "master" | "selber" | "loops"
 const LS_MS_TRACK = "nf_mastering_track";      // zuletzt gemasterter Track
 const LS_MS_PENDING = "nf_mastering_pending";  // { id, m } — noch nicht in IndexedDB angekommen
 function msBefore(step = false) {
@@ -2131,6 +2131,19 @@ window.mwsLibrary = {
     return rec;
   },
   master(id) { showTab("master"); openMaster(id); },
+  // 3.17: Loop-Maschine → die Musik-KI baut weiter. Läuft wie jeder Render über die Warteschlange (Fortschritt im Studio,
+  // Abholen, Cover, Wasserzeichen) — der fertige Song ist ein KI-Track (Herkunft nicht "eigen").
+  canWeiter: () => macCan("weiter"),
+  connected: () => !!state.bridge.connected,
+  dits: () => String((state.bridge.info || {}).dits || "").split(",").filter(Boolean),
+  async weiter({ blob, request, title, note }) {
+    const meta = { title: String(title || "Loop").slice(0, 80), variant: "", group: "", note: note || "" };
+    const r = await api("/api/job/upload", { method: "POST", raw: blob, headers: { "x-nf-job": encodeURIComponent(JSON.stringify({ kind: "weiter", request, meta })) } });
+    if (!r.ok) throw new Error((r.data && r.data.message) || "HTTP " + r.status);
+    state.pending.push({ id: r.data.id, title: meta.title, variant: "", group: "", created: Date.now(), folder: targetFolder(), req: null, meta });
+    savePending(); renderQueue(); schedulePoll(1500);
+    return r.data.id;
+  },
   // 3.16: Songs mit MIDI-Abbild für "Selber machen"
   async midiTracks() { return (await libAll()).filter(r => r.midi && r.midi.tracks).sort((a, b) => (b.created || 0) - (a.created || 0))
     .map(r => ({ id: r.id, title: r.title, variant: r.variant || "", bpm: r.midi.bpm || 0 })); },
@@ -2172,14 +2185,18 @@ function downloadMidi(rec) {
 
 // ---- Tab, Trackwahl, Laden ----
 function showTab(name) {
-  const master = name === "master", selber = name === "selber";
+  const master = name === "master", selber = name === "selber", loops = name === "loops";
   if (!$("#selberView").classList.contains("hidden") && !selber && window.mwsSelber) window.mwsSelber.show(false);
-  $("#studioView").classList.toggle("hidden", master || selber);
+  // 3.17: vierter Tab "Loop-Maschine" (web/loops.js) — läuft weiter, wenn man den Tab wechselt (wie ein Gerät)
+  if (!$("#loopView").classList.contains("hidden") && !loops && window.mwsLoops) window.mwsLoops.show(false);
+  $("#studioView").classList.toggle("hidden", master || selber || loops);
   $("#masterView").classList.toggle("hidden", !master);
   $("#selberView").classList.toggle("hidden", !selber);
-  [["#tabStudio", !master && !selber], ["#tabMaster", master], ["#tabSelber", selber]].forEach(([id, on]) => { $(id).classList.toggle("on", on); $(id).setAttribute("aria-selected", String(on)); });
-  try { localStorage.setItem(LS_TAB, master ? "master" : selber ? "selber" : "studio"); } catch (e) {}
+  $("#loopView").classList.toggle("hidden", !loops);
+  [["#tabStudio", !master && !selber && !loops], ["#tabMaster", master], ["#tabSelber", selber], ["#tabLoops", loops]].forEach(([id, on]) => { $(id).classList.toggle("on", on); $(id).setAttribute("aria-selected", String(on)); });
+  try { localStorage.setItem(LS_TAB, master ? "master" : selber ? "selber" : loops ? "loops" : "studio"); } catch (e) {}
   if (selber) { msLeave().catch(() => {}); if (window.mwsSelber) window.mwsSelber.show(true); return; }
+  if (loops) { msLeave().catch(() => {}); if (window.mwsLoops) window.mwsLoops.show(true); return; }
   if (!master) {                       // zurück ins Studio: was eingestellt ist, gilt dort sofort
     msLeave().catch(() => {}).then(() => renderLibrary());
     return;
@@ -3013,7 +3030,7 @@ function init() {
   bindMaster();
   libReady = libSplitOld();
   msRecoverPending();
-  try { const lt = localStorage.getItem(LS_TAB); if (lt === "master" || lt === "selber") showTab(lt); } catch (e) {}
+  try { const lt = localStorage.getItem(LS_TAB); if (lt === "master" || lt === "selber" || lt === "loops") showTab(lt); } catch (e) {}
   $("#expFormats").addEventListener("change", updExpNote);
   $("#expToAlac").onclick = () => { $("#expFmt-alac").checked = true; updExpNote(); $("#expFmt-alac").focus(); };
   $("#exportDlg").addEventListener("click", (e) => { if (e.target.id === "exportDlg") closeExport(); });
@@ -3054,7 +3071,7 @@ function init() {
   };
   document.addEventListener("keydown", (e) => {
     if (e.code !== "Space" || ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(e.target.tagName)) return;
-    if (!$("#selberView").classList.contains("hidden")) return;
+    if (!$("#selberView").classList.contains("hidden") || !$("#loopView").classList.contains("hidden")) return;
     if (!$("#masterView").classList.contains("hidden")) { e.preventDefault(); $("#msPlay").click(); return; }   // im Mastering-Tab die Vorschau
     if (player.id) { e.preventDefault(); togglePause(); }
   });
