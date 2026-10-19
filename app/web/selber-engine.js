@@ -817,7 +817,9 @@ class PluckVoice {
       L[i] += out; R[i] += out;
       this.life++;
       if ((this.life & 1023) === 0) {
-        let e = 0; for (let k = 0; k < 64; k++) e += Math.abs(buf[(this.w + k * 13) & 4095]);
+        // 3.17.2: die schwingende Strecke messen (die letzten D Werte HINTER dem Schreibzeiger) — vorher las die Prüfung
+        const st = Math.max(1, Math.floor(this.D / 64)); let e = 0;
+        for (let k = 0; k < 64; k++) e += Math.abs(buf[(this.w - 1 - k * st + 8192) & 4095]);
         if (e < 1e-4) { this.active = false; break; }
       }
     }

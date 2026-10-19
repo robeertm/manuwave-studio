@@ -482,6 +482,9 @@ class Loops extends AudioWorkletProcessor {
       case "gp": { const g = this.gen(d.id); if (!g) break; g.p[d.k] = d.v; if (d.regen) g.dirty = true; g.cache = null; break; }
       case "patch": { const g = this.gen(d.id); if (!g || !g.ins) break; if (g.ins.p.engine !== d.patch.engine) { g.ins.panic(); g.ins = makeInstrument(this, d.patch); } else g.ins.setPatch(d.patch); break; }
       case "param": { const g = this.gen(d.id); if (g && g.ins) g.ins.set(d.k, d.v); break; }
+      case "bend": { const g = this.gen(d.id); if (g && g.ins) g.ins.bend = clamp(num(d.v, 0), -1, 1); break; }
+      case "mod": { const g = this.gen(d.id); if (g && g.ins) g.ins.mw = clamp(num(d.v, 0), 0, 1); break; }
+      case "pedal": { const g = this.gen(d.id); if (g && g.ins && g.ins.pedal) g.ins.pedal(!!d.on); break; }
       case "del": this.del(d.id); break;
       case "start": { const g = this.gen(d.id); if (!g) break; if (!this.run) this.begin(); g.stopAt = null;
         if (d.now || !this.playingAny()) { g.startAt = null; g.on = true; g.startBar = this.barNow(); g.dirty = g.dirty || !g.pat; g.cache = null; }

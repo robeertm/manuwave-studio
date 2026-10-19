@@ -6,7 +6,7 @@
 // Lautstärke), Master (DJ-Filter, Hall, Limiter), Mikrofon, Computertastatur und MIDI (auch Regler lernen), der
 // Autopilot, "Den Rest übernehmen" (Gesang/Vorgabe → Tonart → passende Generatoren) und die Aufnahme in die Bibliothek.
 // Zweisprachig aus sich heraus (T(de, en)), die Ansicht steht unter translate="no" (Regel aus 3.12).
-import { SCHEMA, KITS, MODELS, MODEL_GROUPS, PRESETS, defaults } from "./selber-presets.js";
+import { SCHEMA, KITS, MODELS, MODEL_GROUPS, PRESETS, defaults, knobIdle, markIdle, showValue, fixText } from "./selber-presets.js";
 
 const EN = window.MWS_LANG === "en";
 const T = (de, en) => (EN ? en : de);
@@ -124,7 +124,7 @@ const SYNC_STEPS = { "1/16": 1, "1/8": 2, "3/16": 3, "1/4": 4, "3/8": 6, "1/2": 
 const S = {
   set: null, ready: false, ctx: null, g: null, chains: new Map(), running: false, bar: -1, step: -1, barTime: 0, spb: 2,
   sel: null, octave: 0, vel: 0.85, kbDown: new Map(), midi: null, map: {}, learn: false, learnTarget: null,
-  mic: null, rec: null, auto: { log: "", plan: [] }, states: new Map(), recArm: null, saveT: 0, msgT: 0,
+  mic: null, rec: null, auto: { log: "", plan: [], fx: [] }, states: new Map(), recArm: null, saveT: 0, msgT: 0,
   tapUsers: new Set(), barWait: [], ki: { open: false, busy: false },
 };
 // Abgriff hinter dem Limiter: mehrere Nutzer (Aufnahme, Mitschnitt für die KI) — an, solange einer zuhört
@@ -381,7 +381,7 @@ function onEngine(d) {
     case "bar": S.bar = d.bar; S.barTime = d.time; S.spb = d.spb; autopilotBar(d); mixBar(d); paintBar(); { const w = S.barWait; S.barWait = []; for (const f of w) f(d); } break;
     case "pos": S.step = d.step; paintPos(); break;
     case "live": S.live = d.v; break;
-    case "run": S.running = d.on; if (!d.on) { S.states.clear(); S.bar = -1; } paintTransport(); paintCards(); break;
+    case "run": S.running = d.on; if (!d.on) { S.states.clear(); S.bar = -1; endAutoFx(); } paintTransport(); paintCards(); break;
     case "state": S.states.set(d.id, d); paintCard(genById(d.id)); paintTransport(); break;
     case "seedarm": status(T(`🎼 Einzählen … ab Takt ${d.at + 1} spielst du ein.`, `🎼 Count-in … you play from bar ${d.at + 1}.`)); S.recArm = { id: d.id, at: d.at, kind: "seed" }; paintCards(); break;
     case "seed": { const g = genById(d.id); S.recArm = null; if (g && d.notes.length) { g.seed = d.notes; g.seedKey = d.key; changed(); }
@@ -578,6 +578,7 @@ async function takeOver(src) {
     const key = detectKey(notes, { root: S.set.root, scale: S.set.scale });
     if (key) { S.set.root = key.r; S.set.scale = key.scale; }
   }
+  endAutoFx();
   const st = STYLES[S.set.style] || STYLES.house;          // das Tempo bleibt deins (deine Takte und Schleifen laufen darin)
   S.set.prog = st.prog;
   if (notes && notes.length && S.set.scale === "major" && ["i6", "i4", "i76", "i3", "iiv"].includes(S.set.prog)) S.set.prog = "pop";
@@ -595,6 +596,7 @@ async function takeOver(src) {
 async function surprise() {
   if (!(await ensureAudio())) return;
   const keys = Object.keys(STYLES), sk = keys[Math.floor(Math.random() * keys.length)], st = STYLES[sk];
+  endAutoFx();
   stopAll(true);
   for (const g of S.set.gens.slice()) if (["beat", "bass", "chords", "arp", "melody"].includes(g.kind)) { post({ t: "del", id: g.id }); dropChain(g.id); S.set.gens = S.set.gens.filter(x => x !== g); }
   S.set.style = sk; S.set.bpm = st.bpm; S.set.root = Math.floor(Math.random() * 12); S.set.scale = Math.random() < 0.7 ? "minor" : "major"; S.set.prog = st.prog;
@@ -614,11 +616,14 @@ function pickLead() { const L = ["mono|Leiter-Lead", "minimoog|Singender Lead", 
 // Autopilot: arrangiert im Takt — tauscht Generatoren, Breakdown mit Filterfahrt, Steigerung vor dem Drop, frische Muster
 // =====================================================================================================
 function autopilotBar(d) {
-  const A = S.set.auto; if (!A || !A.on || !S.g) return;
-  const B = d.bar, t0 = d.time, bl = d.spb, now = S.ctx.currentTime;
-  // geplante Schritte für den nächsten Takt
-  for (const p of S.auto.plan.filter(x => x.bar === B + 1)) p.fn(t0 + bl);
+  if (!S.g) return;
+  const A = S.set.auto, B = d.bar, t0 = d.time, bl = d.spb, now = S.ctx.currentTime;
+  // geplante Schritte für den nächsten Takt (auch nach dem Ausschalten: ein begonnener Effekt endet sauber)
+  for (const p of S.auto.plan.filter(x => x.bar <= B + 1)) p.fn(Math.max(now + 0.02, t0 + bl));
   S.auto.plan = S.auto.plan.filter(x => x.bar > B + 1);
+  // 3.17.2 Wächter: kein Effekt läuft, aber ein Autopilot-Filter steht nicht offen → öffnen (fehlende Tiefen nach Neuwürfeln)
+  if (!S.auto.fx.length && !(S.auto.calm >= B) && (S.g.apHP.frequency.value > 11 || S.g.apLP.frequency.value < 19500)) openAutoFilters();
+  if (!A || !A.on) return;
   if ((B + 1) % 8 !== 0 || B < 7) return;                // nur an Phrasengrenzen (alle 8 Takte)
   if (Math.random() > 0.35 + A.amt * 0.6) return;
   const on = S.set.gens.filter(g => genOn(g)), off = S.set.gens.filter(g => !genOn(g) && (g.kind !== "seed" || (g.seed && g.seed.length)) && (g.kind !== "audio" || g.nLayers));
@@ -630,12 +635,15 @@ function autopilotBar(d) {
     for (const g of core) post({ t: "stop", id: g.id });
     const lp = S.g.apLP.frequency;
     lp.cancelScheduledValues(now); lp.setValueAtTime(lp.value, now); lp.setTargetAtTime(700, t0 + bl, bl * 1.2);
-    S.auto.plan.push({ bar: at + 4, fn: (t) => { for (const g of core) post({ t: "start", id: g.id }); lp.cancelScheduledValues(t - 0.05); lp.setValueAtTime(lp.value, t - 0.05); lp.exponentialRampToValueAtTime(20000, t + 0.02); } });
+    // 3.17.2: als laufender Effekt geführt — endet sicher (Würfeln, Stopp, Autopilot aus, Set-Wechsel), Beat und Bass kommen wieder
+    S.auto.fx.push({ kind: "breakdown", until: at + 4, stopped: core.map(g => g.id) });
+    S.auto.plan.push({ bar: at + 4, fn: (t) => { for (const g of core) post({ t: "start", id: g.id }); lp.cancelScheduledValues(t - 0.05); lp.setValueAtTime(lp.value, t - 0.05); lp.exponentialRampToValueAtTime(20000, t + 0.02); S.auto.fx = S.auto.fx.filter(x => x.kind !== "breakdown"); S.auto.calm = at + 5; } });
     say("Breakdown — Beat und Bass setzen 4 Takte aus", "Breakdown — beat and bass drop out for 4 bars");
   } else if (r < 0.45) {
     // Steigerung: 4 Takte Hochpass hoch, dann Drop
     const hp = S.g.apHP.frequency; hp.cancelScheduledValues(now); hp.setValueAtTime(Math.max(10, hp.value), t0 + bl); hp.exponentialRampToValueAtTime(1400, t0 + bl * 5);
-    S.auto.plan.push({ bar: at + 4, fn: (t) => { hp.cancelScheduledValues(t - 0.05); hp.setValueAtTime(10, t); } });
+    S.auto.fx.push({ kind: "build", until: at + 4 });
+    S.auto.plan.push({ bar: at + 4, fn: (t) => { hp.cancelScheduledValues(t - 0.05); hp.setValueAtTime(10, t); S.auto.fx = S.auto.fx.filter(x => x.kind !== "build"); S.auto.calm = at + 5; } });
     say("Steigerung — 4 Takte bis zum Drop", "Build-up — 4 bars to the drop");
   } else if (r < 0.75 && (on.length > 2 || off.length)) {
     const outG = on.filter(g => g.kind !== "beat" && g.kind !== "bass");
@@ -894,6 +902,10 @@ function onMidi(ev) {
     if (on) noteOn(d1, d2 / 127).then(nn => midiHeld.set(d1, nn)); else { noteOff(d1, midiHeld.get(d1)); midiHeld.delete(d1); }
     return;
   }
+  if (type === 0xe0) { const g = playTarget(); if (g) post({ t: "bend", id: g.id, v: ((d2 << 7) | d1) / 8192 - 1 }); return; }
+  if (type === 0xb0 && !S.map["cc:" + (st & 15) + ":" + d1] && (d1 === 1 || d1 === 64)) {
+    const g = playTarget(); if (g) post(d1 === 1 ? { t: "mod", id: g.id, v: d2 / 127 } : { t: "pedal", id: g.id, on: d2 >= 64 }); return;
+  }
   if (type === 0xb0) {
     const sp = S.map["cc:" + (st & 15) + ":" + d1]; if (!sp) return;
     const g = genById(sp.id); if (!g) return;
@@ -932,34 +944,42 @@ function knob(p, value, onChange, opts = {}) {
   const mk = (cls) => { const c = document.createElementNS("http://www.w3.org/2000/svg", "circle"); c.setAttribute("cx", size / 2); c.setAttribute("cy", size / 2); c.setAttribute("r", R); c.setAttribute("class", cls); svg.append(c); return c; };
   const track = mk("kt"), arc = mk("ka"), marc = mk("km"); track.setAttribute("stroke-dasharray", `${C * A} ${C}`);
   const dot = document.createElementNS("http://www.w3.org/2000/svg", "line"); dot.setAttribute("class", "kd"); svg.append(dot);
-  // 3.17.1: was gerade KLINGT (Wobble, Autopilot, LFO, Einrasten, Tor …) — leuchtender Punkt + dünner Bogen vom eingestellten Wert
+  // 3.17.2: dreht die Automatik (Wobble, Autopilot, LFO, Einrasten, Tor …), dreht sich der Regler mit: Zeiger und Bogen zeigen,
+  // was KLINGT; die eigene Einstellung bleibt als kleiner Punkt am Ring stehen (+ dünner Bogen dorthin) — wie ein Motorregler
   const mdot = document.createElementNS("http://www.w3.org/2000/svg", "circle"); mdot.setAttribute("class", "kl"); mdot.setAttribute("r", "3"); svg.append(mdot);
   marc.style.visibility = mdot.style.visibility = "hidden";
   const face = h("div", { class: "sb-kface", id, role: "slider", tabindex: "0", "aria-label": lab, "aria-valuemin": p.min, "aria-valuemax": p.max }); face.append(svg);
   const val = h("span", { class: "sb-kval" });
   wrap.append(face, h("label", { class: "sb-klab", for: id, text: lab }), val);
-  let v = value;
+  let v = value, live = null, liveShown = false, liveT = 0, touchT = 0;
   const paint = () => {
-    const x = clamp(toPos(p, v), 0, 1), bip = p.min < 0 && p.max > 0, zero = bip ? toPos(p, 0) : 0, a0 = Math.min(zero, x), a1 = Math.max(zero, x);
+    const x = clamp(toPos(p, liveShown ? live : v), 0, 1), bip = p.min < 0 && p.max > 0, zero = bip ? toPos(p, 0) : 0, a0 = Math.min(zero, x), a1 = Math.max(zero, x);
     arc.setAttribute("stroke-dasharray", `${Math.max(0.001, (a1 - a0) * C * A)} ${C}`); arc.setAttribute("stroke-dashoffset", `${-a0 * C * A}`);
     const ang = (135 + x * 270) * Math.PI / 180, cx = size / 2, cy = size / 2;
     dot.setAttribute("x1", cx + Math.cos(ang) * (R - 7)); dot.setAttribute("y1", cy + Math.sin(ang) * (R - 7)); dot.setAttribute("x2", cx + Math.cos(ang) * (R + 1)); dot.setAttribute("y2", cy + Math.sin(ang) * (R + 1));
-    val.textContent = fmt(p, v); face.setAttribute("aria-valuenow", v); face.setAttribute("aria-valuetext", fmt(p, v));
+    if (!liveShown) val.textContent = fmt(p, v);
+    face.setAttribute("aria-valuenow", v); face.setAttribute("aria-valuetext", fmt(p, v));
   };
-  let live = null, liveShown = false, liveT = 0, touchT = 0;
   const paintLive = () => {
     const x0 = clamp(toPos(p, v), 0, 1), x1 = live == null ? x0 : clamp(toPos(p, live), 0, 1), show = Math.abs(x1 - x0) > 0.006;
-    if (show !== liveShown) { liveShown = show; marc.style.visibility = mdot.style.visibility = show ? "visible" : "hidden"; wrap.classList.toggle("mod", show); if (!show) val.textContent = fmt(p, v); }
+    if (show !== liveShown) { liveShown = show; marc.style.visibility = mdot.style.visibility = show ? "visible" : "hidden"; wrap.classList.toggle("mod", show); }
+    paint();                                            // Zeiger und Bogen: klingender Wert (oder eingestellter, wenn nichts dreht)
     if (!show) return;
-    const a0 = Math.min(x0, x1), a1 = Math.max(x0, x1), cx = size / 2, ang = (135 + x1 * 270) * Math.PI / 180;
+    const a0 = Math.min(x0, x1), a1 = Math.max(x0, x1), cx = size / 2, ang = (135 + x0 * 270) * Math.PI / 180;
     marc.setAttribute("stroke-dasharray", `${Math.max(0.001, (a1 - a0) * C * A)} ${C}`); marc.setAttribute("stroke-dashoffset", `${-a0 * C * A}`);
     mdot.setAttribute("cx", cx + Math.cos(ang) * R); mdot.setAttribute("cy", cx + Math.sin(ang) * R);
     // die Zahl zeigt den klingenden Wert (ruhig: höchstens ~8× je Sekunde); kurz nach dem Drehen den eingestellten
     const now = performance.now();
     if (now - touchT > 1500 && now - liveT > 120) { liveT = now; val.textContent = fmt(p, live); }
   };
-  const set = (nv) => { nv = clamp(nv, p.min, p.max); touchT = performance.now(); if (nv === v) return; v = nv; paint(); paintLive(); onChange(v); };
-  wrap.setValue = (nv) => { v = nv; paint(); paintLive(); };
+  const set = (nv) => { nv = clamp(nv, p.min, p.max); touchT = performance.now(); if (nv === v) return; v = nv; paintLive(); val.textContent = fmt(p, v); onChange(v); };
+  wrap.setValue = (nv) => { v = nv; paintLive(); };
+  // sichtbar hinüberdrehen (Auto-Mix): in ~0,4 s vom alten zum neuen Wert, wie von Hand
+  wrap.glideTo = (nv) => {
+    const a = toPos(p, v), b = toPos(p, nv), t0 = performance.now();
+    const step = (now) => { const k = Math.min(1, (now - t0) / 400), e = k * k * (3 - 2 * k); v = k >= 1 ? nv : fromPos(p, a + (b - a) * e); paintLive(); if (!liveShown) val.textContent = fmt(p, v); if (k < 1) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  };
   wrap.setLive = (lv) => { live = lv == null || !isFinite(lv) ? null : lv; paintLive(); };
   wrap.liveValue = () => (liveShown ? live : null);
   const posAt = (e) => {
@@ -980,11 +1000,14 @@ function knob(p, value, onChange, opts = {}) {
   face.addEventListener("pointermove", (e) => { if (!drag) return; if (!(e.buttons & 1)) { drag = null; return; } set(fromPos(p, drag.x0 + (drag.y - e.clientY) / 900)); });
   const end = () => { drag = null; };
   face.addEventListener("pointerup", end); face.addEventListener("pointercancel", end); face.addEventListener("lostpointercapture", end);
-  face.addEventListener("wheel", (e) => { e.preventDefault(); set(fromPos(p, toPos(p, v) - Math.sign(e.deltaY) * (e.shiftKey ? 0.005 : 0.03))); }, { passive: false });
+  // 3.17.2: gestufte Regler (Oktave, Halbton, Stimmen …) — ein Rad-/Tastenschritt war kleiner als eine halbe Stufe und wurde
+  // zurückgerundet: Mausrad und Pfeiltasten taten nichts. Jetzt mindestens eine Stufe.
+  const nudge = (d) => { let nv = fromPos(p, toPos(p, v) + d); if (p.st && nv === v) nv = clamp(v + Math.sign(d) * p.st, p.min, p.max); return nv; };
+  face.addEventListener("wheel", (e) => { e.preventDefault(); set(nudge(-Math.sign(e.deltaY) * (e.shiftKey ? 0.005 : 0.03))); }, { passive: false });
   face.addEventListener("keydown", (e) => {
     const stp = e.shiftKey ? 0.01 : 0.05;
-    if (e.key === "ArrowUp" || e.key === "ArrowRight") { e.preventDefault(); set(fromPos(p, toPos(p, v) + stp)); }
-    else if (e.key === "ArrowDown" || e.key === "ArrowLeft") { e.preventDefault(); set(fromPos(p, toPos(p, v) - stp)); }
+    if (e.key === "ArrowUp" || e.key === "ArrowRight") { e.preventDefault(); set(nudge(stp)); }
+    else if (e.key === "ArrowDown" || e.key === "ArrowLeft") { e.preventDefault(); set(nudge(-stp)); }
     else if (e.key === "Enter") set(p.def);
   });
   paint();
@@ -1001,12 +1024,61 @@ function toggle(p, value, onChange) {
   b.addEventListener("click", () => { const on = !b.classList.contains("on"); b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); onChange(on); });
   return b;
 }
+// 3.17.2: Regler der Loop-Maschine selbst, die gerade nicht wirken (Muster wie knobIdle für die Instrumente)
+function loopIdle(g, pk) {
+  const num = (x, d) => (typeof x === "number" ? x : d), [w, k] = pk.split(":"), p = g.p, f = g.fx, R = (de, en, fix) => ({ de, en, fix: fix && { [w]: fix } });
+  if (w === "s") { const r = g.patch ? knobIdle(g.patch.engine, k, g.patch) : null; return r && { ...r, fix: r.fix && { s: r.fix } }; }
+  if (w === "fx") {
+    if (k === "wdepth" && !SYNC_STEPS[f.wob]) return R("wirkt, sobald Wobble läuft", "works once wobble runs", { wob: "1/4" });
+    if ((k === "etime" || k === "efb") && !(f.echo > 0)) return R("wirkt, sobald Echo über 0 ist", "works once echo is above 0", { echo: 0.25 });
+    return null;
+  }
+  if (g.kind !== "osc") return null;
+  const wave = p.wave || "saw", noise = /noise|pink|brown/.test(wave), lsync = p.lsync && p.lsync !== "off";
+  if (noise && /^(freq|snap|fine|uni|det|sub|pw|fmr|fma|glide|drift)$/.test(k)) return R("wirkt nicht bei Rauschen (Welle)", "has no effect on noise (wave)");
+  if (k === "pw" && wave !== "square") return R("wirkt bei Welle Rechteck/Puls", "works with the square/pulse wave", { wave: "square" });
+  if (k === "uni" && wave === "supersaw") return R("Supersaw hat immer 7 Stimmen", "supersaw always has 7 voices");
+  if (k === "det" && wave !== "supersaw" && !(num(p.uni, 1) > 1)) return R("wirkt ab 2 Stimmen", "works from 2 voices", { uni: 3 });
+  if (k === "fmr" && !(num(p.fma, 0) > 0) && p.ldest !== "fm") return R("wirkt, sobald die FM-Menge über 0 ist", "works once the FM amount is above 0", { fma: 0.3 });
+  if (k === "gatelen" && (p.gate || "off") === "off") return R("wirkt, sobald das Tor läuft", "works once the gate runs", { gate: "1/8" });
+  if (/^(lshape|lrate|lsync|lamt)$/.test(k) && (p.ldest || "off") === "off") return R("wirkt, sobald der LFO ein Ziel hat (LFO-Ziel: aus)", "works once the LFO has a target (LFO target: off)");
+  if (k === "ldest" && !(num(p.lamt, 0) > 0)) return { ...R("wirkt, sobald die LFO-Menge über 0 ist", "works once the LFO amount is above 0", { lamt: 0.3 }), opener: true };   // Einschalter: hell
+  if (/^(lshape|lrate|lsync)$/.test(k) && !(num(p.lamt, 0) > 0)) return R("wirkt, sobald die LFO-Menge über 0 ist", "works once the LFO amount is above 0", { lamt: 0.3 });
+  if (k === "lrate" && lsync) return R("läuft im Takt — „LFO im Takt“ auf frei stellen", "runs in tempo — set “LFO sync” to free");
+  return null;
+}
+function specOf(g, pk) {
+  const [w, k] = pk.split(":");
+  if (w === "fx") return FX.find(x => x.k === k);
+  if (w === "s") { for (const sec of SCHEMA[g.patch.engine] || []) for (const q of sec.p) if (q.k === k) return q; return null; }
+  return KIND[g.kind].p.find(x => x.k === k);
+}
+function markCard(g) { const c = q("#lpCard-" + g.id); if (c) markIdle(c, (pk) => loopIdle(g, pk), EN); }
+// vor dem Setzen fragen: wirkte der Regler gerade nicht? → nach dem Setzen die Abhängigkeit dazuschalten, sichtbar
+function withFix(g, pk, apply) {
+  const idle = loopIdle(g, pk);
+  apply();
+  if (idle && idle.fix && !idle.soft) {
+    const [w] = pk.split(":"), fix = idle.fix[w], c = q("#lpCard-" + g.id);
+    for (const [fk, fv] of Object.entries(fix)) {
+      if (w === "fx") setFx(g, fk, fv);
+      else if (w === "s") { g.patch[fk] = fv; post({ t: "param", id: g.id, k: fk, v: fv }); changed(); }
+      else setGenParam(g, fk, fv, specOf(g, "p:" + fk));
+      if (c) showValue(c.querySelector(`[data-pk="${w}:${fk}"]`), fv);
+    }
+    status(T("🔌 Dazugeschaltet, damit du es hörst: ", "🔌 Switched on so you can hear it: ") + fixText(fix, (x) => specOf(g, w + ":" + x), EN));
+  }
+  markCard(g);
+}
 function control(g, p, isFx) {
-  const val = isFx ? g.fx[p.k] : g.p[p.k];
-  const cb = (v) => (isFx ? setFx(g, p.k, v) : setGenParam(g, p.k, v, p));
-  if (p.t === "knob") return knob(p, val, cb, { lk: `${g.id}:${isFx ? "fx" : "p"}:${p.k}`, learn: { id: g.id, k: p.k, fx: !!isFx } });
-  if (p.t === "sel") return selectBox(p, val, (v) => { cb(v); if (p.k === "bars" && g.kind === "seed") paintCard(g); });
-  return toggle(p, val, cb);
+  const val = isFx ? g.fx[p.k] : g.p[p.k], pk = (isFx ? "fx:" : "p:") + p.k;
+  const cb = (v) => withFix(g, pk, () => (isFx ? setFx(g, p.k, v) : setGenParam(g, p.k, v, p)));
+  let el;
+  if (p.t === "knob") el = knob(p, val, cb, { lk: `${g.id}:${isFx ? "fx" : "p"}:${p.k}`, learn: { id: g.id, k: p.k, fx: !!isFx } });
+  else if (p.t === "sel") el = selectBox(p, val, (v) => { cb(v); if (p.k === "bars" && g.kind === "seed") paintCard(g); });
+  else el = toggle(p, val, cb);
+  el.dataset.pk = pk;
+  return el;
 }
 
 // =====================================================================================================
@@ -1065,7 +1137,7 @@ async function openSet(id) {
   S.set = fixSet(s); await afterLoad();
 }
 async function afterLoad() {
-  S.states.clear(); S.sel = null; S.auto = { log: "", plan: [] };
+  if (S.auto) endAutoFx(); S.states.clear(); S.sel = null; S.auto = { log: "", plan: [], fx: [] };
   q("#lpName").value = S.set.name;
   for (const g of S.set.gens) if (g.kind === "audio") { const ls = await loadLayers(g); g.nLayers = ls.length; if (ls.length) { g.loopBars = ls[0].bars; g.loopBpm = ls[0].bpm; } }
   if (S.g) {
@@ -1132,9 +1204,20 @@ function paintTransport() {
   val("#lpProg", S.set.prog); val("#lpPer", S.set.per); val("#lpStyle", S.set.style || "house");
   renderAutoLog(); paintBar();
 }
+// 3.17.2: Autopilot-Effekte beenden — Filter auf, vom Breakdown angehaltene Generatoren wieder an (wenn der Takt läuft und gewünscht)
+function openAutoFilters() {
+  if (!S.g) return;
+  const now = S.ctx.currentTime;
+  for (const [f, v] of [[S.g.apLP.frequency, 20000], [S.g.apHP.frequency, 10]]) { f.cancelScheduledValues(now); f.setValueAtTime(f.value, now); f.setTargetAtTime(v, now, 0.05); }
+}
+function endAutoFx({ restart = false } = {}) {
+  const fx = S.auto.fx || [];
+  if (restart && S.running) for (const x of fx) for (const id of x.stopped || []) { const g = genById(id); if (g && !genOn(g)) post({ t: "start", id }); }
+  S.auto.fx = []; S.auto.plan = []; S.auto.calm = -1;
+  openAutoFilters();
+}
 function resetAuto() {
-  S.auto.plan = []; S.auto.log = "";
-  if (S.g) { const now = S.ctx.currentTime; for (const [f, v] of [[S.g.apLP.frequency, 20000], [S.g.apHP.frequency, 10]]) { f.cancelScheduledValues(now); f.setTargetAtTime(v, now, 0.05); } }
+  endAutoFx({ restart: true }); S.auto.log = "";
 }
 function paintBar() {
   const e = q("#lpBar"); if (!e) return;
@@ -1224,6 +1307,7 @@ function card(g) {
   c.append(h("h4", { text: T("Klang live", "Live sound") }), fx);
   c.append(h("div", { class: "lp-synth" }));
   if (g.openSynth) renderSynth(g, c);
+  markIdle(c, (pk) => loopIdle(g, pk), EN);
   return c;
 }
 // Alle Regler des gewählten Instruments (wie in "Selber machen")
@@ -1235,13 +1319,13 @@ function renderSynth(g, c) {
   for (const sec of SCHEMA[g.patch.engine] || []) {
     const row = h("div", { class: "lp-knobs" });
     for (const p of sec.p) {
-      const cb = (v) => { g.patch[p.k] = v; post({ t: "param", id: g.id, k: p.k, v }); changed(); };
-      if (p.t === "knob") row.append(knob(p, g.patch[p.k] ?? p.def, cb));
-      else if (p.t === "sel") row.append(selectBox(p, g.patch[p.k] ?? p.def, cb));
-      else row.append(toggle(p, g.patch[p.k] ?? p.def, cb));
+      const cb = (v) => withFix(g, "s:" + p.k, () => { g.patch[p.k] = v; post({ t: "param", id: g.id, k: p.k, v }); changed(); });
+      const el = p.t === "knob" ? knob(p, g.patch[p.k] ?? p.def, cb) : p.t === "sel" ? selectBox(p, g.patch[p.k] ?? p.def, cb) : toggle(p, g.patch[p.k] ?? p.def, cb);
+      el.dataset.pk = "s:" + p.k; row.append(el);
     }
     box.append(h("h4", { text: EN ? sec.en : sec.de }), row);
   }
+  markCard(g);
 }
 function paintCards() { for (const g of S.set.gens) paintCard(g); }
 function paintCard(g) {
@@ -1421,11 +1505,11 @@ function finishMix() {
   for (const id of M.ids) {
     const g = genById(id), a = M.acc[id]; if (!g || !a || a.length < 12) continue;
     a.sort((x, y) => y - x);
-    const top = a.slice(0, Math.max(1, Math.round(a.length * 0.6)));      // laute 60 %: Pausen eines Arpeggios zählen nicht
+    const top = a.slice(0, Math.max(1, Math.round(a.length * 0.25)));     // 3.17.2: lauteste 25 % (aktiver Pegel) — mit 60 % maß der Auto-Mix kurze Stabs 8 dB zu leise und drehte sie an den Anschlag
     const L = 10 * Math.log10(top.reduce((x, y) => x + y, 0) / top.length);
     const v = clamp(Math.round((mixTarget(g) - L) * 2) / 2, -40, 6);
     g.mixL = Math.round(L * 10) / 10; g.fx.vol = v; applyFx(g, false, true);
-    const k = q(`[data-lk="${g.id}:fx:vol"]`); if (k && k.setValue) k.setValue(v);
+    const k = q(`[data-lk="${g.id}:fx:vol"]`); if (k && k.glideTo) k.glideTo(v); else if (k && k.setValue) k.setValue(v);
     done.push(`${g.name} ${v > 0 ? "+" : ""}${String(v).replace(".", EN ? "." : ",")} dB`);
   }
   if (done.length) {
@@ -1486,4 +1570,4 @@ export function showLoops(on) {
   else for (const [code, x] of [...S.kbDown]) { S.kbDown.delete(code); noteOff(x.n, x.nn); }
 }
 if (tabVisible()) showLoops(true);
-window.mwsLoops = { show: showLoops, state: S, startAll, stopAll, addGen: (k, o) => addGen(k, o), takeOver, surprise, yinNotes, detectKey, autoMix, running: () => S.set && S.set.gens.some(genOn) };
+window.mwsLoops = { show: showLoops, state: S, startAll, stopAll, addGen: (k, o) => addGen(k, o), takeOver, surprise, yinNotes, detectKey, autoMix, mixTarget, running: () => S.set && S.set.gens.some(genOn) };

@@ -6,7 +6,7 @@
 // → WAV → Bibliothek; der Mac veredelt ihn wie jeden Track, mit Herkunft "selbst eingespielt", nicht KI).
 // Die Oberfläche ist zweisprachig aus sich heraus (T(de, en)) und steht unter translate="no" — der Laufzeit-Übersetzer
 // fasst sie nicht an (Regel aus 3.12: eine Übersetzung ändert, was der Code zurückliest).
-import { SCHEMA, PAD_PARAMS, DRUM_MODELS, GM_TO_PAD, KITS, MODELS, MODEL_GROUPS, PRESETS, defaults, demoProject } from "./selber-presets.js";
+import { SCHEMA, PAD_PARAMS, DRUM_MODELS, GM_TO_PAD, KITS, MODELS, MODEL_GROUPS, PRESETS, defaults, demoProject, knobIdle, markIdle, showValue, fixText } from "./selber-presets.js";
 
 const EN = window.MWS_LANG === "en";
 const T = (de, en) => (EN ? en : de);
@@ -525,11 +525,14 @@ function knob(p, value, onChange, opts = {}) {
   });
   const end = () => { if (drag) { drag = null; if (opts.onEnd) opts.onEnd(v); } };
   face.addEventListener("pointerup", end); face.addEventListener("pointercancel", end); face.addEventListener("lostpointercapture", end);
-  face.addEventListener("wheel", (e) => { e.preventDefault(); set(fromPos(p, toPos(p, v) - Math.sign(e.deltaY) * (e.shiftKey ? 0.005 : 0.03))); }, { passive: false });
+  // 3.17.2: gestufte Regler (Oktave, Halbton, Stimmen …) — ein Rad-/Tastenschritt war kleiner als eine halbe Stufe und wurde
+  // zurückgerundet: Mausrad und Pfeiltasten taten nichts. Jetzt mindestens eine Stufe.
+  const nudge = (d) => { let nv = fromPos(p, toPos(p, v) + d); if (p.st && nv === v) nv = clamp(v + Math.sign(d) * p.st, p.min, p.max); return nv; };
+  face.addEventListener("wheel", (e) => { e.preventDefault(); set(nudge(-Math.sign(e.deltaY) * (e.shiftKey ? 0.005 : 0.03))); }, { passive: false });
   face.addEventListener("keydown", (e) => {
     const stp = e.shiftKey ? 0.01 : 0.05;
-    if (e.key === "ArrowUp" || e.key === "ArrowRight") { e.preventDefault(); set(fromPos(p, toPos(p, v) + stp)); }
-    else if (e.key === "ArrowDown" || e.key === "ArrowLeft") { e.preventDefault(); set(fromPos(p, toPos(p, v) - stp)); }
+    if (e.key === "ArrowUp" || e.key === "ArrowRight") { e.preventDefault(); set(nudge(stp)); }
+    else if (e.key === "ArrowDown" || e.key === "ArrowLeft") { e.preventDefault(); set(nudge(-stp)); }
     else if (e.key === "Home") set(p.min); else if (e.key === "End") set(p.max); else if (e.key === "Enter") set(p.def);
   });
   paint();
@@ -556,10 +559,16 @@ function paramSpec(t, k) {
   return null;
 }
 function setParam(t, k, v, fromMidi) {
+  const idle = knobIdle(t.patch.engine, k, t.patch);           // 3.17.2: wirkte er eben noch nicht? dann gleich die Abhängigkeit dazu
   if (t.kind === "drums" && /^v\d+\./.test(k)) { const [vs, f] = k.split("."); const i = +vs.slice(1); t.patch.kit[i] = Object.assign({}, t.patch.kit[i], { [f]: v }); }
   else t.patch[k] = v;
   post({ t: "param", tr: t.id, k, v });
   if (fromMidi) { const kn = q(`[data-pk="${CSS.escape(k)}"]`); if (kn && kn.setValue && t.id === S.sel) kn.setValue(v); }
+  if (idle && idle.fix && !idle.soft) {
+    for (const [fk, fv] of Object.entries(idle.fix)) { t.patch[fk] = fv; post({ t: "param", tr: t.id, k: fk, v: fv }); if (t.id === S.sel) showValue(q(`#sbEditor [data-pk="${CSS.escape(fk)}"]`), fv); }
+    status(T("🔌 Dazugeschaltet, damit du es hörst: ", "🔌 Switched on so you can hear it: ") + fixText(idle.fix, (x) => paramSpec(t, x), EN));
+  }
+  if (t.id === S.sel) markIdle(q("#sbEditor"), (x) => knobIdle(t.patch.engine, x, t.patch), EN);
   t.presetName = t.presetName && !t.presetName.endsWith(" *") ? t.presetName + " *" : t.presetName;
   changed("none");
 }
@@ -971,6 +980,7 @@ function renderSound(body, t) {
   }
   body.append(grid);
   if (t.kind === "drums") renderPadPanel(body);
+  markIdle(grid, (x) => knobIdle(t.patch.engine, x, t.patch), EN);   // 3.17.2: was gerade nicht wirkt, ist abgedunkelt und sagt warum
 }
 function learnPick(spec, label, el) {
   S.learnTarget = { spec, label }; renderLearn();

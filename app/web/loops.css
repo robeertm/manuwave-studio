@@ -76,9 +76,12 @@
 .lp-radio.dis{opacity:.5;cursor:default}
 .lp-warn{color:var(--amber);margin:0}
 .lp-kibtn{border-color:var(--neon2)}
-/* 3.17.1: was gerade KLINGT, steht am Regler — dünner Bogen vom eingestellten Wert bis zum leuchtenden Punkt, Zahl in Generatorfarbe */
-.sb-kface .km{fill:none;stroke:#fff;stroke-opacity:.5;stroke-width:1.6;stroke-linecap:round}
-.sb-kface svg .kl{fill:#fff;transform-origin:center;transform:rotate(-135deg);filter:drop-shadow(0 0 3px var(--knob)) drop-shadow(0 0 2px var(--knob))}
+/* 3.17.2: dreht die Automatik, dreht sich der Regler mit (Zeiger + Bogen = was klingt, leuchtend); die eigene Einstellung bleibt
+   als kleiner Punkt am Ring stehen, ein dünner Bogen verbindet beide; die Zahl zeigt den klingenden Wert in Generatorfarbe */
+.sb-kface .km{fill:none;stroke:#fff;stroke-opacity:.45;stroke-width:1.4;stroke-linecap:round;stroke-dasharray:2 2}
+.sb-kface svg .kl{fill:#e8ecff;stroke:#0a0b12;stroke-width:1;transform-origin:center;transform:rotate(-135deg)}
+.sb-knob.mod .sb-kface .kd{stroke:#fff;filter:drop-shadow(0 0 3px var(--knob)) drop-shadow(0 0 2px var(--knob))}
+.sb-knob.mod .sb-kface .ka{filter:drop-shadow(0 0 5px var(--knob))}
 .sb-knob.mod .sb-kval{color:var(--knob);font-weight:600}
 /* 3.17.1: Oszillogramme an jeder Reglergruppe */
 .lp-scope{display:block;width:76px;height:22px;border-radius:5px;background:#0b0d16;border:1px solid var(--line);flex:0 0 auto}
