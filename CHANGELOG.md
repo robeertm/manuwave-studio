@@ -3,6 +3,29 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.17.2 — 2026-10-19 (bridge 3.17.0)
+
+### Fixed
+- **Loop machine lost all its lows.** Rolling *Surprise me* (or taking over, stopping, switching sets) in the middle of an
+  autopilot build-up left the master high-pass at 1400 Hz — measured −45 dB below 150 Hz instead of −2 dB, and *Mix* could
+  not help because it measures before that filter. Breakdowns and build-ups are now tracked effects that always end; a
+  guard opens a stuck autopilot filter on the next bar. Switching the autopilot off during a breakdown now brings beat and
+  bass back.
+- **Plucked strings stopped after 21 ms** (in *Make your own* too): the check whether a string still rings looked at the
+  empty part of its delay line. *Decay* and *Mute on release* now work.
+- **Stepped knobs** (octave, semitone, voices, unison …) did not move with the mouse wheel or arrow keys — one step was
+  smaller than half a notch and rounded back. Now at least one notch.
+- **Pitch bend, mod wheel and sustain pedal** from a MIDI keyboard now reach the selected generator in the loop machine.
+
+### Changed
+- **Knobs turn with the automation**: pointer and arc follow the sounding value while wobble, the autopilot, an LFO, key
+  snap or the gate move it; your own setting stays as a small dot on the ring. The auto mix turns the volume knob over
+  visibly.
+- **Knobs that have no effect right now are dimmed** and say why — oscillator 2 or 3 at level 0, pulse width without the
+  pulse wave, detune with one unison voice, LFO settings without a destination or amount, glide in poly mode, arpeggiator
+  settings with the arpeggiator off, and more (both in the loop machine and in *Make your own*). Turning one switches the
+  missing part on where that is unambiguous, e.g. oscillator 2 gets a level.
+
 ## 3.17.1 — 2026-10-19 (bridge 3.17.0)
 
 ### Added

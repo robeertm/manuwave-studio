@@ -181,3 +181,7 @@
   .sb-knob{width:58px}
 }
 @media (prefers-reduced-motion:reduce){ .sb-tbtn.rec.on,.sb-pat.queued{animation:none} .sb-kface{transition:none} }
+/* 3.17.2: Regler, die gerade nicht wirken (hängen an einem anderen, der aus steht) — abgedunkelt, der Hinweis sagt warum;
+   Drehen schaltet die Abhängigkeit dazu (knobIdle in selber-presets.js) */
+.sb-knob.idle,.sb-field.idle,.sb-tog.idle,.sb-dbar.idle{opacity:.38;transition:opacity .2s}
+.sb-knob.idle:hover,.sb-field.idle:hover,.sb-tog.idle:hover,.sb-dbar.idle:hover{opacity:.8}

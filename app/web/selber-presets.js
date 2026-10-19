@@ -129,6 +129,73 @@ export const SCHEMA = {
     { id: "kit", de: "Drum-Machine", en: "Drum machine", p: [K("drive", "Sättigung", "Saturation", 0, 1, 0.1, { u: "%" }), K("vol", "Pegel", "Level", 0, 1, 0.85, { u: "%" })] },
   ],
 };
+// einem anderen, der aus stand, z. B. alles von Oszillator 2 bei Pegel 0.) null = wirkt. Sonst { de, en } = warum,
+// optional fix = was man dazuschalten muss (nur wenn eindeutig) und soft = wirkt, braucht aber etwas von außen (Rad, Anschlag).
+export function knobIdle(eng, k, p) {
+  const v = (x, d) => (p[x] !== undefined ? p[x] : d), on = (x) => Number(v(x, 0)) > 0;
+  const R = (de, en, fix, soft, opener) => ({ de, en, fix, soft: !!soft, opener: !!opener });
+  let m;
+  // das Ziel ist der Einschalter des LFO: bleibt hell (opener), ein gewähltes Ziel bringt die Menge gleich mit
+  if ((m = /^l([12])dest$/.exec(k)) && !on("l" + m[1] + "amt")) return R(`wirkt, sobald die Menge von LFO ${m[1]} über 0 ist`, `works once the amount of LFO ${m[1]} is above 0`, { ["l" + m[1] + "amt"]: 0.3 }, false, true);
+  if ((m = /^l([12])(rate|shape|sync|amt)$/.exec(k))) {
+    const n = m[1], dest = v("l" + n + "dest", "off"), wtUse = n === "2" && eng === "va" && on("wtlfo") && (v("o1w", "saw") === "wt" || v("o2w", "saw") === "wt");
+    if (dest === "off" && !wtUse) return R(`wirkt, sobald LFO ${n} ein Ziel hat (Ziel: aus)`, `works once LFO ${n} has a destination (destination: off)`);
+    if (m[2] !== "amt" && !on("l" + n + "amt") && !wtUse) return R(`wirkt, sobald die Menge von LFO ${n} über 0 ist`, `works once the amount of LFO ${n} is above 0`, { ["l" + n + "amt"]: 0.3 });
+    if (m[2] === "rate" && v("l" + n + "sync", "off") !== "off") return R("läuft im Takt — „Im Takt“ auf frei stellen", "runs in tempo — set “Tempo sync” to free");
+    return null;
+  }
+  if (k === "glide" && v("mode", "poly") === "poly") return R("wirkt nur einstimmig (Stimmen: einstimmig oder legato)", "works only in mono or legato voicing");
+  if (k === "voices" && v("mode", "poly") !== "poly") return R("nur bei mehrstimmig", "only in poly voicing");
+  if (k === "pb") return R("Bereich fürs Pitchbend-Rad am MIDI-Keyboard", "range of the pitch-bend wheel on a MIDI keyboard", null, true);
+  if (k === "mw") return R("wirkt mit dem Modulationsrad am MIDI-Keyboard", "works with the mod wheel on a MIDI keyboard", null, true);
+  if (/^arp(rate|oct|gate|latch)$/.test(k) && v("arp", "off") === "off") return R("wirkt, sobald der Arpeggiator läuft (Modus: aus)", "works once the arpeggiator runs (mode: off)");
+  if (eng === "va") {
+    if (k === "o1pw" && v("o1w", "saw") !== "square") return R("wirkt bei Welle Rechteck/Puls", "works with the square/pulse wave", { o1w: "square" });
+    const o2 = on("o2lvl") || on("fm");
+    if (k === "o2pw" && (!o2 || v("o2w", "saw") !== "square")) return R("wirkt bei Oszillator 2 mit Pegel und Welle Rechteck/Puls", "works with oscillator 2 at a level and the square/pulse wave", { ...(o2 ? {} : { o2lvl: 0.5 }), o2w: "square" });
+    if (/^o2(w|oct|semi|fine|sync)$/.test(k) && !o2) return R("wirkt, sobald Oszillator 2 einen Pegel hat", "works once oscillator 2 has a level", { o2lvl: 0.5 });
+    if (/^o3(w|oct|semi|fine)$/.test(k) && !on("o3lvl")) return R("wirkt, sobald Oszillator 3 einen Pegel hat", "works once oscillator 3 has a level", { o3lvl: 0.5 });
+    if ((k === "unidet" || k === "unispread") && Number(v("uni", 1)) <= 1) return R("wirkt ab 2 Unisono-Stimmen", "works from 2 unison voices", { uni: 3 });
+    if (/^wt(set|pos|env|lfo)$/.test(k) && v("o1w", "saw") !== "wt" && !(v("o2w", "saw") === "wt" && o2)) return R("wirkt bei Welle Wavetable", "works with the wavetable wave", { o1w: "wt" });
+    if (/^f[adsr]$/.test(k) && !on("fenv") && Number(v("fenv", 0)) === 0) return R("wirkt, sobald die Filter-Hüllkurve eine Menge hat", "works once the filter envelope has an amount", { fenv: 0.4 });
+    if (k === "accent") return R("wirkt bei betonten Noten (Anschlag über 94 %, z. B. Acid-Bass)", "works on accented notes (velocity above 94 %, e.g. acid bass)", null, true);
+  }
+  if (eng === "fm" && (m = /^op([234])(ratio|fine|att|dec|sus|rel|vel)$/.exec(k)) && !on("op" + m[1] + "lvl")) return R(`wirkt, sobald Operator ${m[1]} einen Pegel hat`, `works once operator ${m[1]} has a level`, { ["op" + m[1] + "lvl"]: 0.4 });
+  if (eng === "organ" && /^perc(3|fast|soft)$/.test(k) && !v("perc", false)) return R("wirkt, sobald Perkussion an ist", "works once percussion is on", { perc: true });
+  return null;
+}
+
+// 3.17.2: Oberfläche — Regler, die gerade nicht wirken, abdunkeln und sagen warum (beide Ansichten: Loop-Maschine, Selber machen).
+// root: Behälter mit Elementen [data-pk]; idleOf(pk) → knobIdle-Ergebnis; en: englische Oberfläche
+export function markIdle(root, idleOf, en) {
+  if (!root) return;
+  for (const el of root.querySelectorAll("[data-pk]")) {
+    const r = idleOf(el.dataset.pk);
+    el.classList.toggle("idle", !!(r && !r.soft && !r.opener));
+    if (el.dataset.tip === undefined) el.dataset.tip = el.getAttribute("title") || "";
+    const tip = el.dataset.tip;
+    el.setAttribute("title", r ? (en ? r.en : r.de) + (r.fix ? (en ? " — turning it switches that on" : " — Drehen schaltet das dazu") : "") + (tip ? "\n" + tip : "") : tip);
+  }
+}
+// einen Regler/Schalter/eine Auswahl sichtbar auf einen Wert stellen (ohne Rückmeldung an den Klang — das macht der Aufrufer)
+export function showValue(el, v) {
+  if (!el) return;
+  if (el.setValue) { el.setValue(v); return; }
+  const sel = el.tagName === "SELECT" ? el : el.querySelector && el.querySelector("select");
+  if (sel) { sel.value = String(v); return; }
+  if (el.classList && el.classList.contains("sb-tog")) { el.classList.toggle("on", !!v); el.setAttribute("aria-pressed", String(!!v)); }
+}
+export function fixText(fix, specOf, en) {
+  return Object.entries(fix).map(([k, v]) => {
+    const q = specOf(k); const lab = q ? (en ? q.en : q.de) : k;
+    let t = String(v);
+    if (typeof v === "boolean") t = v ? (en ? "on" : "an") : (en ? "off" : "aus");
+    else if (q && q.opts) { const o = q.opts.find(x => String(x[0]) === String(v)); if (o) t = en ? o[2] : o[1]; }
+    else if (q && q.u === "%") t = Math.round(v * 100) + " %";
+    return `${lab} → ${t}`;
+  }).join(", ");
+}
+
 // Regler einer Drum-Stimme (Pad)
 export const PAD_PARAMS = [
   K("lvl", "Pegel", "Level", 0, 1, 0.8, { u: "%" }), K("pan", "Panorama", "Pan", -1, 1, 0, { u: "pan" }),
