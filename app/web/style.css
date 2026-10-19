@@ -353,8 +353,8 @@ body.has-now #app{padding-bottom:110px}
   .exp-opt{grid-template-columns:20px minmax(0,1fr)}
   .exp-opt .sub{grid-column:2 / 3}
   .ms-knobs,.exp-row{grid-template-columns:minmax(0,1fr)}
-  .tabs{align-self:stretch}
-  .tab{flex:1 1 0;padding:8px 10px}
+  .tabs{align-self:stretch;flex-wrap:wrap}
+  .tab{flex:1 1 calc(50% - 6px);padding:8px 10px}   /* 3.17: vier Tabs → zwei Reihen statt seitlich hinaus */
   .ms-time{margin-left:0}
   .hero{width:100%}
   /* Wähler auf dem Handy als gleichmäßiges Raster statt Umbruch mit einem Waisen-Knopf */

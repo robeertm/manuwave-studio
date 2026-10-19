@@ -58,7 +58,7 @@ try:
 except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.16.1"
+BRIDGE_VERSION = "3.17.0"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
@@ -645,6 +645,37 @@ class Engine:
                 raise RuntimeError("Modellserver ist nicht hochgekommen — Log in ~/NeonForge/")
         self.last_used = time.time()
 
+    def model_file(self, report, *wishes) -> str:
+        """3.17: das erste Klangmodell aus `wishes` (Kurznamen wie "xl-base"), das auf der Platte liegt. Kennt der laufende
+        Modellserver es noch nicht (er liest seinen Ordner nur beim Start) und haben wir ihn selbst gestartet, startet er
+        neu. → Dateiname oder "" (dann gilt das eingestellte Modell)."""
+        files = dit_files(self.cfg)
+        for w in wishes:
+            f = files.get(w)
+            if not f:
+                continue
+            known = self.known_dits()
+            if known is None or f in known:
+                return f
+            if self.own:
+                self.stop_own("neues Klangmodell %s" % f)
+                self.ensure(report)
+                known = self.known_dits()
+                if known is None or f in known:
+                    return f
+        return ""
+
+    def stop_own(self, why: str) -> None:
+        for p in self.own:
+            if p.poll() is None:
+                p.terminate()
+                try:
+                    p.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+                log("ace-server beendet (%s, PID %d)" % (why, p.pid))
+        self.own = []
+
     def maybe_stop_idle(self) -> None:
         """Nur selbst Gestartetes beenden — einen vom Music Generator gestarteten
         Modellserver fassen wir nie an, der gehört jemand anderem."""
@@ -764,6 +795,10 @@ class Engine:
     def repaint(self, request: dict, src_wav: bytes, tick):
         """3.14: Anbauen — Repaint mit Quell-Audio (multipart/form-data: request + audio). Das Sprachmodell wird dabei
         übersprungen; Caption und Liedtext steuern den neuen Teil. → WAV des ganzen Fensters (Quelle + Neues)."""
+        return self.with_source(request, src_wav, tick, "Anbau")
+
+    def with_source(self, request: dict, src_wav: bytes, tick, label: str):
+        """3.17: jede Aufgabe mit Quell-Audio (repaint, complete, …) — der Modellserver bekommt request + audio."""
         boundary = "mws" + uuid.uuid4().hex
         body = b"".join([
             ("--%s\r\nContent-Disposition: form-data; name=\"request\"\r\nContent-Type: application/json\r\n\r\n" % boundary).encode(),
@@ -772,7 +807,7 @@ class Engine:
             src_wav, b"\r\n", ("--%s--\r\n" % boundary).encode()])
         t0 = time.monotonic()
         _, raw = self._http("POST", self.synth + "/synth", raw=body, ctype="multipart/form-data; boundary=" + boundary, timeout=120)
-        ctype, raw = self._wait(self.synth, str(json.loads(raw)["id"]), "Anbau", t0, tick)
+        ctype, raw = self._wait(self.synth, str(json.loads(raw)["id"]), label, t0, tick)
         self.last_used = time.time()
         return self._part(ctype, raw, "audio/")
 
@@ -960,7 +995,7 @@ WM_MAGIC = "4e4601"
 WM_STRENGTH = 3
 AUFBEREITET_V = 2       # Fassung der Archiv-Aufbereitung (adeclip wenn beschnitten + leises Zeichen + 24 Bit)
 TAGS_VERSION = 1
-CAPS = "settings,export,cover,verify,nachruesten,archiv,master,loeschen,paket,web,master_merken,midi"
+CAPS = "settings,export,cover,verify,nachruesten,archiv,master,loeschen,paket,web,master_merken,midi,weiter"
 
 
 def caps_for(cfg: dict) -> str:
@@ -3515,6 +3550,181 @@ def render_long(cfg: dict, eng, srv, job: dict, tick):
     return audio, meta
 
 
+# =============================================================================
+# 3.17: Loop-Maschine → die Musik-KI baut weiter
+# =============================================================================
+# Zwei Wege — einsingen oder ein paar Takte vorgeben, die Maschine übernimmt den Rest:
+#   fortsetzen — dein Jam ist der Anfang, die Musik-KI spielt weiter (repaint nach hinten, ab dem Ende des Jams).
+#                🔑 gemessen 19.10.2026: Anfang = Jam (Korrelation 1,00), Fortsetzung im Takt (122,3 statt 124 BPM),
+#                aber 7 dB leiser als der Jam → die Fortsetzung wird auf den Pegel des Jams gebracht.
+#   gesang     — eine eingesungene Schleife wird zur Songlänge wiederholt und vervollständigt (complete): die KI spielt
+#                Schlagzeug, Bass, Keys … dazu. 🔑 gemessen: XL-Base −15/−30 dB Drums/Bass, XL-SFT −22/−54 (Bass fehlt)
+#                → Base, wenn es da ist. Die KI singt dabei neu (17 dB unter der Band, verwaschen) → Demucs nimmt ihre
+#                Stimme heraus, DEINE Stimme kommt in passender Lautstärke darüber (abschaltbar: "stimme": "ki").
+WEITER_MAX = 240.0
+WEITER_TRACKS = ("drums", "bass", "keyboard", "synth", "guitar", "strings", "percussion", "brass", "woodwinds", "fx", "backing_vocals")
+
+
+def pcm16_48k(audio: bytes) -> bytes:
+    """Beliebiges PCM-WAV (16/24/32 Bit, mono/stereo, jede Rate) → 16 Bit, stereo, 48 kHz."""
+    p, fr = wav_info(audio)
+    if p.comptype != "NONE":
+        raise RuntimeError("Quelle: nur unkomprimiertes WAV")
+    if audioop is None:
+        if (p.sampwidth, p.nchannels, p.framerate) != (2, 2, 48000):
+            raise RuntimeError("Quelle: dieses Python kann das Tonformat nicht wandeln (audioop fehlt)")
+        return audio
+    if p.sampwidth != 2:
+        fr = audioop.lin2lin(fr, p.sampwidth, 2)
+    if p.nchannels == 1:
+        fr = audioop.tostereo(fr, 2, 1, 1)
+    elif p.nchannels != 2:
+        raise RuntimeError("Quelle: mehr als zwei Kanäle")
+    if p.framerate != 48000:
+        fr, _ = audioop.ratecv(fr, 2, 2, p.framerate, 48000, None)
+    import types
+    return wav_bytes(types.SimpleNamespace(nchannels=2, sampwidth=2, framerate=48000), fr)
+
+
+def wav_loop(audio: bytes, seconds: float) -> bytes:
+    """Eine Schleife so oft hintereinander, bis `seconds` voll sind (die Schleife ist taktgenau — keine Blende nötig)."""
+    p, fr = wav_info(audio)
+    fs = p.nchannels * p.sampwidth
+    want = int(seconds * p.framerate) * fs
+    out = fr * (want // max(1, len(fr)) + 1)
+    return wav_bytes(p, out[:want])
+
+
+def _rms_active(fr: bytes) -> float:
+    """RMS nur über die lauten Stellen (Gesang hat Pausen — die sollen den Pegel nicht drücken)."""
+    win, vals = 4800 * 4, []
+    for i in range(0, len(fr) - win, win):
+        vals.append(audioop.rms(fr[i:i + win], 2))
+    if not vals:
+        return 0.0
+    vals.sort()
+    top = vals[len(vals) // 2:] or vals
+    return sum(top) / len(top)
+
+
+def _normalize(fr: bytes, ceil: float = 0.89) -> bytes:
+    pk = audioop.max(fr, 2) if fr else 0
+    return audioop.mul(fr, 2, ceil * 32767 / pk) if pk > ceil * 32767 else fr
+
+
+def level_match(audio: bytes, from_s: float, ramp_s: float = 0.5) -> bytes:
+    """Die Fortsetzung (ab `from_s`) auf den Pegel des Jams davor bringen — weich über `ramp_s`."""
+    if audioop is None:
+        return audio
+    p, fr = wav_info(audio)
+    if p.sampwidth != 2:
+        return audio
+    fs = p.nchannels * 2
+    cut = int(from_s * p.framerate) * fs
+    a, b = fr[:cut], fr[cut:]
+    ra, rb = _rms_active(a), _rms_active(b)
+    if ra <= 0 or rb <= 0:
+        return audio
+    g = max(0.5, min(2.8, ra / rb))
+    if abs(g - 1) < 0.06:
+        return audio
+    n_ramp = min(len(b) // fs, int(ramp_s * p.framerate))
+    head = b[:n_ramp * fs]
+    import array
+    x = array.array("h", head)
+    for i in range(len(x)):
+        k = 1 + (g - 1) * ((i // p.nchannels) / max(1, n_ramp))
+        x[i] = max(-32768, min(32767, int(x[i] * k)))
+    tail = audioop.mul(b[n_ramp * fs:], 2, g)
+    return wav_bytes(p, _normalize(a + x.tobytes() + tail))
+
+
+def voice_on_top(cfg: dict, band_with_ai_voice: bytes, voice: bytes, tick) -> (bytes, str):
+    """Demucs nimmt die neu gesungene KI-Stimme aus der Band, deine Stimme kommt darüber. → (audio, Hinweis)"""
+    py = midi_python()
+    if not py or audioop is None:
+        return band_with_ai_voice, "ohne Demucs: die KI-Stimme bleibt"
+    import shutil
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="mws-stimme-")
+    try:
+        src = os.path.join(tmp, "band.wav")
+        _write_atomic(src, band_with_ai_voice)
+        env = dict(os.environ, TORCH_HOME=os.path.join(MIDI_DIR, "torch"), HF_HOME=os.path.join(MIDI_DIR, "hf"), PYTORCH_ENABLE_MPS_FALLBACK="1")
+        tick("Deine Stimme kommt nach vorn …")
+        args = [py, "-m", "demucs", "--two-stems", "vocals", "-o", tmp] + (["-d", "mps"] if sys.platform == "darwin" else [])
+        r = subprocess.run(args + [src], capture_output=True, env=env, timeout=900)
+        stem = os.path.join(tmp, "htdemucs", "band", "no_vocals.wav")
+        if r.returncode != 0 or not os.path.isfile(stem):
+            return band_with_ai_voice, "Demucs fehlgeschlagen — die KI-Stimme bleibt"
+        band = pcm16_48k(_read_bytes(stem))
+        pb, fb = wav_info(band)
+        pv, fv = wav_info(pcm16_48k(voice))
+        n = min(len(fb), len(fv))
+        fb, fv = fb[:n], fv[:n]
+        rb, rv = _rms_active(fb), _rms_active(fv)
+        # Gesang vorn: aktive Stimme ~2 dB unter der Band — gemessen (Demucs): Stimme −16 dB, Drums −17, Mix −13
+        g = (rb * 0.8 / rv) if rv > 0 else 1.0
+        g = max(0.25, min(6.0, g))
+        mix = audioop.add(audioop.mul(fb, 2, 0.85), audioop.mul(fv, 2, g * 0.85), 2)
+        return wav_bytes(pb, _normalize(mix)), "deine Stimme über der KI-Band"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def render_weiter(cfg: dict, eng, srv, job: dict, tick):
+    request = job.get("request") or {}
+    mode = request.get("mode")
+    data = srv.upload(job["id"])
+    if not (data[:4] == b"RIFF" and data[8:12] == b"WAVE"):
+        raise RuntimeError("Quelle ist kein WAV")
+    src = pcm16_48k(data)
+    src_s = wav_seconds(src)
+    if src_s < 2:
+        raise RuntimeError("Quelle zu kurz (unter 2 s)")
+    total = max(src_s + 10, min(WEITER_MAX, float(request.get("duration") or 90)))
+    seed = int(request.get("seed") if isinstance(request.get("seed"), int) and request.get("seed") >= 0 else random.randint(0, 2 ** 31 - 1))
+    base = {"caption": request.get("caption") or "instrumental", "inference_steps": 50, "seed": seed,
+            "guidance_scale": float(cfg.get("guidance_scale") or 7.0), "output_format": "wav16", "peak_clip": 0, "timesignature": "4"}
+    for k in ("bpm", "keyscale"):
+        if request.get(k):
+            base[k] = request[k]
+    t0 = time.monotonic()
+    meta = {"seed": seed, "caption": base["caption"], "bpm": base.get("bpm"), "keyscale": base.get("keyscale"),
+            "weiter": {"mode": mode, "quelle_s": round(src_s, 2)}}
+    if mode == "gesang":
+        model = eng.model_file(tick, "xl-base", "base", "xl-sft", "sft") or cfg["synth_model"]
+        if "base" not in model:
+            meta["weiter"]["hinweis"] = "ohne Base-Modell gerechnet — der Bass wird schwächer (Installer: Loop-Maschine-KI)"
+        tracks = [t for t in (request.get("tracks") or []) if t in WEITER_TRACKS] or ["drums", "bass", "keyboard", "synth"]
+        canvas = wav_loop(src, total)
+        req = dict(base, task_type="complete", track=" | ".join(tracks), lyrics=request.get("lyrics") or "", synth_model=model)
+        tick("Die Musik-KI spielt die Band zu deinem Gesang …")
+        audio = eng.with_source(req, canvas, tick, "Band zum Gesang")
+        if request.get("stimme", "original") == "original":
+            audio, note = voice_on_top(cfg, audio, canvas, tick)
+            meta["weiter"]["stimme"] = note
+    elif mode == "fortsetzen":
+        model = eng.model_file(tick, "xl-sft", "sft") or cfg["synth_model"]
+        req = dict(base, task_type="repaint", lyrics=request.get("lyrics") or "[Instrumental]",
+                   repainting_start=round(src_s, 3), repainting_end=round(total, 3), synth_model=model)
+        tick("Die Musik-KI spielt deinen Jam weiter …")
+        audio = eng.with_source(req, src, tick, "Weiterspielen")
+        audio = level_match(audio, src_s)
+    else:
+        raise RuntimeError("Unbekannter Weg: %s" % mode)
+    meta["dit"] = model
+    if request.get("smooth_end", True):
+        audio, info = smooth_end(audio)
+        if info:
+            meta["ende"] = info
+    meta["render_s"] = round(time.monotonic() - t0, 1)
+    meta["duration_real"] = round(wav_seconds(audio), 2)
+    meta["peak_clip"] = 0
+    eng.last_used = time.time()
+    return audio, meta
+
+
 def archive(cfg, job, audio, meta) -> str:
     if not cfg.get("keep_renders", True):
         return ""
@@ -4309,7 +4519,10 @@ def run(cfg: dict) -> None:
                 finish_job(cfg, srv, job, tick)
             else:
                 long_ = float((job.get("request") or {}).get("duration") or 0) > LONG_SINGLE
-                audio, meta = (render_long if long_ else render_checked)(cfg, eng, srv, job, tick)
+                if job.get("kind") == "weiter":        # 3.17: aus der Loop-Maschine
+                    audio, meta = render_weiter(cfg, eng, srv, job, tick)
+                else:
+                    audio, meta = (render_long if long_ else render_checked)(cfg, eng, srv, job, tick)
                 path = archive(cfg, job, audio, meta)
                 cover_next = False
                 # 3.2: erst veredeln (Wasserzeichen + Tags), DANN ausliefern — so verlässt kein

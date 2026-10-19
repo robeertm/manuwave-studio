@@ -3,6 +3,37 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.17.0 — 2026-10-19 (bridge 3.17.0)
+
+### Added
+- **Loop machine** — a fourth tab. Generators run on their own: start one and it comes in on the next bar, stop it and
+  it ends with the bar. Beat (eleven styles, density, variation, human feel, fills), bass (seven patterns incl. acid),
+  chords (voiced close, with 7ths/9ths), arpeggio, melody (a motif that returns and develops), a free **oscillator**
+  (waves, noise, 20 Hz–8 kHz with snap to key, unison, sub, FM, drift, glide, LFO, gate in time), **your bars** (play a
+  few bars; the machine plays and spins them on) and a **mic loop** (sing in time after a count-in, latency
+  compensated, overdub up to eight layers). Key, scale and chord progression drive all of them; a change applies from
+  the next bar. Every generator has live filter, resonance, high-pass, wobble, EQ, drive, echo, reverb, pan and level,
+  plus all knobs of its instrument. MIDI learn for any knob; the computer keyboard and a MIDI keyboard play the selected
+  generator.
+- **Take over the rest**: the key is found from your bars or your voice (the first note and strong beats weigh more; a
+  relative key that already matches is kept), then beat, bass and chords join in the chosen style, and the **autopilot**
+  arranges at every eight-bar phrase — swaps, breakdowns with a closing filter, build-ups to the drop, new patterns.
+  *To notes* turns a sung loop into notes for a synth. *Surprise me* starts a random style.
+- **AI takes over** (bridge job `weiter`): *continue the jam* captures the next 4/8/16 bars exactly from the downbeat and
+  the music AI continues it to the chosen length (repaint after the end; the continuation is brought to the jam's
+  loudness — measured 7 dB quieter before). *Band for your voice* repeats your mic loop to song length and runs
+  ACE-Step's *complete* task with the **base** model (measured against the fine-tuned model: drums −15 vs −22 dB, bass
+  −30 vs −54 dB — without the base model the bass is nearly missing); Demucs then takes out the AI's re-sung voice and
+  your own voice goes back on top. The result arrives like any render and is labelled AI-generated, with a note on which
+  part is yours.
+- ● in the loop machine records what you hear into the library (self-played).
+- Installers: optional step **Loop machine AI** (base model, 2.6 GB or 5.3 GB with `--xl`); `--skip-loopai` /
+  `-SkipLoopAi`.
+
+### Changed
+- On narrow screens the four tabs wrap into two rows.
+- A MIDI keyboard plays only the tab you are in (it used to sound in *Make your own* from anywhere).
+
 ## 3.16.1 — 2026-10-17 (bridge 3.16.1)
 
 ### Fixed

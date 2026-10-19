@@ -390,6 +390,7 @@ function bindMidi() {
 const MACKIE = { 91: "back", 92: "fwd", 93: "stop", 94: "play", 95: "rec", 86: "loop" };
 const isDawPort = (inp) => /mackie|daw|midiin ?2|port ?2|midi ?2|\b2\)?$/i.test(inp.name || "");
 function onMidi(ev, inp) {
+  if (window.mwsLoopsVisible && window.mwsLoopsVisible()) return;     // 3.17: in der Loop-Maschine spielt das Keyboard dort
   const [st, d1 = 0, d2 = 0] = ev.data; const type = st & 0xf0;
   S.lastMidi = Date.now(); flashMidi();
   // Lernen: die nächste Nachricht gehört dem gewählten Regler/Knopf

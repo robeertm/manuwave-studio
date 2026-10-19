@@ -3,7 +3,9 @@
 **Make complete songs — music, lyrics and cover art — with AI that runs entirely on your own computer.**
 No subscription, no cloud, no upload. Describe an idea (or roll the dice), and Manuwave Studio writes a
 production brief, renders the track with ACE-Step 1.5, paints a cover, and lets you master and export it.
-Or make the music yourself: synthesizers, a drum machine and a MIDI keyboard, right in the browser.
+Or make the music yourself: synthesizers, a drum machine and a MIDI keyboard, right in the browser — or a loop
+machine whose generators play on their own while you turn the knobs, and that hands your jam or your voice to the
+music AI to finish the song.
 
 [![License: Source-Available](https://img.shields.io/badge/license-source--available-informational)](LICENSE)
 ![macOS](https://img.shields.io/badge/macOS-Apple%20silicon-black)
@@ -32,6 +34,8 @@ hobby showcase, where you can also share your own tracks.
 | ⬇️ **Export** | MP3, FLAC, ALAC, WAV, AIFF, WavPack, TTA — with cover, tags and lyrics embedded. |
 | 📦 **Release package** | One ZIP with the mastered file, a 3000 × 3000 cover, upload metadata with AI-disclosure checkboxes, lyrics, a proof-of-origin PDF and a licence template (these two documents are in German for now). |
 | 🎹 **Make your own** | A third tab with nine basic synthesizers, 18 recreations of classic instruments (TB-303, Minimoog, Juno-60, DX7, Rhodes, B3 …) and a drum machine — every knob included — plus a piano roll, patterns, a song arranger and a loop recorder. Play it with a USB/MIDI keyboard or the computer keyboard. *Create track* renders your piece into the library, where it is mastered, exported and published like any other track. |
+| 🔁 **Loop machine** | A fourth tab of generators that run on their own — beat, bass, chords, arpeggio, melody, a free oscillator, your own bars and a mic loop. Start one and it comes in on the next bar; turn frequency, resonance, highs, echo, reverb and more while it plays. *Take over the rest* builds a band around your bars or your voice; the autopilot arranges. |
+| 🤖 **AI takes over** | From the loop machine: the music AI continues your jam (your bars are the start of the song) or plays a band around a loop you sang — with your real voice kept on top. The result is an AI track; its note says which part is yours. |
 | 🎼 **MIDI image** | Every AI song is turned into notes on your computer — drums, bass, chords and melody, on the beat. Open it on the instruments with one click (*Play*) and change anything, or download it as a MIDI file for any DAW. Optional; runs only while your computer is otherwise idle. |
 | 🔏 **Honest by design** | Every file is labelled in its tags — “AI-generated”, or “self-played” for what you made in *Make your own* (then only the cover counts as AI); an inaudible watermark (macOS/Linux) proves where it came from. |
 
@@ -66,13 +70,31 @@ when the tab is in the background, and the offline render is sample-identical to
 
 ![MIDI image of an AI song](docs/screenshots/midi.png)
 
+## Loop machine
+
+![Loop machine](docs/screenshots/loops.png)
+
+| | |
+|---|---|
+| ▶︎ **Generators** | Up to twelve, each with its own loop length (1–8 bars). Press ▶︎ and it comes in on the next bar, ■ and it stops at the end of the bar (double-click: right now); space starts or stops all. 🥁 **Beat** — eleven styles, density, variation, human feel, fills. 🎸 **Bass** — eight-note pulse, long roots, house offbeat, disco octaves, acid (303), funk, walking. 🎹 **Chords** — pad, halves, stabs, offbeat, eighths, with 7ths and 9ths, smoothly voiced. ✨ **Arpeggio** and 🎶 **Melody** (a motif that returns and develops). Every generator plays any sound of *Make your own*. |
+| 〰️ **Oscillator** | A free tone generator: sine, triangle, saw, pulse, supersaw, white/pink/brown noise; frequency 20 Hz–8 kHz (free, or snapping to the key), fine tune, unison, sub, FM, drift, glide, an LFO on pitch/volume/pulse width/pan/FM, and a gate in time for pulsing tones. |
+| 🎼 **Your bars** | Play a few bars after a one-bar count-in (computer keyboard, MIDI or the keys on screen). The machine plays them and spins them on — *life of its own* sets how far it strays; every fourth pass returns to your original. |
+| 🎤 **Mic loop** | Sing or play into the microphone, in time, with latency compensation; overdub up to eight layers, undo, stutter, reverse. *To notes* hears out your melody and gives it to a synth that carries it on. |
+| 🎛 **Live sound** | On every generator: filter frequency, resonance, high-pass, a tempo-synced wobble, lows/mids/highs, drive, ping-pong echo in time, feedback, reverb, pan, volume, mute/solo — and *Sound* opens every knob of the instrument. Master: DJ filter, reverb length, level, limiter at −1.5 dBFS. *MIDI learn* puts any knob on a controller knob. |
+| 🎹 **Harmony** | Key (ten scales incl. pentatonic and blues), chord progression and bars per chord apply to all generators; a change takes effect on the next bar. |
+| 🪄 **Take over the rest** | From your bars or your voice the machine finds the key, then adds beat, bass and chords (plus an arpeggio for some styles) in the style you choose and switches on the **autopilot**, which arranges every eight bars: swaps generators, builds a breakdown with a closing filter, a build-up to the drop, fresh patterns. 🎲 *Surprise me* starts a random style. |
+| 🤖 **AI takes over** | *Continue the jam*: the next 4, 8 or 16 bars are captured exactly from the downbeat and the music AI continues from there (ACE-Step repaint) to the song length you pick — matched in loudness. *Band for your voice*: your mic loop is repeated to song length and ACE-Step's *complete* task plays drums, bass, keys and more around it; Demucs then removes the AI's own re-sung voice and puts **your** voice back on top. Runs on your computer like any render; needs the base model for the full band (installer step *Loop machine AI*). |
+| ⏺ **Record** | ● records what you hear (after the limiter) into the library as a 24-bit WAV — self-played, no music AI involved. Sets and loops are saved in the browser. |
+
+![AI takes over](docs/screenshots/loops_ki.png)
+
 ## Requirements
 
 | | macOS | Windows / Linux |
 |---|---|---|
 | Hardware | Apple silicon (M1–M4), 16 GB RAM recommended (8 GB works with smaller models) | NVIDIA GPU, RTX 20xx or newer, 8 GB VRAM; driver ≥ 550 |
 | System | macOS 14 or newer | Windows 10/11 · Ubuntu/Debian x86_64 |
-| Disk | about 25 GB (+1 GB for the optional quality check, +1.5 GB for the optional MIDI image) | about 25 GB (+1 GB quality check, +1.5 GB MIDI image, both optional) |
+| Disk | about 25 GB (+1 GB for the optional quality check, +1.5 GB for the optional MIDI image, +2.6 GB — 5.3 GB with `--xl` — for the optional loop machine AI) | about 25 GB (+1 GB quality check, +1.5 GB MIDI image, +2.6/5.3 GB loop machine AI, all optional) |
 | Status | ✅ tested | ⚠️ experimental — built and checked in CI, not yet run on real NVIDIA hardware by the maintainer |
 
 ## Install
@@ -99,10 +121,11 @@ under `renders/` and in your browser's library.
 | `--skip-writer`, `--skip-image` | skip the language model or the cover model |
 | `--skip-qa` | skip the quality check (PyTorch + rating model, about 1 GB; runs on the CPU) |
 | `--skip-midi` | skip the MIDI image (Demucs + Basic Pitch, about 1.5 GB) |
+| `--skip-loopai` | skip the loop machine AI (the base model for *band for your voice*, 2.6 GB or 5.3 GB with `--xl`); continuing a jam still works |
 | `--no-start` | don't start the app at the end |
 | `--home DIR` | install somewhere else (must be inside your home folder) |
 
-Windows: `-Lm`, `-Xl`, `-SkipWriter`, `-SkipImage`, `-SkipQa`, `-SkipMidi`, `-NoStart`.
+Windows: `-Lm`, `-Xl`, `-SkipWriter`, `-SkipImage`, `-SkipQa`, `-SkipMidi`, `-SkipLoopAi`, `-NoStart`.
 </details>
 
 ## How it works
@@ -129,8 +152,9 @@ Nothing listens on your network — everything binds to `127.0.0.1`.
   contributions — lyrics you write, your selection and mastering — can be. The release package records them.
 - **Distribution:** services such as DistroKid accept AI-assisted music if you disclose it; the release package
   contains ready-to-tick AI credits. Some platforms (e.g. Bandcamp) don't accept AI-generated music.
-- **Self-played tracks** (*Make your own*) are your own work: the tags, the release package and Fahrstuhlmusik say
-  “self-played”, and only the cover is declared as AI.
+- **Self-played tracks** (*Make your own*, or recorded in the loop machine) are your own work: the tags, the release
+  package and Fahrstuhlmusik say “self-played”, and only the cover is declared as AI.
+- **AI takes over** results are AI tracks — the note records which part is yours (your bars or your voice).
 - This is not legal advice.
 
 ## Uninstall
