@@ -40,6 +40,78 @@ const VOICE = (mode = "poly", voices = 8) => ({ id: "voice", de: "Spielweise", e
   K("vol", "Pegel", "Level", 0, 1, 0.8, { u: "%" }),
 ] });
 
+// ---- 3.21: Raum für jedes Instrument (Hall bis 30 s, Einfrieren, Shimmer · Echo im Takt · Fülle & Breite) ----
+const ECHO_T = [["1/16", "1/16", "1/16"], ["1/8T", "1/8 Triole", "1/8 triplet"], ["1/8", "1/8", "1/8"], ["3/16", "3/16 (punktiert)", "3/16 (dotted)"], ["1/4T", "1/4 Triole", "1/4 triplet"],
+  ["1/4", "1/4", "1/4"], ["3/8", "3/8 (punktiert)", "3/8 (dotted)"], ["1/2", "1/2", "1/2"], ["3/4", "3/4", "3/4"], ["1/1", "1 Takt", "1 bar"], ["ms", "frei (ms)", "free (ms)"]];
+const SPACE = [
+  { id: "space", de: "Hall", en: "Reverb", p: [K("rvmix", "Hall", "Reverb", 0, 1, 0, { u: "%" }), K("rvtime", "Hallzeit", "Decay", 0.2, 30, 3, { c: "exp", u: "s" }),
+    K("rvsize", "Raumgröße", "Size", 0, 1, 0.6, { u: "%" }), K("rvpre", "Vorverzögerung", "Pre-delay", 0, 0.25, 0.02, { c: "exp0", u: "s" }),
+    K("rvdamp", "Hall-Höhen", "Reverb highs", 0, 1, 0.5, { u: "%" }), K("rvshim", "Shimmer (Oktave)", "Shimmer (octave)", 0, 1, 0, { u: "%" }), TOG("rvfreeze", "Einfrieren", "Freeze")] },
+  { id: "echo", de: "Echo", en: "Echo", p: [K("dlmix", "Echo", "Echo", 0, 1, 0, { u: "%" }), SEL("dltime", "Echo-Zeit", "Echo time", ECHO_T, "3/16"),
+    K("dlms", "Zeit frei", "Free time", 20, 2500, 350, { c: "exp", u: "ms" }), K("dlfb", "Wiederholungen", "Feedback", 0, 0.95, 0.4, { u: "%" }), K("dltone", "Echo-Ton", "Echo tone", 0, 1, 0.5, { u: "%" })] },
+  { id: "fill", de: "Fülle & Breite", en: "Body & width", p: [K("fwarm", "Wärme", "Warmth", 0, 1, 0, { u: "%" }), K("fbody", "Körper", "Body", 0, 1, 0, { u: "%" }),
+    K("fair", "Luft", "Air", 0, 1, 0, { u: "%" }), K("fwidth", "Breite", "Width", 0, 1, 0, { u: "%" })] },
+];
+const MTYPES = [["grand", "Konzertflügel", "Concert grand"], ["felt", "Filz-Klavier (soft)", "Felt piano (soft)"], ["upright", "Klavier (Upright)", "Upright piano"], ["honky", "Honky-Tonk", "Honky-tonk"],
+  ["bright", "Pop-Flügel (hell)", "Pop grand (bright)"], ["dark", "Flügel dunkel", "Dark grand"], ["celesta", "Celesta", "Celesta"], ["toy", "Spielzeugklavier", "Toy piano"],
+  ["marimba", "Marimba", "Marimba"], ["xylo", "Xylophon", "Xylophone"], ["vibes", "Vibraphon", "Vibraphone"], ["glock", "Glockenspiel", "Glockenspiel"], ["musicbox", "Spieluhr", "Music box"],
+  ["kalimba", "Kalimba", "Kalimba"], ["tubular", "Röhrenglocken", "Tubular bells"], ["bell", "Kirchenglocke", "Church bell"], ["steel", "Steeldrum", "Steel drum"], ["bowl", "Klangschale", "Singing bowl"],
+  ["glass", "Glas", "Glass"], ["gong", "Gong", "Gong"]];
+const OTYPES = [["strings", "Streichorchester", "String orchestra"], ["violins", "Violinen", "Violins"], ["violas", "Bratschen", "Violas"], ["cellos", "Celli", "Cellos"], ["basses", "Kontrabässe", "Double basses"],
+  ["solovln", "Solo-Violine", "Solo violin"], ["solocello", "Solo-Cello", "Solo cello"], ["pizz", "Pizzicato", "Pizzicato"], ["tremolo", "Tremolo-Streicher", "Tremolo strings"],
+  ["horn", "Horn", "French horn"], ["trumpet", "Trompete", "Trumpet"], ["trombone", "Posaune", "Trombone"], ["tuba", "Tuba", "Tuba"], ["brass", "Blechbläser-Satz", "Brass section"],
+  ["flute", "Flöte", "Flute"], ["panflute", "Panflöte", "Pan flute"], ["clarinet", "Klarinette", "Clarinet"], ["oboe", "Oboe", "Oboe"], ["bassoon", "Fagott", "Bassoon"], ["sax", "Saxofon", "Saxophone"],
+  ["woods", "Holzbläser-Satz", "Woodwind section"]];
+const SCHEMA_321 = {
+  modal: [
+    { id: "minst", de: "Instrument", en: "Instrument", p: [SEL("mtype", "Art", "Type", MTYPES, "grand"), K("tune", "Stimmung", "Tuning", -100, 100, 0, { u: "ct" }),
+      K("stretch", "Oktavspreizung", "Octave stretch", 0, 1, 0.5, { u: "%" }), K("inh", "Saitensteifigkeit", "Inharmonicity", 0, 1, 0.5, { u: "%" }), K("uni", "Saiten-Verstimmung", "Unison width", 0, 1, 0.3, { u: "%" })] },
+    { id: "hammer", de: "Hammer & Anschlag", en: "Hammer & touch", p: [K("hard", "Härte", "Hardness", 0, 1, 0.55, { u: "%" }), K("felt", "Filz", "Felt", 0, 1, 0, { u: "%" }),
+      K("velb", "Anschlag → hell", "Velocity → bright", 0, 1, 0.6, { u: "%" }), K("pos", "Anschlagstelle", "Strike point", 0.05, 0.5, 0.125, { u: "%" }),
+      K("noise", "Hammergeräusch", "Hammer noise", 0, 1, 0.3, { u: "%" }), K("mech", "Mechanik", "Mechanics", 0, 1, 0.2, { u: "%" })] },
+    { id: "sus", de: "Ausklang & Dämpfer", en: "Sustain & damper", p: [K("decay", "Ausklang", "Sustain", 0.1, 4, 1, { c: "exp", u: "x" }), K("damper", "Dämpfer offen", "Damper open", 0, 1, 0.3, { u: "%" }),
+      K("trem", "Vibraphon-Motor", "Vibes motor", 0, 1, 0.4, { u: "%" }), K("tremrate", "Motor-Tempo", "Motor rate", 1, 12, 5.5, { c: "exp", u: "Hz" }), K("width", "Stereo-Breite", "Stereo width", 0, 1, 0.5, { u: "%" })] },
+    lfo(1, 5, "off"), ...SPACE, VOICE("poly", 16), ARP,
+  ],
+  vox: [
+    { id: "choir", de: "Chor", en: "Choir", p: [SEL("lage", "Stimmlage", "Voice type", [["auto", "gemischt (nach Tonhöhe)", "mixed (by pitch)"], ["bass", "Bass", "Bass"], ["tenor", "Tenor", "Tenor"],
+      ["alto", "Alt", "Alto"], ["soprano", "Sopran", "Soprano"], ["kids", "Kinderchor", "Children"]], "auto"), K("singers", "Sänger je Ton", "Singers per note", 1, 8, 4, { st: 1 }),
+      K("spread", "Streuung", "Spread", 0, 1, 0.4, { u: "%" }), K("width", "Breite", "Width", 0, 1, 0.7, { u: "%" })] },
+    { id: "vowel", de: "Vokal", en: "Vowel", p: [K("vowel", "Vokal (a e i o u m)", "Vowel (a e i o u m)", 0, 5, 0, { u: "vowel" }), K("vmove", "Vokal wandert", "Vowel motion", 0, 1, 0, { u: "%" }),
+      K("vrate", "Wander-Tempo", "Motion rate", 0.02, 4, 0.15, { c: "exp", u: "Hz" }), K("overtone", "Obertongesang", "Overtone singing", 0, 1, 0, { u: "%" })] },
+    { id: "vvoice", de: "Stimme", en: "Voice", p: [K("breath", "Atem", "Breath", 0, 1, 0.15, { u: "%" }), K("whisper", "Flüstern", "Whisper", 0, 1, 0, { u: "%" }), TOG("robot", "Roboter", "Robot"),
+      K("vib", "Vibrato", "Vibrato", 0, 1, 0.35, { u: "%" }), K("vibrate", "Vibrato-Tempo", "Vibrato rate", 3, 8, 5.2, { u: "Hz" }), K("vibdel", "Vibrato-Verzögerung", "Vibrato delay", 0, 2, 0.5, { u: "s" }),
+      K("att", "Einschwingen", "Attack", 0.005, 3, 0.35, { c: "exp", u: "s" }), K("rel", "Ausklingen", "Release", 0.02, 6, 0.9, { c: "exp", u: "s" })] },
+    lfo(1, 5, "off"), ...SPACE, VOICE("poly", 10), ARP,
+  ],
+  orch: [
+    { id: "oinst", de: "Instrument", en: "Instrument", p: [SEL("otype", "Instrument", "Instrument", OTYPES, "strings"), K("players", "Spieler je Ton", "Players per note", 1, 8, 6, { st: 1 }),
+      K("spread", "Streuung", "Spread", 0, 1, 0.5, { u: "%" }), K("width", "Breite", "Width", 0, 1, 0.7, { u: "%" })] },
+    { id: "oplay", de: "Spiel", en: "Playing", p: [K("att", "Einschwingen", "Attack", 0.002, 2, 0.2, { c: "exp", u: "s" }), K("rel", "Ausklingen", "Release", 0.02, 4, 0.5, { c: "exp", u: "s" }),
+      K("expr", "Dynamik", "Expression", 0, 1, 0.6, { u: "%" }), K("bright", "Helligkeit", "Brightness", 0, 1, 0.5, { u: "%" }), K("body", "Korpus", "Body", 0, 1, 0.6, { u: "%" }),
+      K("noise", "Bogen/Atem", "Bow/breath", 0, 1, 0.3, { u: "%" })] },
+    { id: "ovib", de: "Vibrato", en: "Vibrato", p: [K("vib", "Vibrato", "Vibrato", 0, 1, 0.4, { u: "%" }), K("vibrate", "Tempo", "Rate", 3, 8, 5.4, { u: "Hz" }), K("vibdel", "Verzögerung", "Delay", 0, 2, 0.35, { u: "s" })] },
+    ...SPACE, VOICE("poly", 10), ARP,
+  ],
+  wild: [
+    { id: "wsrc", de: "Quelle", en: "Source", p: [SEL("wwave", "Welle", "Wave", [["saw", "Säge", "Saw"], ["square", "Rechteck", "Square"], ["tri", "Dreieck", "Triangle"], ["sine", "Sinus", "Sine"]], "saw"),
+      K("tone", "Ton", "Tone", 0, 1, 0.6, { u: "%" }), K("noise", "Rauschen", "Noise", 0, 1, 0.2, { u: "%" }), K("dust", "Staub (Knistern)", "Dust (crackle)", 0, 1, 0, { u: "%" }),
+      K("fmr", "FM-Verhältnis", "FM ratio", 0.25, 12, 1.5, { c: "exp", u: "x" }), K("fmi", "FM-Menge", "FM amount", 0, 1, 0, { u: "%" })] },
+    { id: "wmove", de: "Fahrt", en: "Sweep", p: [K("len", "Länge", "Length", 0.05, 20, 2, { c: "exp", u: "s" }), K("span", "Tonhöhen-Fahrt", "Pitch sweep", -48, 48, 0, { st: 1, u: "st" }),
+      SEL("curve", "Kurve", "Curve", [["lin", "gerade", "linear"], ["exp", "langsam, dann schnell", "slow, then fast"], ["log", "schnell, dann langsam", "fast, then slow"], ["sine", "weich", "smooth"], ["bounce", "springend", "bouncing"]], "exp"),
+      K("fsweep", "Filter-Fahrt", "Filter sweep", -1, 1, 0, { u: "pm" }), K("jump", "Zufallssprünge", "Random jumps", 0, 1, 0, { u: "%" }), K("jrate", "Sprung-Tempo", "Jump rate", 0.5, 40, 8, { c: "exp", u: "Hz" }),
+      K("chaos", "Chaos", "Chaos", 0, 1, 0, { u: "%" })] },
+    { id: "wfilt", de: "Filter & Farbe", en: "Filter & colour", p: [SEL("fmode", "Filter", "Filter", [["lp", "Tiefpass", "Low-pass"], ["bp", "Bandpass", "Band-pass"], ["hp", "Hochpass", "High-pass"]], "lp"),
+      K("cut", "Frequenz", "Frequency", 30, 18000, 3000, { c: "exp", u: "Hz" }), K("res", "Resonanz", "Resonance", 0, 0.98, 0.3, { u: "%" }), K("metal", "Metall", "Metal", 0, 0.97, 0, { u: "%" }),
+      K("ring", "Ringmodulation", "Ring mod", 0, 1, 0, { u: "%" }), K("ringr", "Ring-Verhältnis", "Ring ratio", 0.1, 12, 3.1, { c: "exp", u: "x" }), K("crush", "Zerbröseln", "Crush", 0, 1, 0, { u: "%" })] },
+    { id: "wpulse", de: "Hülle & Pulsieren", en: "Envelope & pulse", p: [K("att", "Einschwingen", "Attack", 0.001, 8, 0.01, { c: "exp", u: "s" }), K("sus", "Halten", "Sustain", 0, 1, 0.8, { u: "%" }),
+      K("rel", "Ausklingen", "Release", 0.02, 12, 0.8, { c: "exp", u: "s" }),
+      SEL("lshape2", "Puls-Form", "Pulse shape", [["sine", "Welle (Meer)", "wave (sea)"], ["square", "an/aus", "on/off"], ["heart", "Herzschlag", "heartbeat"], ["rand", "Zufall (Glitch)", "random (glitch)"]], "sine"),
+      K("lrate", "Puls-Tempo", "Pulse rate", 0.02, 30, 1, { c: "exp", u: "Hz" }), K("lamt2", "Puls-Tiefe", "Pulse depth", 0, 1, 0, { u: "%" }), K("width", "Breite", "Width", 0, 1, 0.6, { u: "%" })] },
+    ...SPACE, VOICE("poly", 8),
+  ],
+};
+
 export const SCHEMA = {
   va: [
     { id: "osc1", de: "Oszillator 1", en: "Oscillator 1", p: [
@@ -130,6 +202,8 @@ export const SCHEMA = {
     { id: "kit", de: "Drum-Machine", en: "Drum machine", p: [K("drive", "Sättigung", "Saturation", 0, 1, 0.1, { u: "%" }), K("vol", "Pegel", "Level", 0, 1, 0.85, { u: "%" })] },
   ],
 };
+for (const e of ["va", "fm", "ep", "organ", "pluck"]) { const arr = SCHEMA[e], k = arr.findIndex(x => x.id === "voice"); arr.splice(k < 0 ? arr.length : k, 0, ...SPACE); }
+Object.assign(SCHEMA, SCHEMA_321);
 // einem anderen, der aus stand, z. B. alles von Oszillator 2 bei Pegel 0.) null = wirkt. Sonst { de, en } = warum,
 // optional fix = was man dazuschalten muss (nur wenn eindeutig) und soft = wirkt, braucht aber etwas von außen (Rad, Anschlag).
 export function knobIdle(eng, k, p) {
@@ -163,13 +237,34 @@ export function knobIdle(eng, k, p) {
   }
   if (eng === "fm" && (m = /^op([234])(ratio|fine|att|dec|sus|rel|vel)$/.exec(k)) && !on("op" + m[1] + "lvl")) return R(`wirkt, sobald Operator ${m[1]} einen Pegel hat`, `works once operator ${m[1]} has a level`, { ["op" + m[1] + "lvl"]: 0.4 });
   if (eng === "organ" && /^perc(3|fast|soft)$/.test(k) && !v("perc", false)) return R("wirkt, sobald Perkussion an ist", "works once percussion is on", { perc: true });
+  // 3.21 Raum je Instrument
+  if (k === "rvfreeze" && !on("rvmix")) return R("hält den Hall fest — wirkt, sobald „Hall“ über 0 ist", "holds the reverb — works once “Reverb” is above 0", { rvmix: 0.5 });
+  if (/^rv(time|size|pre|damp|shim)$/.test(k) && !on("rvmix")) return R("wirkt, sobald „Hall“ über 0 ist", "works once “Reverb” is above 0", { rvmix: 0.35 });
+  if (/^rv(time|damp)$/.test(k) && v("rvfreeze", false)) return R("Hall ist eingefroren — er klingt endlos und unverändert", "the reverb is frozen — it rings endlessly and unchanged");
+  if (k === "dlms" && (!on("dlmix") || v("dltime", "3/16") !== "ms")) return R("wirkt bei Echo-Zeit „frei (ms)“", "works with echo time “free (ms)”", { ...(on("dlmix") ? {} : { dlmix: 0.3 }), dltime: "ms" });
+  if (/^dl(time|fb|tone)$/.test(k) && !on("dlmix")) return R("wirkt, sobald „Echo“ über 0 ist", "works once “Echo” is above 0", { dlmix: 0.3 });
+  if (eng === "modal") {
+    const t = v("mtype", "grand"), piano = ["grand", "felt", "upright", "honky", "bright", "dark"].includes(t);
+    if ((k === "trem" || k === "tremrate") && t !== "vibes") return R("nur beim Vibraphon (Art: Vibraphon)", "only for the vibraphone (type: vibraphone)");
+    if (k === "tremrate" && !on("trem")) return R("wirkt, sobald der Motor läuft", "works once the motor runs", { trem: 0.4 });
+    if (/^(stretch|pos|mech)$/.test(k) && !piano) return R("nur bei den Klavieren", "only for the pianos");
+    if (k === "uni" && !piano && t !== "bowl") return R("nur bei Klavieren und der Klangschale (Schwebung)", "only for pianos and the singing bowl (beating)");
+  }
+  if (eng === "vox" && k === "vrate" && !on("vmove")) return R("wirkt, sobald der Vokal wandert", "works once the vowel moves", { vmove: 0.4 });
+  if (eng === "wild") {
+    if (k === "fmr" && !on("fmi")) return R("wirkt, sobald die FM-Menge über 0 ist", "works once the FM amount is above 0", { fmi: 0.4 });
+    if (k === "curve" && !Number(v("span", 0)) && !Number(v("fsweep", 0))) return R("wirkt, sobald Tonhöhe oder Filter fahren", "works once pitch or filter sweep", { span: 12 });
+    if (k === "jrate" && !on("jump")) return R("wirkt, sobald es Zufallssprünge gibt", "works once there are random jumps", { jump: 0.5 });
+    if (k === "ringr" && !on("ring")) return R("wirkt, sobald die Ringmodulation über 0 ist", "works once ring modulation is above 0", { ring: 0.5 });
+    if ((k === "lshape2" || k === "lrate") && !on("lamt2")) return R("wirkt, sobald die Puls-Tiefe über 0 ist", "works once the pulse depth is above 0", { lamt2: 0.5 });
+  }
   return null;
 }
 
 // extrem (0,9). Gedreht wird in der Reglerstellung (0…1), nicht in Einheiten: so verhalten sich Hz, Sekunden und % gleich.
 // Was die Tonhöhe verschiebt (Halbtöne, Träger-Verhältnis) oder die Spielweise ändert, bleibt; danach wird geprüft, dass der
 // Klang hörbar bleibt (Pegel, Filter nicht zu, Saite klingt aus). opts.short: Bass/Arp/Lead — Einschwingen bleibt kurz.
-const MUT_SKIP = /^(vol|voices|pb|glide|mode|mw|arp|arprate|arpoct|arpgate|arplatch|o[123]semi|o1oct|op1ratio|op1fine|l[12]sync|kit|kitName|engine)$/;
+const MUT_SKIP = /^(vol|voices|pb|glide|mode|mw|arp|arprate|arpoct|arpgate|arplatch|o[123]semi|o1oct|op1ratio|op1fine|l[12]sync|kit|kitName|engine|rv\w+|dl\w+|fwarm|fbody|fair|fwidth|tune|singers|players)$/;   // 3.21: Raum gehört zum Klang, bleibt
 const posOf = (q, v) => q.c === "exp" ? Math.log(v / q.min) / Math.log(q.max / q.min) : q.c === "exp0" ? Math.sqrt(Math.max(0, v / q.max)) : (v - q.min) / (q.max - q.min);
 const valOf = (q, x) => { x = Math.min(1, Math.max(0, x)); let v = q.c === "exp" ? q.min * Math.pow(q.max / q.min, x) : q.c === "exp0" ? x * x * q.max : q.min + x * (q.max - q.min); if (q.st) v = Math.round(v / q.st) * q.st; return Math.min(q.max, Math.max(q.min, v)); };
 export function mutatePatch(engine, patch, amt, rand = Math.random, opts = {}) {
@@ -177,7 +272,7 @@ export function mutatePatch(engine, patch, amt, rand = Math.random, opts = {}) {
   const gauss = () => (rand() + rand() + rand() - 1.5) * 1.15;          // ungefähr normalverteilt, Breite ~1
   for (const sec of SCHEMA[engine] || []) for (const q of sec.p) {
     if (MUT_SKIP.test(q.k)) continue;
-    if (/^o[23]oct$|^op[234]ratio$|^algo$/.test(q.k) && amt < 0.75) continue;
+    if (/^o[23]oct$|^op[234]ratio$|^algo$|^(mtype|otype|lage)$/.test(q.k) && amt < 0.75) continue;
     const cur = out[q.k] !== undefined ? out[q.k] : q.def;
     if (q.t === "knob") {
       if (rand() > 0.35 + amt * 0.5) continue;
@@ -213,6 +308,17 @@ export function mutatePatch(engine, patch, amt, rand = Math.random, opts = {}) {
   if (engine === "ep") { lim("decay", 0.8, 12); lim("rel", 0.05, 2); }
   if (engine === "pluck") { lim("decay", 0.4, 12); lim("damp", 0, 0.85); lim("bright", 0.15, 1); }
   if (engine === "organ") { if (Math.max(Number(out.db1) || 0, Number(out.db2) || 0, Number(out.db3) || 0) < 4) out.db3 = 6; }
+  // 3.21
+  if (engine === "modal") { lim("decay", 0.3, 4); lim("hard", 0.1, 1); lim("damper", Math.min(0.3, Number(patch.damper) || 0.3), 1); }
+  if (engine === "vox") { lim("whisper", 0, 0.85); lim("overtone", 0, 0.9); if (opts.short) lim("att", 0.005, 0.06); }
+  if (engine === "orch") { lim("bright", 0.15, 1); lim("expr", 0, 0.9); if (opts.short) lim("att", 0.002, 0.06); }
+  if (engine === "wild") {
+    const sum = (Number(out.tone) || 0) + (Number(out.noise) || 0) + (Number(out.dust) || 0) * 0.6, sum0 = (Number(patch.tone) || 0) + (Number(patch.noise) || 0) + (Number(patch.dust) || 0) * 0.6;
+    if (sum < Math.min(0.5, sum0 * 0.7)) { const k2 = Number(patch.noise) > Number(patch.tone) ? "noise" : "tone"; out[k2] = Math.max(Number(out[k2]) || 0, Number(patch[k2]) || 0.5); }
+    lim("res", 0, 0.85); lim("metal", 0, 0.9); lim("fmi", 0, 0.7); lim("crush", 0, 0.7); lim("lamt2", 0, 0.85);
+    if (out.fmode === "lp") lim("cut", 200, 18000); else if (out.fmode === "hp") lim("cut", 30, 5000);
+    if (Number(patch.sus) > 0.5) lim("sus", 0.5, 1);
+  }
   return { patch: out, changed };
 }
 
@@ -373,7 +479,7 @@ export const KITS = {
 // ---- Synthesizer-Modelle: was man im "Instrument"-Menü wählt ----
 // g: Gruppe im Menü — "base" Grundmodelle, "classic" Nachbauten berühmter Synthesizer (3.16), "drums"
 // Die Namen der Klassiker nennen nur das Vorbild; es sind eigene Nachbauten, keine Samples und kein Bezug zu den Herstellern.
-export const MODEL_GROUPS = [["base", "Grundmodelle", "Basic models"], ["classic", "Klassiker (Nachbau)", "Classics (recreations)"], ["drums", "Drums", "Drums"]];
+export const MODEL_GROUPS = [["base", "Grundmodelle", "Basic models"], ["classic", "Klassiker (Nachbau)", "Classics (recreations)"], ["acoustic", "Akustisch (Klangmodell)", "Acoustic (modelled)"], ["fx", "Effekte", "Effects"], ["drums", "Drums", "Drums"]];
 export const MODELS = [
   { id: "poly", g: "base", engine: "va", de: "Analog Poly", en: "Analog Poly", hd: "Flächen, Akkorde, Brass — zwei Oszillatoren, Leiterfilter", he: "Pads, chords, brass — two oscillators, ladder filter" },
   { id: "mono", g: "base", engine: "va", de: "Analog Mono", en: "Analog Mono", hd: "Bässe und Leads — ein Ton, Glide, drei Oszillatoren", he: "Basses and leads — one note, glide, three oscillators" },
@@ -404,6 +510,12 @@ export const MODELS = [
   { id: "b3", g: "classic", engine: "organ", de: "B3 · Tonrad-Orgel", en: "B3 · tonewheel organ", hd: "Klassische Zugriegel-Registrierungen mit Leslie", he: "Classic drawbar registrations with rotary" },
   { id: "clav", g: "classic", engine: "pluck", de: "Clavinet · Funk-Keys", en: "Clavinet · funk keys", hd: "Hell angeschlagene, schnell gedämpfte Saiten", he: "Brightly struck, quickly damped strings" },
   { id: "drums", g: "drums", engine: "drums", de: "Drum-Machine", en: "Drum machine", hd: "16 Pads, alle synthetisch — TR-808, TR-909, 606, CR-78, 80er, Trap, Techno, Lo-Fi", he: "16 pads, all synthetic — TR-808, TR-909, 606, CR-78, 80s, trap, techno, lo-fi" },
+  // 3.21: Klangmodelle ohne Samples — gerechnet wie die Synthesizer
+  { id: "piano", g: "acoustic", engine: "modal", de: "Klavier & Flügel", en: "Piano & grand", hd: "Flügel, Filz-Softpiano, Upright, Honky-Tonk — Hammer, Saiten, Dämpfer, Hall bis 30 s", he: "Grand, felt soft piano, upright, honky-tonk — hammer, strings, damper, reverb up to 30 s" },
+  { id: "mallet", g: "acoustic", engine: "modal", de: "Mallets & Glocken", en: "Mallets & bells", hd: "Marimba, Vibraphon, Glockenspiel, Kalimba, Röhren- und Kirchenglocken, Klangschale, Gong", he: "Marimba, vibraphone, glockenspiel, kalimba, tubular and church bells, singing bowl, gong" },
+  { id: "choir", g: "acoustic", engine: "vox", de: "Chor & Stimmen", en: "Choir & voices", hd: "Chöre (a e i o u, Summen), Solostimmen, Flüstern, Obertongesang, Roboter", he: "Choirs (a e i o u, humming), solo voices, whisper, overtone singing, robot" },
+  { id: "orch", g: "acoustic", engine: "orch", de: "Orchester", en: "Orchestra", hd: "Streicher, Blech, Holz — Sektionen und Solo, Vibrato, Bogen und Atem", he: "Strings, brass, woodwinds — sections and solo, vibrato, bow and breath" },
+  { id: "wild", g: "fx", engine: "wild", de: "Wild & Effekte", en: "Wild & effects", hd: "Riser, Einschläge, Laser, Wind, Regen, Meer, Gewitter, Alien, Glitch, Drohnen", he: "Risers, impacts, lasers, wind, rain, sea, thunder, aliens, glitch, drones" },
 ];
 
 // Standard-Patch eines Motors aus dem Schema
@@ -565,6 +677,136 @@ export const PRESETS = [
   P("pluck", "Harfe", "Harp", { bright: 0.45, damp: 0.25, decay: 6, pos: 0.35, body: 0.2, rel: 3 }),
   P("pluck", "Koto", "Koto", { vol: 0.65, bright: 0.8, damp: 0.15, decay: 2.5, pos: 0.08, body: 0.3, l1dest: "pitch", l1amt: 0.03 }),
   P("pluck", "Gedämpft (Arp)", "Muted (arp)", { bright: 0.4, damp: 0.7, decay: 0.6, pos: 0.25, body: 0.25, rel: 0.1 }),
+  // ===== 3.21 Klavier & Flügel (Klangmodell) =====
+  P("piano", "Konzertflügel", "Concert grand", { mtype: "grand", hard: 0.6, rvmix: 0.18, rvtime: 2.4, rvsize: 0.7 }, { cat: "keys", tags: ["hell", "klassisch"] }),
+  P("piano", "Flügel weich (Ballade)", "Soft grand (ballad)", { mtype: "grand", hard: 0.38, velb: 0.7, rvmix: 0.25, rvtime: 3, fbody: 0.3 }, { cat: "keys", tags: ["weich", "warm"] }),
+  P("piano", "Filz-Klavier (Soft Piano)", "Felt piano (soft piano)", { mtype: "felt", hard: 0.25, felt: 0.85, noise: 0.45, mech: 0.45, damper: 0.45, rvmix: 0.3, rvtime: 4, fwarm: 0.3, fbody: 0.35 }, { cat: "keys", tags: ["weich", "warm", "intim"] }),
+  P("piano", "Filz mit langem Hall", "Felt with long reverb", { mtype: "felt", hard: 0.22, felt: 0.9, noise: 0.4, mech: 0.4, damper: 0.6, rvmix: 0.55, rvtime: 11, rvsize: 0.95, rvpre: 0.04, rvdamp: 0.35, fbody: 0.3 }, { cat: "keys", tags: ["weich", "lang", "hall"] }),
+  P("piano", "Filz-Echo-Traum", "Felt echo dream", { mtype: "felt", hard: 0.2, felt: 0.9, damper: 0.55, dlmix: 0.38, dltime: "1/4", dlfb: 0.55, dltone: 0.35, rvmix: 0.4, rvtime: 7, fwarm: 0.25 }, { cat: "keys", tags: ["weich", "echo", "lang"] }),
+  P("piano", "Nachtklavier (Shimmer)", "Night piano (shimmer)", { mtype: "felt", hard: 0.28, felt: 0.75, damper: 0.7, rvmix: 0.6, rvtime: 14, rvsize: 1, rvshim: 0.45, rvdamp: 0.55, fwidth: 0.4 }, { cat: "keys", tags: ["weich", "lang", "hall", "schwebend"] }),
+  P("piano", "Klavier in der Kathedrale", "Piano in the cathedral", { mtype: "grand", hard: 0.45, rvmix: 0.7, rvtime: 18, rvsize: 1, rvpre: 0.08, rvdamp: 0.4 }, { cat: "keys", tags: ["lang", "hall"] }),
+  P("piano", "Unendliches Klavier", "Endless piano", { mtype: "felt", hard: 0.3, felt: 0.7, damper: 1, decay: 3, rvmix: 0.65, rvtime: 30, rvsize: 1, rvshim: 0.25, fwidth: 0.5 }, { cat: "keys", tags: ["lang", "hall", "schwebend"] }),
+  P("piano", "Lo-Fi-Kassettenklavier", "Lo-fi cassette piano", { mtype: "felt", hard: 0.35, felt: 0.6, tune: -18, uni: 0.6, noise: 0.5, mech: 0.6, fwarm: 0.7, fair: 0, rvmix: 0.2, rvtime: 1.6, l1dest: "pitch", l1rate: 0.6, l1amt: 0.03 }, { cat: "keys", tags: ["warm", "lofi", "weich"] }),
+  P("piano", "Upright warm", "Warm upright", { mtype: "upright", hard: 0.45, uni: 0.45, fbody: 0.4, rvmix: 0.15, rvtime: 1.4 }, { cat: "keys", tags: ["warm"] }),
+  P("piano", "Upright in der Bar", "Bar upright", { mtype: "upright", hard: 0.6, uni: 0.7, noise: 0.4, mech: 0.35, rvmix: 0.12, rvtime: 1 }, { cat: "keys", tags: ["hell"] }),
+  P("piano", "Honky-Tonk-Saloon", "Honky-tonk saloon", { mtype: "honky", hard: 0.7, uni: 0.7, rvmix: 0.1, rvtime: 0.9 }, { cat: "keys", tags: ["hell", "retro"] }),
+  P("piano", "Pop-Flügel hell", "Bright pop grand", { mtype: "bright", hard: 0.85, velb: 0.8, fair: 0.4, rvmix: 0.15, rvtime: 1.8 }, { cat: "keys", tags: ["hell"] }),
+  P("piano", "Dunkler Flügel", "Dark grand", { mtype: "dark", hard: 0.4, fbody: 0.4, rvmix: 0.22, rvtime: 3.2 }, { cat: "keys", tags: ["dunkel", "warm"] }),
+  P("piano", "Ambient-Klavier mit Echo", "Ambient piano with echo", { mtype: "grand", hard: 0.35, felt: 0.4, damper: 0.6, dlmix: 0.32, dltime: "3/8", dlfb: 0.6, dltone: 0.4, rvmix: 0.45, rvtime: 9, rvshim: 0.15, fwidth: 0.5 }, { cat: "keys", tags: ["echo", "hall", "lang"] }),
+  P("piano", "Celesta", "Celesta", { mtype: "celesta", hard: 0.6, rvmix: 0.25, rvtime: 2.5 }, { cat: "mallet", tags: ["hell", "klassisch"] }),
+  P("piano", "Celesta im Märchenwald", "Fairy-tale celesta", { mtype: "celesta", hard: 0.5, rvmix: 0.5, rvtime: 8, rvshim: 0.3, dlmix: 0.2, dltime: "1/8T" }, { cat: "mallet", tags: ["hell", "lang", "schwebend"] }),
+  P("piano", "Spielzeugklavier", "Toy piano", { mtype: "toy", hard: 0.9, rvmix: 0.15, rvtime: 1.2 }, { cat: "keys", tags: ["hell", "kurz"] }),
+  // ===== Mallets & Glocken =====
+  P("mallet", "Marimba", "Marimba", { mtype: "marimba", hard: 0.5, rvmix: 0.15, rvtime: 1.5 }, { cat: "mallet", tags: ["warm", "kurz"] }),
+  P("mallet", "Marimba weich (Filzschlägel)", "Soft marimba (felt mallets)", { mtype: "marimba", hard: 0.2, noise: 0.15, rvmix: 0.25, rvtime: 2.4, fbody: 0.3 }, { cat: "mallet", tags: ["weich", "warm"] }),
+  P("mallet", "Xylophon", "Xylophone", { mtype: "xylo", hard: 0.8, rvmix: 0.15, rvtime: 1.2 }, { cat: "mallet", tags: ["hell", "kurz"] }),
+  P("mallet", "Vibraphon (Motor)", "Vibraphone (motor)", { mtype: "vibes", hard: 0.4, trem: 0.5, tremrate: 5.5, damper: 0.4, rvmix: 0.2, rvtime: 2.2 }, { cat: "mallet", tags: ["weich", "jazz"] }),
+  P("mallet", "Vibraphon ohne Motor", "Vibraphone (no motor)", { mtype: "vibes", hard: 0.45, trem: 0, damper: 0.5, rvmix: 0.25, rvtime: 3 }, { cat: "mallet", tags: ["weich"] }),
+  P("mallet", "Glockenspiel", "Glockenspiel", { mtype: "glock", hard: 0.8, rvmix: 0.2, rvtime: 2 }, { cat: "mallet", tags: ["hell"] }),
+  P("mallet", "Spieluhr", "Music box", { mtype: "musicbox", hard: 0.9, damper: 0.7, rvmix: 0.2, rvtime: 1.8 }, { cat: "mallet", tags: ["hell", "kurz"] }),
+  P("mallet", "Spieluhr im Traum", "Dreamy music box", { mtype: "musicbox", hard: 0.8, damper: 0.8, rvmix: 0.55, rvtime: 9, rvshim: 0.35, dlmix: 0.25, dltime: "1/4" }, { cat: "mallet", tags: ["lang", "schwebend"] }),
+  P("mallet", "Kalimba", "Kalimba", { mtype: "kalimba", hard: 0.55, rvmix: 0.15, rvtime: 1.4, fbody: 0.3 }, { cat: "world", tags: ["warm", "kurz"] }),
+  P("mallet", "Kalimba mit Echo", "Kalimba with echo", { mtype: "kalimba", hard: 0.5, dlmix: 0.35, dltime: "3/16", dlfb: 0.5, rvmix: 0.3, rvtime: 3 }, { cat: "world", tags: ["echo"] }),
+  P("mallet", "Röhrenglocken", "Tubular bells", { mtype: "tubular", hard: 0.7, damper: 0.8, rvmix: 0.3, rvtime: 5 }, { cat: "mallet", tags: ["lang", "klassisch"] }),
+  P("mallet", "Kirchenglocke", "Church bell", { mtype: "bell", hard: 0.8, damper: 1, rvmix: 0.45, rvtime: 8, rvsize: 1 }, { cat: "mallet", tags: ["lang", "dunkel"] }),
+  P("mallet", "Steeldrum", "Steel drum", { mtype: "steel", hard: 0.5, rvmix: 0.15, rvtime: 1.4 }, { cat: "world", tags: ["hell", "kurz"] }),
+  P("mallet", "Klangschale", "Singing bowl", { mtype: "bowl", hard: 0.3, damper: 1, rvmix: 0.35, rvtime: 6 }, { cat: "world", tags: ["lang", "schwebend"] }),
+  P("mallet", "Klangschalen-Tempel", "Singing bowl temple", { mtype: "bowl", hard: 0.25, damper: 1, decay: 2, rvmix: 0.65, rvtime: 20, rvsize: 1, rvshim: 0.2 }, { cat: "texture", tags: ["lang", "hall", "schwebend"] }),
+  P("mallet", "Glasharfe", "Glass harp", { mtype: "glass", hard: 0.4, damper: 0.8, rvmix: 0.4, rvtime: 5, fwidth: 0.4 }, { cat: "mallet", tags: ["hell", "schwebend"] }),
+  P("mallet", "Gong", "Gong", { mtype: "gong", hard: 0.5, damper: 1, rvmix: 0.35, rvtime: 7 }, { cat: "world", tags: ["dunkel", "lang"] }),
+  P("mallet", "Glocken-Kaskade", "Bell cascade", { mtype: "glock", hard: 0.7, dlmix: 0.45, dltime: "1/8T", dlfb: 0.7, dltone: 0.7, rvmix: 0.35, rvtime: 5, fwidth: 0.5 }, { cat: "mallet", tags: ["echo", "hell"] }),
+  // ===== Chöre & Stimmen =====
+  P("choir", "Chor „Aah“ gemischt", "Choir “aah” mixed", { lage: "auto", vowel: 0, singers: 5, rvmix: 0.35, rvtime: 4 }, { cat: "voice", tags: ["klassisch", "weich"] }),
+  P("choir", "Chor „Ooh“ weich", "Soft choir “ooh”", { lage: "auto", vowel: 3.3, singers: 6, breath: 0.25, att: 0.6, rvmix: 0.4, rvtime: 5 }, { cat: "voice", tags: ["weich", "warm"] }),
+  P("choir", "Summen „Mmm“", "Humming “mmm”", { lage: "auto", vowel: 5, singers: 5, breath: 0.1, att: 0.5, rvmix: 0.3, rvtime: 3 }, { cat: "voice", tags: ["weich", "warm", "intim"] }),
+  P("choir", "Knabenchor", "Boys' choir", { lage: "kids", vowel: 3.4, singers: 6, vib: 0.2, rvmix: 0.5, rvtime: 6 }, { cat: "voice", tags: ["hell", "klassisch"] }),
+  P("choir", "Männerchor tief", "Low male choir", { lage: "bass", vowel: 3, singers: 6, vib: 0.25, rvmix: 0.4, rvtime: 5 }, { cat: "voice", tags: ["dunkel"] }),
+  P("choir", "Frauenchor", "Women's choir", { lage: "soprano", vowel: 0.2, singers: 6, rvmix: 0.4, rvtime: 4.5 }, { cat: "voice", tags: ["hell"] }),
+  P("choir", "Kammerchor", "Chamber choir", { lage: "auto", vowel: 0.4, singers: 3, spread: 0.3, rvmix: 0.3, rvtime: 2.6 }, { cat: "voice", tags: ["klassisch", "intim"] }),
+  P("choir", "Großer Chor im Dom", "Grand choir in the cathedral", { vol: 0.65, lage: "auto", vowel: 0, singers: 8, spread: 0.55, att: 0.5, rvmix: 0.65, rvtime: 12, rvsize: 1, rvpre: 0.06, fwidth: 0.4 }, { cat: "voice", tags: ["lang", "hall", "klassisch"] }),
+  P("choir", "Gregorianik", "Gregorian chant", { lage: "tenor", vowel: 3, singers: 5, vib: 0.1, spread: 0.2, rvmix: 0.7, rvtime: 14, rvsize: 1 }, { cat: "voice", tags: ["dunkel", "lang", "hall"] }),
+  P("choir", "Engelschor", "Angel choir", { lage: "kids", vowel: 0.3, singers: 6, att: 0.9, rvmix: 0.6, rvtime: 12, rvshim: 0.45, fwidth: 0.5 }, { cat: "voice", tags: ["hell", "schwebend", "lang"] }),
+  P("choir", "Vokal-Fläche wandernd", "Moving vowel pad", { lage: "auto", vowel: 1, vmove: 0.6, vrate: 0.12, singers: 6, att: 1.2, rel: 2.5, rvmix: 0.5, rvtime: 8 }, { cat: "pad", tags: ["schwebend", "lang"] }),
+  P("choir", "Solo-Stimme „Aah“", "Solo voice “aah”", { lage: "alto", vowel: 0, singers: 1, vib: 0.55, vibdel: 0.3, att: 0.12, rvmix: 0.3, rvtime: 3, mode: "legato", glide: 0.08 }, { cat: "voice", tags: ["intim"] }),
+  P("choir", "Solo-Sopran", "Solo soprano", { lage: "soprano", vowel: 0.1, singers: 1, vib: 0.7, att: 0.15, rvmix: 0.4, rvtime: 4, mode: "legato", glide: 0.06 }, { cat: "voice", tags: ["hell", "klassisch"] }),
+  P("choir", "Pop-Vocal-Stack", "Pop vocal stack", { lage: "alto", vowel: 0.6, singers: 3, spread: 0.25, att: 0.04, rel: 0.4, vib: 0.2, rvmix: 0.2, rvtime: 1.8, dlmix: 0.15, dltime: "1/8" }, { cat: "voice", tags: ["hell", "kurz"] }),
+  P("choir", "Flüsterchor", "Whisper choir", { lage: "auto", whisper: 0.85, breath: 0.4, singers: 6, att: 0.4, rvmix: 0.5, rvtime: 6 }, { cat: "voice", tags: ["dunkel", "wild"] }),
+  P("choir", "Obertonsänger", "Overtone singer", { lage: "bass", vowel: 3.5, singers: 1, overtone: 0.85, vib: 0.05, vrate: 0.08, rvmix: 0.45, rvtime: 6 }, { cat: "voice", tags: ["wild", "welt"] }),
+  P("choir", "Roboterstimme", "Robot voice", { lage: "tenor", robot: true, singers: 1, vowel: 0.5, vmove: 0.4, vrate: 2, breath: 0, rvmix: 0.1, rvtime: 1 }, { cat: "voice", tags: ["wild", "retro"] }),
+  P("choir", "Mönche im Nebel", "Monks in the mist", { lage: "bass", vowel: 3.2, singers: 7, breath: 0.3, att: 1.2, rel: 3, rvmix: 0.7, rvtime: 16, rvsize: 1, rvdamp: 0.25 }, { cat: "voice", tags: ["dunkel", "lang", "hall"] }),
+  P("choir", "Geisterchor", "Ghost choir", { lage: "auto", whisper: 0.45, vmove: 0.5, vrate: 0.2, singers: 6, att: 1.5, rel: 4, rvmix: 0.65, rvtime: 18, rvshim: 0.35, fwidth: 0.6 }, { cat: "texture", tags: ["wild", "dunkel", "lang"] }),
+  // ===== Orchester =====
+  P("orch", "Streichorchester", "String orchestra", { otype: "strings", players: 8, att: 0.3, rel: 0.7, rvmix: 0.35, rvtime: 3.5 }, { cat: "strings", tags: ["klassisch", "warm"] }),
+  P("orch", "Streicher weich (langsam)", "Soft strings (slow)", { otype: "strings", players: 8, att: 0.9, rel: 1.4, bright: 0.35, rvmix: 0.4, rvtime: 4.5 }, { cat: "strings", tags: ["weich", "lang"] }),
+  P("orch", "Filmstreicher", "Film strings", { otype: "strings", players: 8, att: 0.45, rel: 1.2, expr: 0.8, rvmix: 0.55, rvtime: 7, rvsize: 1, fwidth: 0.4, fbody: 0.3 }, { cat: "strings", tags: ["lang", "hall"] }),
+  P("orch", "Violinen", "Violins", { otype: "violins", players: 6, att: 0.18, rvmix: 0.3, rvtime: 3 }, { cat: "strings", tags: ["hell", "klassisch"] }),
+  P("orch", "Bratschen", "Violas", { otype: "violas", players: 5, att: 0.2, rvmix: 0.3, rvtime: 3 }, { cat: "strings", tags: ["warm"] }),
+  P("orch", "Celli", "Cellos", { otype: "cellos", players: 5, att: 0.22, rvmix: 0.3, rvtime: 3 }, { cat: "strings", tags: ["warm", "dunkel"] }),
+  P("orch", "Kontrabässe", "Double basses", { otype: "basses", players: 4, att: 0.25, rvmix: 0.25, rvtime: 2.6 }, { cat: "strings", tags: ["dunkel"] }),
+  P("orch", "Solo-Violine", "Solo violin", { otype: "solovln", players: 1, att: 0.09, vib: 0.8, rvmix: 0.3, rvtime: 2.6, mode: "legato", glide: 0.05 }, { cat: "strings", tags: ["hell", "intim"] }),
+  P("orch", "Solo-Cello", "Solo cello", { otype: "solocello", players: 1, att: 0.1, vib: 0.75, rvmix: 0.3, rvtime: 2.8, mode: "legato", glide: 0.06 }, { cat: "strings", tags: ["warm", "intim"] }),
+  P("orch", "Pizzicato", "Pizzicato", { otype: "pizz", players: 4, att: 0.002, rel: 0.25, vib: 0, rvmix: 0.25, rvtime: 2 }, { cat: "strings", tags: ["kurz"] }),
+  P("orch", "Tremolo-Streicher", "Tremolo strings", { otype: "tremolo", players: 6, att: 0.1, rvmix: 0.35, rvtime: 3.5 }, { cat: "strings", tags: ["spannung"] }),
+  P("orch", "Horn", "French horn", { otype: "horn", players: 1, att: 0.06, rvmix: 0.3, rvtime: 3 }, { cat: "brass", tags: ["warm", "klassisch"] }),
+  P("orch", "Hörner im Saal", "Horns in the hall", { otype: "horn", players: 4, spread: 0.4, att: 0.09, rvmix: 0.5, rvtime: 5, rvsize: 0.9 }, { cat: "brass", tags: ["warm", "hall"] }),
+  P("orch", "Trompete", "Trumpet", { otype: "trumpet", players: 1, att: 0.035, rvmix: 0.2, rvtime: 2, mode: "legato", glide: 0.03 }, { cat: "brass", tags: ["hell"] }),
+  P("orch", "Posaune", "Trombone", { otype: "trombone", players: 1, att: 0.05, rvmix: 0.2, rvtime: 2.2 }, { cat: "brass", tags: ["warm"] }),
+  P("orch", "Tuba", "Tuba", { otype: "tuba", players: 1, att: 0.07, rvmix: 0.2, rvtime: 2 }, { cat: "brass", tags: ["dunkel"] }),
+  P("orch", "Blechbläser-Satz", "Brass section", { otype: "brass", players: 4, att: 0.06, rvmix: 0.3, rvtime: 2.8 }, { cat: "brass", tags: ["hell"] }),
+  P("orch", "Fanfare", "Fanfare", { otype: "brass", players: 5, att: 0.03, expr: 0.9, bright: 0.8, rvmix: 0.4, rvtime: 3.5 }, { cat: "brass", tags: ["hell", "spannung"] }),
+  P("orch", "Flöte", "Flute", { otype: "flute", players: 1, att: 0.06, vib: 0.5, rvmix: 0.3, rvtime: 2.6, mode: "legato", glide: 0.04 }, { cat: "winds", tags: ["weich", "klassisch"] }),
+  P("orch", "Panflöte", "Pan flute", { otype: "panflute", players: 1, att: 0.04, rvmix: 0.35, rvtime: 3.5 }, { cat: "winds", tags: ["weich", "welt"] }),
+  P("orch", "Klarinette", "Clarinet", { otype: "clarinet", players: 1, att: 0.045, rvmix: 0.25, rvtime: 2.2, mode: "legato", glide: 0.03 }, { cat: "winds", tags: ["warm"] }),
+  P("orch", "Oboe", "Oboe", { otype: "oboe", players: 1, att: 0.04, vib: 0.4, rvmix: 0.25, rvtime: 2.4, mode: "legato", glide: 0.03 }, { cat: "winds", tags: ["hell", "klassisch"] }),
+  P("orch", "Fagott", "Bassoon", { otype: "bassoon", players: 1, att: 0.05, rvmix: 0.25, rvtime: 2.2 }, { cat: "winds", tags: ["dunkel"] }),
+  P("orch", "Saxofon", "Saxophone", { otype: "sax", players: 1, att: 0.04, vib: 0.5, rvmix: 0.2, rvtime: 1.8, mode: "legato", glide: 0.04 }, { cat: "winds", tags: ["warm", "jazz"] }),
+  P("orch", "Holzbläser-Satz", "Woodwind section", { otype: "woods", players: 3, att: 0.08, rvmix: 0.3, rvtime: 2.8 }, { cat: "winds", tags: ["klassisch"] }),
+  // ===== Wild & Effekte =====
+  P("wild", "Riser (Rauschen)", "Riser (noise)", { tone: 0, noise: 0.9, fmode: "bp", cut: 300, fsweep: 1, res: 0.5, len: 8, curve: "exp", sus: 1, rel: 0.4, rvmix: 0.35, rvtime: 3 }, { cat: "fx", tags: ["übergang", "spannung"] }),
+  P("wild", "Riser mit Ton", "Tonal riser", { wwave: "saw", tone: 0.7, noise: 0.4, span: 24, curve: "exp", len: 8, cut: 600, fsweep: 0.8, res: 0.4, sus: 1, rel: 0.3, rvmix: 0.3, rvtime: 3, fwidth: 0.5 }, { cat: "fx", tags: ["übergang", "spannung"] }),
+  P("wild", "Absturz (Downlifter)", "Downlifter", { wwave: "saw", tone: 0.6, noise: 0.6, span: -36, curve: "log", len: 3, cut: 8000, fsweep: -0.8, res: 0.3, sus: 0, rel: 0.5, rvmix: 0.4, rvtime: 4 }, { cat: "fx", tags: ["übergang"] }),
+  P("wild", "Einschlag (Boom)", "Impact (boom)", { vol: 0.6, wwave: "sine", tone: 1, noise: 0.6, span: -24, curve: "log", len: 1.2, cut: 900, fsweep: -0.6, sus: 0, rel: 1.5, att: 0.001, rvmix: 0.5, rvtime: 6, fbody: 0.6, fwarm: 0.5 }, { cat: "fx", tags: ["übergang", "dunkel"] }),
+  P("wild", "Laser", "Laser", { wwave: "square", tone: 0.8, noise: 0, span: -40, curve: "log", len: 0.35, cut: 6000, res: 0.6, sus: 0, rel: 0.1, att: 0.001, dlmix: 0.3, dltime: "1/16", dlfb: 0.5 }, { cat: "fx", tags: ["kurz", "retro"] }),
+  P("wild", "Zap-Schuss", "Zap shot", { wwave: "saw", tone: 0.8, span: 30, curve: "exp", len: 0.15, fmi: 0.5, fmr: 3.3, sus: 0, rel: 0.08, att: 0.001, cut: 9000 }, { cat: "fx", tags: ["kurz"] }),
+  P("wild", "Wind", "Wind", { tone: 0, noise: 1, fmode: "bp", cut: 700, res: 0.6, chaos: 0.6, lshape2: "sine", lrate: 0.15, lamt2: 0.6, att: 1.5, sus: 1, rel: 3, rvmix: 0.3, rvtime: 4, width: 1 }, { cat: "fx", tags: ["natur", "lang"] }),
+  P("wild", "Sturm", "Storm", { tone: 0, noise: 1, fmode: "bp", cut: 450, res: 0.75, chaos: 1, lrate: 0.35, lamt2: 0.8, dust: 0.15, att: 1, sus: 1, rel: 3, rvmix: 0.4, rvtime: 5, width: 1 }, { cat: "fx", tags: ["natur", "wild"] }),
+  P("wild", "Regen", "Rain", { tone: 0, noise: 0.25, dust: 0.9, fmode: "hp", cut: 900, res: 0.2, metal: 0.25, att: 0.8, sus: 1, rel: 2, rvmix: 0.35, rvtime: 3, width: 1 }, { cat: "fx", tags: ["natur"] }),
+  P("wild", "Meeresrauschen", "Ocean waves", { tone: 0, noise: 1, fmode: "lp", cut: 1400, res: 0.1, lshape2: "sine", lrate: 0.09, lamt2: 0.85, chaos: 0.3, att: 2, sus: 1, rel: 4, rvmix: 0.35, rvtime: 5, width: 1 }, { cat: "fx", tags: ["natur", "lang", "weich"] }),
+  P("wild", "Gewitter", "Thunderstorm", { wwave: "sine", tone: 0.3, noise: 1, fmode: "lp", cut: 220, res: 0.3, span: -12, curve: "log", len: 4, dust: 0.2, chaos: 0.8, att: 0.05, sus: 0.3, rel: 5, rvmix: 0.6, rvtime: 9, fbody: 0.7 }, { cat: "fx", tags: ["natur", "dunkel", "wild"] }),
+  P("wild", "Knisterndes Feuer", "Crackling fire", { tone: 0, noise: 0.35, dust: 0.75, fmode: "lp", cut: 2600, res: 0.2, chaos: 0.4, lshape2: "rand", lrate: 3, lamt2: 0.3, att: 0.5, sus: 1, rel: 1.5, rvmix: 0.15, rvtime: 1.5, width: 0.8 }, { cat: "fx", tags: ["natur", "warm"] }),
+  P("wild", "Alien-Geplapper", "Alien chatter", { vol: 0.6, wwave: "square", tone: 0.8, noise: 0.05, jump: 0.7, jrate: 11, fmi: 0.4, fmr: 2.7, fmode: "bp", cut: 1500, res: 0.55, chaos: 0.5, sus: 1, rel: 0.3, dlmix: 0.25, dltime: "1/8T", dlfb: 0.4 }, { cat: "fx", tags: ["wild", "retro"] }),
+  P("wild", "Roboter-Sprache", "Robot speech", { wwave: "saw", tone: 0.9, jump: 0.35, jrate: 7, ring: 0.7, ringr: 2.2, crush: 0.45, fmode: "bp", cut: 1200, res: 0.6, sus: 1, rel: 0.2 }, { cat: "fx", tags: ["wild", "retro"] }),
+  P("wild", "Sonar-Ping", "Sonar ping", { wwave: "sine", tone: 1, noise: 0, len: 0.9, sus: 0, rel: 0.8, att: 0.001, dlmix: 0.5, dltime: "1/2", dlfb: 0.6, dltone: 0.3, rvmix: 0.5, rvtime: 7 }, { cat: "fx", tags: ["lang", "echo"] }),
+  P("wild", "Glitch-Stotterer", "Glitch stutter", { wwave: "square", tone: 0.7, noise: 0.4, crush: 0.6, jump: 0.5, jrate: 16, lshape2: "rand", lrate: 14, lamt2: 1, sus: 1, rel: 0.1, fmode: "bp", cut: 2500, res: 0.4 }, { cat: "fx", tags: ["wild", "kurz"] }),
+  P("wild", "Metall-Drohne", "Metal drone", { wwave: "saw", tone: 0.5, noise: 0.3, metal: 0.9, fmode: "bp", cut: 1800, res: 0.5, chaos: 0.3, att: 2, sus: 1, rel: 4, rvmix: 0.5, rvtime: 10, width: 0.8 }, { cat: "texture", tags: ["dunkel", "wild", "lang"] }),
+  P("wild", "Abgrund (dunkle Drohne)", "Abyss (dark drone)", { wwave: "saw", tone: 0.8, noise: 0.2, fmode: "lp", cut: 260, res: 0.6, chaos: 0.25, fmi: 0.15, fmr: 0.5, att: 3, sus: 1, rel: 6, rvmix: 0.6, rvtime: 16, fwarm: 0.6, fbody: 0.5 }, { cat: "texture", tags: ["dunkel", "lang"] }),
+  P("wild", "Herzschlag", "Heartbeat", { wwave: "sine", tone: 1, noise: 0.05, fmode: "lp", cut: 180, res: 0.2, lshape2: "heart", lrate: 1.1, lamt2: 1, sus: 1, rel: 0.4, fbody: 0.7, fwarm: 0.5 }, { cat: "fx", tags: ["dunkel", "spannung"] }),
+  P("wild", "Radio-Rauschen", "Radio static", { wwave: "sine", tone: 0.4, noise: 0.7, dust: 0.5, fmode: "bp", cut: 1800, res: 0.5, jump: 0.6, jrate: 3, crush: 0.4, sus: 1, rel: 0.3 }, { cat: "fx", tags: ["retro", "wild"] }),
+  P("wild", "Raumschiff-Antrieb", "Spaceship engine", { wwave: "saw", tone: 0.7, noise: 0.5, fmode: "lp", cut: 500, res: 0.7, lshape2: "sine", lrate: 6, lamt2: 0.3, ring: 0.3, ringr: 0.5, att: 1, sus: 1, rel: 2, rvmix: 0.3, rvtime: 4, fbody: 0.5 }, { cat: "fx", tags: ["dunkel", "wild"] }),
+  P("wild", "Weltraum-Textur", "Space texture", { wwave: "sine", tone: 0.5, noise: 0.35, fmi: 0.35, fmr: 1.41, chaos: 0.5, fmode: "bp", cut: 1200, res: 0.6, att: 3, sus: 1, rel: 6, rvmix: 0.7, rvtime: 20, rvshim: 0.4, width: 1 }, { cat: "texture", tags: ["lang", "schwebend", "wild"] }),
+  P("wild", "Zeitmaschine", "Time machine", { wwave: "saw", tone: 0.7, noise: 0.3, span: 36, curve: "bounce", len: 6, fmi: 0.6, fmr: 2.5, chaos: 0.6, cut: 2400, fsweep: 0.6, res: 0.5, sus: 1, rel: 2, dlmix: 0.35, dltime: "1/8", dlfb: 0.7, rvmix: 0.4, rvtime: 8 }, { cat: "fx", tags: ["wild", "übergang"] }),
+  P("wild", "Unterwasser", "Underwater", { wwave: "sine", tone: 0.5, noise: 0.6, dust: 0.3, fmode: "lp", cut: 350, res: 0.5, chaos: 0.5, lrate: 0.3, lamt2: 0.4, att: 1.5, sus: 1, rel: 3, rvmix: 0.5, rvtime: 6, fbody: 0.5 }, { cat: "fx", tags: ["natur", "dunkel"] }),
+  P("wild", "Insektenschwarm", "Insect swarm", { wwave: "saw", tone: 0.6, noise: 0.2, jump: 0.15, jrate: 30, fmi: 0.2, fmr: 1.02, fmode: "bp", cut: 3000, res: 0.5, lshape2: "rand", lrate: 25, lamt2: 0.4, att: 1, sus: 1, rel: 1, width: 1 }, { cat: "fx", tags: ["natur", "wild"] }),
+  P("wild", "Glasscherben", "Shattering glass", { tone: 0, noise: 0.3, dust: 1, fmode: "hp", cut: 3000, metal: 0.85, len: 1, sus: 0, rel: 1.2, att: 0.001, rvmix: 0.4, rvtime: 3, width: 1 }, { cat: "fx", tags: ["kurz", "wild"] }),
+  // ===== Gitarren, Harfe & Zupfinstrumente (Saite) =====
+  P("pluck", "Nylon-Gitarre", "Nylon guitar", { bright: 0.35, damp: 0.45, decay: 3, pos: 0.18, body: 0.6, velb: 0.5, rvmix: 0.15, rvtime: 1.6 }, { cat: "guitar", tags: ["warm", "weich"] }),
+  P("pluck", "Stahlsaiten-Gitarre", "Steel-string guitar", { bright: 0.65, damp: 0.25, decay: 4, pos: 0.14, body: 0.5, velb: 0.6, rvmix: 0.15, rvtime: 1.8 }, { cat: "guitar", tags: ["hell"] }),
+  P("pluck", "Harfe im Hall", "Harp in the hall", { bright: 0.45, damp: 0.3, decay: 7, pos: 0.3, body: 0.35, rel: 3, rvmix: 0.55, rvtime: 9, rvshim: 0.2 }, { cat: "guitar", tags: ["lang", "hall"] }),
+  P("pluck", "Koto mit Hall", "Koto with reverb", { vol: 0.65, bright: 0.75, damp: 0.2, decay: 3.5, pos: 0.08, body: 0.3, velb: 0.7, rvmix: 0.2, rvtime: 2.2, l1dest: "pitch", l1rate: 5, l1amt: 0.02 }, { cat: "world", tags: ["hell", "welt"] }),
+  P("pluck", "Cembalo", "Harpsichord", { vol: 0.65, bright: 0.9, damp: 0.1, decay: 2.2, pos: 0.07, body: 0.2, velb: 0.2, rel: 0.25, rvmix: 0.2, rvtime: 2 }, { cat: "keys", tags: ["hell", "klassisch", "retro"] }),
+  P("pluck", "Banjo", "Banjo", { vol: 0.7, bright: 0.85, damp: 0.15, decay: 1.4, pos: 0.1, body: 0.15, velb: 0.6 }, { cat: "guitar", tags: ["hell", "kurz"] }),
+  P("pluck", "Ukulele", "Ukulele", { bright: 0.5, damp: 0.4, decay: 1.6, pos: 0.2, body: 0.65, velb: 0.5, rvmix: 0.12, rvtime: 1.2 }, { cat: "guitar", tags: ["warm", "kurz"] }),
+  P("pluck", "Hackbrett", "Hammered dulcimer", { bright: 0.8, damp: 0.15, decay: 4.5, pos: 0.12, body: 0.3, velb: 0.7, rvmix: 0.25, rvtime: 2.6, fwidth: 0.3 }, { cat: "world", tags: ["hell", "welt"] }),
+  P("pluck", "Akustik-Gitarre mit Echo", "Acoustic guitar with echo", { bright: 0.55, damp: 0.3, decay: 3.5, pos: 0.16, body: 0.5, dlmix: 0.3, dltime: "3/16", dlfb: 0.45, rvmix: 0.25, rvtime: 2.6 }, { cat: "guitar", tags: ["echo"] }),
+  // ===== Orgeln mit Raum =====
+  P("organ", "Kirchenorgel (Plenum)", "Church organ (full)", { vol: 0.65, db1: 8, db2: 6, db3: 8, db4: 8, db5: 6, db6: 7, db7: 4, db8: 4, db9: 5, leslie: "off", drive: 0, click: 0.05, rvmix: 0.6, rvtime: 9, rvsize: 1, rvpre: 0.05 }, { cat: "organ", tags: ["klassisch", "hall", "lang"] }),
+  P("organ", "Flöte 8' im Kirchenschiff", "Flute 8' in the nave", { db1: 0, db2: 0, db3: 8, db4: 3, db5: 0, db6: 0, db7: 0, db8: 0, db9: 0, leslie: "off", drive: 0, click: 0, rvmix: 0.55, rvtime: 8, rvsize: 1 }, { cat: "organ", tags: ["weich", "hall"] }),
+  // ===== Flächen & Texturen (Analog mit Raum) =====
+  P("poly", "Eisige Shimmer-Fläche", "Icy shimmer pad", { o1w: "saw", o2w: "saw", o2lvl: 0.7, o2fine: 8, cut: 2400, res: 0.15, aa: 1.2, ad: 2, as: 0.8, ar: 3, unidet: 0.35, rvmix: 0.6, rvtime: 14, rvshim: 0.5, fwidth: 0.6 }, { cat: "pad", tags: ["hell", "schwebend", "lang"] }),
+  P("poly", "Endlose Fläche (eingefroren)", "Endless pad (frozen)", { o1w: "saw", o2w: "square", o2lvl: 0.5, o2fine: 6, cut: 1500, res: 0.2, aa: 1.5, as: 0.9, ar: 4, rvmix: 0.7, rvtime: 30, rvsize: 1, fwidth: 0.5 }, { cat: "texture", tags: ["lang", "schwebend"] }),
+  P("poly", "Wolkenfläche", "Cloud pad", { o1w: "tri", o2w: "saw", o2lvl: 0.4, o2fine: 12, cut: 1100, res: 0.1, aa: 2, ad: 2, as: 0.85, ar: 5, l1dest: "cut", l1rate: 0.1, l1amt: 0.25, rvmix: 0.55, rvtime: 10, dlmix: 0.2, dltime: "3/8", fwidth: 0.5, fwarm: 0.3 }, { cat: "pad", tags: ["weich", "lang"] }),
+  P("strings", "Mellotron-Streicher", "Mellotron strings", { o1w: "saw", o2w: "saw", o2lvl: 0.5, o2fine: 5, uni: 3, unidet: 0.2, ftype: "lp12", cut: 2200, aa: 0.18, ar: 0.6, l1dest: "pitch", l1rate: 0.5, l1amt: 0.025, fwarm: 0.55, rvmix: 0.25, rvtime: 2.4 }, { cat: "retro", tags: ["retro", "warm"] }),
+  P("wave", "Wandernde Wavetable-Welt", "Drifting wavetable world", { o1w: "wt", wtset: "vocal", wtpos: 0.3, wtlfo: 0.7, l2rate: 0.08, o2w: "wt", o2fine: 7, o2lvl: 0.5, cut: 5000, res: 0.1, fenv: 0, aa: 1.5, as: 0.9, ar: 4, rvmix: 0.55, rvtime: 12, rvshim: 0.25, dlmix: 0.25, dltime: "1/4", fwidth: 0.6 }, { cat: "texture", tags: ["lang", "schwebend"] }),
 ];
 
 // ---- Demo-Projekt: "Neon Drive", Synthwave in a-Moll, 100 BPM ----
@@ -627,4 +869,96 @@ export function demoProject(L) {
     fx: { revSize: 0.6, revDecay: 2.6, dlyTime: "3/16", dlyFb: 0.35, dlyTone: 0.5 },
     master: { vol: 0 },
   };
+}
+
+// =====================================================================================================
+// Gemessen: Die Hall-Impulsantwort trug +24 dB Energie gegenüber dem trockenen Signal — schon ein Send von 15 % machte den Hall
+// 5,5 dB LAUTER als das Instrument, die Stereo-Seite war so laut wie die Mitte (auch im Bass). Das klang dünn und hohl.
+// Jetzt: Impulsantwort auf eine feste Energie (+3 dB → Send 15 % ≈ 15 dB unter trocken), Hall ohne Tiefen, Bass mono.
+// =====================================================================================================
+export const IR_ENERGY = 2;   // +3 dB
+export function normIR(buf, target = IR_ENERGY) {
+  let e = 0; for (let c = 0; c < buf.numberOfChannels; c++) { const d = buf.getChannelData(c); for (let i = 0; i < d.length; i++) e += d[i] * d[i]; }
+  e /= buf.numberOfChannels; if (!(e > 0)) return buf;
+  const k = Math.sqrt(target / e); for (let c = 0; c < buf.numberOfChannels; c++) { const d = buf.getChannelData(c); for (let i = 0; i < d.length; i++) d[i] *= k; }
+  return buf;
+}
+// Hall-Rückweg ohne Tiefen: Hochpass, damit Bass und Grundtöne trocken und in der Mitte bleiben
+export function reverbReturn(c, freq = 180) { const f = c.createBiquadFilter(); f.type = "highpass"; f.frequency.value = freq; f.Q.value = 0.6; return f; }
+export function monoBass(c, freq = 120) {
+  const inp = c.createGain(), sp = c.createChannelSplitter(2), mid = c.createGain(), side = c.createGain(), inv = c.createGain(), sInv = c.createGain();
+  const h1 = c.createBiquadFilter(), h2 = c.createBiquadFilter(), mg = c.createChannelMerger(2), out = c.createGain();
+  inp.channelCount = 2; inp.channelCountMode = "explicit"; inp.channelInterpretation = "speakers";
+  mid.gain.value = 0.5; side.gain.value = 0.5; inv.gain.value = -1; sInv.gain.value = -1;
+  for (const h of [h1, h2]) { h.type = "highpass"; h.frequency.value = freq; h.Q.value = Math.SQRT1_2; }
+  inp.connect(sp); sp.connect(mid, 0); sp.connect(mid, 1); sp.connect(side, 0); sp.connect(inv, 1); inv.connect(side);
+  side.connect(h1); h1.connect(h2); h2.connect(sInv);
+  mid.connect(mg, 0, 0); h2.connect(mg, 0, 0); mid.connect(mg, 0, 1); sInv.connect(mg, 0, 1); mg.connect(out);
+  return { inp, out, h1, h2 };
+}
+// Fülle: sanfte Sättigung (Obertöne machen den Bass auch auf kleinen Lautsprechern hörbar), Wärme um 180 Hz, ein leiser
+export function fullness(c) {
+  const inp = c.createGain(), sat = c.createWaveShaper(), pre = c.createGain(), post = c.createGain(), warm = c.createBiquadFilter(), comp = c.createDynamicsCompressor(), mk = c.createGain(), out = c.createGain();
+  sat.oversample = "4x"; warm.type = "peaking"; warm.frequency.value = 180; warm.Q.value = 0.7;
+  comp.knee.value = 12; comp.attack.value = 0.02; comp.release.value = 0.25;
+  inp.connect(pre); pre.connect(sat); sat.connect(post); post.connect(warm); warm.connect(comp); comp.connect(mk); mk.connect(out);
+  let last = -1;
+  const set = (v, now) => {
+    v = Math.max(0, Math.min(1, +v || 0)); const t = now ?? c.currentTime;
+    if (Math.abs(v - last) > 1e-4) {
+      // weiche Kennlinie mit etwas Asymmetrie (gerade Obertöne = warm), Antrieb mit der Fülle
+      const n = 2048, cv = new Float32Array(n), d = 1 + v * 2.2, a = v * 0.12;
+      for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1, y = Math.tanh(d * (x + a * x * x)) / Math.tanh(d); cv[i] = y; }
+      sat.curve = v > 0 ? cv : null; last = v;
+    }
+    pre.gain.setTargetAtTime(v > 0 ? 0.5 : 1, t, 0.02); post.gain.setTargetAtTime(v > 0 ? 2 : 1, t, 0.02);
+    warm.gain.setTargetAtTime(v * 7, t, 0.05);
+    comp.threshold.setTargetAtTime(v > 0 ? -8 - v * 12 : 0, t, 0.05); comp.ratio.setTargetAtTime(1 + v * 1.8, t, 0.05);
+    mk.gain.setTargetAtTime(Math.pow(10, (v * 2) / 20), t, 0.05);   // +1 dB bei 50 %: der erzeugte Track bleibt unter −1 dBTP
+  };
+  set(0.5, 0);
+  return { inp, out, set, comp };
+}
+
+// =====================================================================================================
+// 3.21 Klangwahl: Kategorien und Schlagworte. Die neuen Klänge tragen sie selbst (cat, tags),
+// die älteren werden nach Modell und Namen eingeordnet.
+// =====================================================================================================
+export const CATS = [["keys", "🎹", "Klavier & Keys", "Piano & keys"], ["organ", "⛪", "Orgeln", "Organs"], ["mallet", "🔔", "Glocken & Mallets", "Bells & mallets"],
+  ["strings", "🎻", "Streicher", "Strings"], ["brass", "🎺", "Blechbläser", "Brass"], ["winds", "🪈", "Holz & Flöten", "Woodwinds & flutes"],
+  ["guitar", "🎸", "Gitarren & Zupfinstrumente", "Guitars & plucked"], ["voice", "🗣", "Chöre & Stimmen", "Choirs & voices"], ["world", "🌍", "Welt", "World"],
+  ["pad", "☁️", "Flächen", "Pads"], ["texture", "🌌", "Texturen & Klangwelten", "Textures & soundscapes"], ["bass", "🔊", "Bässe", "Basses"],
+  ["lead", "⚡", "Leads", "Leads"], ["poly", "🎛", "Synth-Akkorde & Stabs", "Synth chords & stabs"], ["pluck", "💧", "Plucks & Arps", "Plucks & arps"],
+  ["retro", "📼", "Retro & String Machines", "Retro & string machines"], ["fx", "💥", "Effekte & Übergänge", "Effects & transitions"]];
+export const TAG_NAMES = { weich: ["weich", "soft"], warm: ["warm", "warm"], hell: ["hell", "bright"], dunkel: ["dunkel", "dark"], lang: ["lang", "long"], kurz: ["kurz", "short"],
+  hall: ["viel Hall", "big reverb"], echo: ["Echo", "echo"], schwebend: ["schwebend", "floating"], intim: ["intim", "intimate"], klassisch: ["klassisch", "classical"],
+  retro: ["retro", "retro"], lofi: ["Lo-Fi", "lo-fi"], jazz: ["Jazz", "jazz"], welt: ["Welt", "world"], natur: ["Natur", "nature"], wild: ["wild", "wild"], spannung: ["Spannung", "tension"], übergang: ["Übergang", "transition"] };
+export function catOf(pr) {
+  if (pr.cat) return pr.cat;
+  const n = pr.de, m = pr.model;
+  if (["ep", "rhodes", "wurli", "clav"].includes(m)) return "keys";
+  if (["organ", "b3"].includes(m)) return "organ";
+  if (m === "pluck") return /gitarre|harfe/i.test(n) ? "guitar" : /Koto/.test(n) ? "world" : "pluck";
+  if (m === "strings") return "retro";
+  if (/Bass|Sub|Reese|303|Acid|Drone-Bass|Taurus|Wobble/i.test(n) || ["acid", "taurus"].includes(m)) return "bass";
+  if (/Glock|Glocke|Bell|Marimba|Celesta|Vibra/i.test(n)) return "mallet";
+  if (/Brass|Bläser|Horn|Fanfare/i.test(n)) return "brass";
+  if (/Streicher|Strings|Celli|Cello|Geige/i.test(n)) return "strings";
+  if (/Orgel/i.test(n)) return "organ";
+  if (/Piano|E-Piano|EP |Keys|Klavier/i.test(n)) return "keys";
+  if (/Lead|Solo|Sync|Singend|Stimme/i.test(n)) return "lead";
+  if (/Arp|Pluck|Gezupft|Tropfen/i.test(n)) return "pluck";
+  if (/Fläche|Pad|Drone|Wolke|Chor|Choir|Teppich|Atmo/i.test(n)) return "pad";
+  return "poly";
+}
+export function tagsOf(pr) {
+  if (pr.tags) return pr.tags;
+  const n = pr.de, t = [];
+  if (/warm|weich|rund|sanft|Ballade/i.test(n)) t.push("warm");
+  if (/hell|glas|klar|Glocke|bright/i.test(n)) t.push("hell");
+  if (/dunkel|tief|Drone|dark/i.test(n)) t.push("dunkel");
+  if (/80er|70er|Juno|Prophet|Jupiter|OB-X|Moog|CS-80|PPG|DX7|M1|Vintage|Retro|Solina/i.test(n + " " + pr.model)) t.push("retro");
+  if (/Fläche|Pad|Drone/i.test(n)) t.push("lang");
+  if (/Stab|kurz|Pluck|gedämpft|Arp/i.test(n)) t.push("kurz");
+  return t;
 }

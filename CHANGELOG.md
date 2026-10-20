@@ -3,6 +3,40 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.21.0 — 2026-10-20 (bridge 3.17.0)
+
+### Added
+- **Many new instruments**, computed like the synths (no samples), in the loop machine and in *Make your own* — 232
+  sounds instead of 110:
+  - **Piano & grand** — concert grand, felt soft pianos (long reverb, echo, shimmer, endless), upright, honky-tonk,
+    bright and dark grands, celesta, toy piano. Hammer hardness, felt, strike point, hammer and key noise, string
+    stiffness, unison width, octave stretch, sustain and damper.
+  - **Mallets & bells** — marimba, xylophone, vibraphone with motor, glockenspiel, music box, kalimba, tubular and
+    church bells, steel drum, singing bowl, glass, gong.
+  - **Choir & voices** — mixed, boys', male and female choirs, humming, chant, solo voices, pop vocal stack, whisper,
+    overtone singing, robot voice; vowel a/e/i/o/u/hum (also moving), up to eight singers per note, vibrato with delay.
+  - **Orchestra** — string sections, solo violin and cello, pizzicato, tremolo, horn, trumpet, trombone, tuba, brass
+    section, flute, pan flute, clarinet, oboe, bassoon, saxophone, woodwind section.
+  - **Wild & effects** — risers, downlifter, impact, laser, zap, wind, storm, rain, ocean, thunderstorm, crackling
+    fire, alien chatter, robot speech, sonar, glitch, metal and dark drones, heartbeat, radio static, spaceship, space
+    texture, time machine, underwater, insect swarm, shattering glass.
+  - Plus guitars, harps, harpsichord, banjo, ukulele, hammered dulcimer, church organ and new pads and textures.
+- **Every instrument has its own space:** reverb up to 30 s (size, pre-delay, highs, shimmer an octave up, freeze),
+  echo in time or free in ms (feedback, tone) and *Body & width* (warmth, body, air, width — also for mono sounds).
+  The tail keeps ringing after the last note.
+- **Sound browser** instead of one long list: 17 categories, search (names, categories and tags), tag chips,
+  ★ favourites, recent sounds and ▶︎ listen. A click selects right away — you hear it in the running loop —, the arrow
+  keys browse and select, Enter or a double-click closes it. In *Make your own* it also lists *My sounds*.
+- *Surprise me* now also reaches for the new instruments, depending on the style.
+
+### Changed
+- **Fuller sound.** Measured: the shared reverb's impulse response carried +24 dB of energy, so a 15 % send made the
+  reverb 5.5 dB louder than the instrument itself, and the stereo side was as loud as the middle, even in the bass —
+  thin and hollow. The impulse response is now normalised, the reverb return starts at 180 Hz, the bass below 120 Hz is
+  kept mono, and a new **Body** control on the master adds gentle saturation, warmth around 180 Hz and a soft
+  compressor (default 50 %). Measured on the demo and on rolled sets: side 17 dB below the middle (before 2.5 dB),
+  bass 35–68 dB below, louder and denser without clipping. Also in *Make your own* and in generated tracks.
+
 ## 3.20.0 — 2026-10-20 (bridge 3.17.0)
 
 ### Added
