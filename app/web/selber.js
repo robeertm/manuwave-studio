@@ -6,7 +6,8 @@
 // → WAV → Bibliothek; der Mac veredelt ihn wie jeden Track, mit Herkunft "selbst eingespielt", nicht KI).
 // Die Oberfläche ist zweisprachig aus sich heraus (T(de, en)) und steht unter translate="no" — der Laufzeit-Übersetzer
 // fasst sie nicht an (Regel aus 3.12: eine Übersetzung ändert, was der Code zurückliest).
-import { SCHEMA, PAD_PARAMS, DRUM_MODELS, GM_TO_PAD, KITS, MODELS, MODEL_GROUPS, PRESETS, defaults, demoProject, knobIdle, markIdle, showValue, fixText, knobWheel, keepAudioAlive } from "./selber-presets.js";
+import { openSoundBrowser } from "./klangwahl.js";
+import { SCHEMA, PAD_PARAMS, DRUM_MODELS, GM_TO_PAD, KITS, normIR, reverbReturn, monoBass, fullness, MODELS, MODEL_GROUPS, PRESETS, defaults, demoProject, CATS, TAG_NAMES, catOf, tagsOf, knobIdle, markIdle, showValue, fixText, knobWheel, keepAudioAlive } from "./selber-presets.js";
 
 const EN = window.MWS_LANG === "en";
 const T = (de, en) => (EN ? en : de);
@@ -129,7 +130,7 @@ function fixProject(p) {
   for (const k of Object.keys(p.patterns)) { const P = p.patterns[k]; P.bars = clamp(Math.round(P.bars || 4), 1, 16); P.notes = P.notes || {}; }
   p.song = Array.isArray(p.song) ? p.song.filter(e => p.patterns[e.p]) : [];
   p.fx = Object.assign({ revSize: 0.55, revDecay: 2.2, dlyTime: "3/16", dlyFb: 0.35, dlyTone: 0.5 }, p.fx || {});
-  p.master = Object.assign({ vol: 0, lo: 0, mid: 0, hi: 0 }, p.master || {});
+  p.master = Object.assign({ vol: 0, lo: 0, mid: 0, hi: 0, fill: 0.5 }, p.master || {});
   p.tracks = (p.tracks || []).slice(0, MAX_TRACKS).map(t => {
     const m = model(t.model);
     t.patch = Object.assign(defaults(m.engine), t.patch || {}); t.patch.engine = m.engine;
@@ -169,32 +170,33 @@ function makeIR(ctx, size, decay) {
     }
     for (let e = 0; e < 7; e++) { const at = pre + Math.floor(sr * (0.004 + size * 0.012 * (e + 1) + (c ? 0.0017 : 0))); if (at < d.length) d[at] += (0.5 - e * 0.06) * (e % 2 ? -1 : 1); }
   }
-  return buf;
+  return normIR(buf);                        // 3.21: feste Energie (+3 dB) — vorher +24 dB, Hall lauter als das Instrument
 }
 function buildGraph(ctx, p, bounce) {
   const node = new AudioWorkletNode(ctx, "mws-engine", { numberOfInputs: 0, numberOfOutputs: 17, outputChannelCount: new Array(17).fill(2),
     processorOptions: { project: engineProject(p), bounce } });
   const master = ctx.createGain();
   master.gain.value = HEADROOM;               // Reserve: die Summe soll selten an den Limiter stoßen (sonst klingt es gequetscht)
-  const mvol = ctx.createGain(); mvol.gain.value = dbGain(p.master.vol || 0);
-  const limiter = new AudioWorkletNode(ctx, "mws-limiter", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { ceil: -1.5 } });
+  const mvol = ctx.createGain(), mono = monoBass(ctx), fill = fullness(ctx); fill.set(p.master.fill ?? 0.5, 0); mvol.gain.value = dbGain(p.master.vol || 0);     // 3.21: Bass mono
+  const limiter = new AudioWorkletNode(ctx, "mws-limiter", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { ceil: -2 } });   // 3.21: −2 dBFS (vorher −1,5) — der dichtere Klang hielt sonst die echten Spitzen nicht unter −1 dBTP
   // 3.20: Klang der Summe — Tiefen (Kuhschwanz 110 Hz), Mitten (Glocke 1 kHz), Höhen (Kuhschwanz 7 kHz); gilt auch beim Erzeugen des Tracks
   const mlo = ctx.createBiquadFilter(), mmid = ctx.createBiquadFilter(), mhi = ctx.createBiquadFilter();
   mlo.type = "lowshelf"; mlo.frequency.value = 110; mmid.type = "peaking"; mmid.frequency.value = 1000; mmid.Q.value = 0.7; mhi.type = "highshelf"; mhi.frequency.value = 7000;
   mlo.gain.value = clamp(+p.master.lo || 0, -12, 12); mmid.gain.value = clamp(+p.master.mid || 0, -12, 12); mhi.gain.value = clamp(+p.master.hi || 0, -12, 12);
-  master.connect(mlo); mlo.connect(mmid); mmid.connect(mhi); mhi.connect(mvol); mvol.connect(limiter);
+  // 3.21: Klang der Summe nach der Fülle
+  master.connect(mono.inp); mono.out.connect(fill.inp); fill.out.connect(mlo); mlo.connect(mmid); mmid.connect(mhi); mhi.connect(mvol); mvol.connect(limiter);
   const out = ctx.createGain(); limiter.connect(out); out.connect(ctx.destination);
   // Hall
-  const revIn = ctx.createGain(), rev = ctx.createConvolver(), revOut = ctx.createGain();
+  const revIn = ctx.createGain(), rev = ctx.createConvolver(), revOut = ctx.createGain(), revHP = reverbReturn(ctx);
   rev.normalize = false; rev.buffer = makeIR(ctx, p.fx.revSize, p.fx.revDecay); revOut.gain.value = 0.8;
-  revIn.connect(rev); rev.connect(revOut); revOut.connect(master);
+  revIn.connect(rev); rev.connect(revHP); revHP.connect(revOut); revOut.connect(master);
   // Echo (Ping-Pong) mit Ton-Filter in der Schleife
   const dlyIn = ctx.createGain(); dlyIn.channelCount = 1; dlyIn.channelCountMode = "explicit"; dlyIn.channelInterpretation = "speakers";
   const dL = ctx.createDelay(4), dR = ctx.createDelay(4), fbL = ctx.createGain(), fbR = ctx.createGain(), tone = ctx.createBiquadFilter(), merge = ctx.createChannelMerger(2), dlyOut = ctx.createGain();
   tone.type = "lowpass"; tone.Q.value = 0.5;
   dlyIn.connect(tone); tone.connect(dL); dL.connect(merge, 0, 0); dL.connect(fbL); fbL.connect(dR); dR.connect(merge, 0, 1); dR.connect(fbR); fbR.connect(tone);
   merge.connect(dlyOut); dlyOut.gain.value = 0.7; dlyOut.connect(master);
-  const g = { ctx, node, master, mlo, mmid, mhi, mvol, limiter, out, revIn, rev, revOut, dlyIn, dL, dR, fbL, fbR, tone, chains: [], bounce: !!bounce };
+  const g = { ctx, node, master, mlo, mmid, mhi, mono, fill, mvol, limiter, out, revIn, rev, revOut, dlyIn, dL, dR, fbL, fbR, tone, chains: [], bounce: !!bounce };
   applyFx(g, p);
   buildChains(g, p);
   if (!bounce) {
@@ -470,6 +472,10 @@ function fmt(p, v) {
   if (u === "st") return (v > 0 ? "+" : "") + Math.round(v * 10) / 10 + (EN ? " st" : " HT");
   if (u === "ct") return (v > 0 ? "+" : "") + Math.round(v) + " ct";
   if (u === "x") return (Math.round(v * 100) / 100).toString().replace(".", EN ? "." : ",") + "×";
+  // 3.21
+  if (u === "ms") return Math.round(v) + " ms";
+  if (u === "pm") return Math.abs(v) < 0.01 ? "0" : (v > 0 ? "+" : "−") + Math.round(Math.abs(v) * 100) + " %";
+  if (u === "vowel") { const V = "aeioum", z = clamp(v, 0, 5), a = Math.floor(Math.min(4.999, z)), f = z - a; return f < 0.05 ? V[a] : f > 0.95 ? V[a + 1] : V[a] + "→" + V[a + 1]; }
   if (u === "pan") return Math.abs(v) < 0.02 ? "C" : (v < 0 ? "L " : "R ") + Math.round(Math.abs(v) * 100);
   if (u === "dB") return (v > 0 ? "+" : "") + v.toFixed(1).replace(".", EN ? "." : ",") + " dB";
   return String(Math.round(v * 100) / 100).replace(".", EN ? "." : ",");
@@ -937,6 +943,9 @@ function renderEditor() {
     presetChorus(t, fac);
     post({ t: "patch", tr: t.id, patch: t.patch }); changed("none"); renderEditor();
   };
+  // 3.21: alle Klänge aller Instrumente in einer Klangwahl (Kategorien, Suche, Favoriten, Probehören)
+  const browse = t.kind === "drums" ? null : h("button", { type: "button", id: "sbBrowse", class: "ghost btn-s", text: T("🎛 Alle Klänge …", "🎛 All sounds …"),
+    title: T("Alle Klänge aller Instrumente — Kategorien, Suche, Schlagworte, Favoriten, Probehören", "Every sound of every instrument — categories, search, tags, favourites, preview"), onclick: () => openSounds(t) });
   const savePre = h("button", { type: "button", class: "ghost btn-s", text: T("💾 Als Klang merken", "💾 Save sound"), title: T("Diesen Klang unter „Meine Klänge“ speichern", "Save this sound under “My sounds”") });
   savePre.onclick = async () => {
     const n = prompt(T("Name für diesen Klang", "Name for this sound"), (t.presetName || "").replace(/ \*$/, "") || T(m.de, m.en)); if (!n) return;
@@ -948,7 +957,7 @@ function renderEditor() {
     ...[["notes", t.kind === "drums" ? T("🥁 Rhythmus", "🥁 Beat") : T("🎼 Noten", "🎼 Notes")], ["sound", T("🎛 Klang", "🎛 Sound")], ["fx", T("🎚 Effekte", "🎚 Effects")]]
       .map(([k, l]) => h("button", { type: "button", role: "tab", class: S.tab === k ? "on" : "", "aria-selected": String(S.tab === k), text: l, onclick: () => { S.tab = k; lsSet(LS_UI, { tab: k }); renderEditor(); } })));
   el.append(h("div", { class: "sb-ehead", style: `--c:${t.color}` },
-    h("span", { class: "sb-tdot" }), h("b", { class: "sb-etitle", text: t.name }), msel, psel, savePre, tabs),
+    h("span", { class: "sb-tdot" }), h("b", { class: "sb-etitle", text: t.name }), msel, psel, browse, savePre, tabs),
     h("p", { class: "sub small sb-ehint", text: (EN ? m.he : m.hd) + (m.g === "classic" ? T(" · Eigener Nachbau, der Name nennt das Vorbild.", " · Our own recreation; the name refers to the original.") : "") }));
   const body = h("div", { id: "sbEBody", class: "sb-ebody" });
   el.append(body);
@@ -1059,8 +1068,9 @@ function renderFx(body, t) {
     sec(T("Summe", "Master"), [
       ...[["lo", "Tiefen", "Lows"], ["mid", "Mitten", "Mids"], ["hi", "Höhen", "Highs"]].map(([k, de, en]) => Object.assign(knob({ k: "m" + k, de, en, min: -12, max: 12, def: 0, u: "dB", st: 0.5, tip: ["Klang der Summe — wirkt auf alle Spuren, auch im fertigen Track", "Tone of the master — works on all tracks, in the finished track too"] },
         S.project.master[k] || 0, (v) => { S.project.master[k] = v; if (S.g) S.g["m" + k].gain.setTargetAtTime(v, S.ctx.currentTime, 0.02); changed("none"); }), { id: "sbM" + k })),
+      Object.assign(knob({ k: "mfill", de: "Fülle", en: "Body", min: 0, max: 1, def: 0.5, u: "%" }, S.project.master.fill ?? 0.5, (v) => { S.project.master.fill = v; if (S.g) S.g.fill.set(v); changed("none"); }), { id: "sbMfill" }),
       knob({ k: "mvol", de: "Gesamtpegel", en: "Master level", min: -24, max: 6, def: 0, u: "dB", st: 0.5 }, S.project.master.vol, (v) => { S.project.master.vol = v; if (S.g) S.g.mvol.gain.setTargetAtTime(dbGain(v), S.ctx.currentTime, 0.02); changed("none"); }),
-      h("p", { class: "sub small", text: T("Am Ende sitzt ein Limiter bei −1,5 dBFS — nichts übersteuert, auch nicht im fertigen Track.", "A limiter at −1.5 dBFS sits at the end — nothing clips, not in the finished track either.") })]),
+      h("p", { class: "sub small", text: T("Am Ende sitzt ein Limiter bei −2 dBFS — nichts übersteuert, auch nicht im fertigen Track (echte Spitzen unter −1 dBTP).", "A limiter at −2 dBFS sits at the end — nothing clips, not in the finished track either (true peaks below −1 dBTP).") })]),
   ));
 }
 
@@ -1477,3 +1487,30 @@ export function showSelber(on) {
 if (tabVisible()) showSelber(true);
 window.mwsSelber = { show: showSelber, state: S, stop: () => stop(), buildGraph, fromMidi: async (rec) => { await init(); await fromMidi(rec); }, refreshLib: () => renderFromLib(),
   async open(id) { await init(); if (id && id !== S.project.id) { const p = await dbGet("projects", id).catch(() => null); if (p) { await openProject(id); } else status(T("Das Projekt gibt es in diesem Browser nicht mehr.", "That project no longer exists in this browser.")); } } };
+
+// ---------- 3.21 Klangwahl ----------
+function soundItems() {
+  const mine = (S.userPresets || []).filter(p => model(p.model).engine !== "drums").map(p => ({ key: "u:" + p.id, name: p.name, sub: (EN ? model(p.model).en : model(p.model).de).split(" · ")[0], cat: "mine", tags: [] }));
+  return mine.concat(PRESETS.filter(p => model(p.model).engine !== "drums").map(p => { const m = model(p.model);
+    return { key: p.model + "|" + p.de, name: EN ? p.en : p.de, alt: EN ? p.de : p.en, sub: (EN ? m.en : m.de).split(" · ")[0], cat: catOf(p), tags: tagsOf(p), desc: EN ? m.he : m.hd }; }));
+}
+function openSounds(t) {
+  const cur = PRESETS.find(p => p.model === t.model && (p.de === t.presetName || p.en === t.presetName));
+  openSoundBrowser({ en: EN, title: T(`Klang für „${t.name}“`, `Sound for “${t.name}”`), items: soundItems(), cats: [["mine", "💾", "Meine Klänge", "My sounds"], ...CATS], tagNames: TAG_NAMES,
+    current: cur ? cur.model + "|" + cur.de : null, onPick: (key) => pickSound(t, key), onPreview: () => previewTrack(t) });
+}
+function pickSound(t, key) {
+  let pr = null, patch, name, mid;
+  if (key.startsWith("u:")) { const u = (S.userPresets || []).find(x => "u:" + x.id === key); if (!u) return; patch = u.patch; name = u.name; mid = u.model; }
+  else { pr = PRESETS.find(p => p.model + "|" + p.de === key); if (!pr) return; patch = pr.patch; name = EN ? pr.en : pr.de; mid = pr.model; }
+  const m = model(mid); snap();
+  t.model = m.id; t.patch = Object.assign(defaults(m.engine), JSON.parse(JSON.stringify(patch))); t.patch.engine = m.engine; t.presetName = name;
+  presetChorus(t, pr);
+  post({ t: "patch", tr: t.id, patch: t.patch }); changed("none"); renderTracks(); renderEditor();
+}
+async function previewTrack(t) {
+  await ensureAudio();
+  const mono = t.patch && (t.patch.mode === "mono" || t.patch.mode === "legato"), notes = mono || t.model === "wild" ? [60] : [57, 60, 64];
+  for (const n of notes) post({ t: "note", tr: t.id, n, v: 0.85, on: true });
+  setTimeout(() => { for (const n of notes) post({ t: "note", tr: t.id, n, on: false }); }, 1200);
+}

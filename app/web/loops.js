@@ -11,7 +11,8 @@
 // Zonen im Oszillator, Frequenzverschieber/Vibrato/Ensemble, Granular, Arp-Ratschen/Leben/Menschlich, Strum, Analog-Drift,
 // 🔒 Klang festhalten beim Würfeln, ⏪ Flow Capture (die letzten Takte nachträglich sichern, Audio + MIDI) und 🔌 MIDI-Ausgang je
 // Generator — damit spielt die Loop-Maschine auch andere Klangerzeuger oder Hardware-Synths.
-import { SCHEMA, KITS, MODELS, MODEL_GROUPS, PRESETS, PAD_TO_GM, GM_TO_PAD, defaults, knobIdle, markIdle, showValue, fixText, mutatePatch, knobWheel, keepAudioAlive } from "./selber-presets.js";
+import { openSoundBrowser } from "./klangwahl.js";
+import { SCHEMA, KITS, MODELS, MODEL_GROUPS, PRESETS, PAD_TO_GM, GM_TO_PAD, defaults, normIR, reverbReturn, monoBass, fullness, CATS, TAG_NAMES, catOf, tagsOf, knobIdle, markIdle, showValue, fixText, mutatePatch, knobWheel, keepAudioAlive } from "./selber-presets.js";
 
 const EN = window.MWS_LANG === "en";
 const T = (de, en) => (EN ? en : de);
@@ -245,7 +246,7 @@ function newGen(kind, o = {}) {
 function demoSet() {
   const st = STYLES.synthwave;
   S.set = { v: 1, id: uid(), name: T("Neon-Schleife", "Neon loop"), bpm: st.bpm, swing: 0.5, root: 9, scale: "minor", prog: "i76", per: 1, style: "synthwave",
-    master: { vol: 0, dj: 0, revSize: 0.6, revDecay: 2.6, lo: 0, mid: 0, hi: 0 }, auto: { on: false, amt: 0.5 }, gens: [], created: Date.now(), changed: Date.now() };
+    master: { vol: 0, dj: 0, revSize: 0.6, revDecay: 2.6, lo: 0, mid: 0, hi: 0, fill: 0.5 }, auto: { on: false, amt: 0.5 }, gens: [], created: Date.now(), changed: Date.now() };
   buildStyle(st, { onlyAdd: true });
   const o = newGen("osc", { p: { wave: "supersaw", freq: 55, snap: "root", level: 0.5, ldest: "pitch", lamt: 0.01, lrate: 0.2 }, fx: { cut: 900, res: 0.4, wob: "1/2", wdepth: 0.35 } });
   if (o) { o.name = T("Drone", "Drone"); S.set.gens.push(o); }
@@ -254,7 +255,7 @@ function demoSet() {
 // 3.20: ein neues Set ist leer — man wählt die Generatoren selbst, stellt sie ein und spielt sie ein; nur 🎲 stellt alles selbst zusammen
 function blankSet() {
   S.set = { v: 1, id: uid(), name: T("Neues Set", "New set"), bpm: 120, swing: 0.5, root: 9, scale: "minor", prog: "i6", per: 1, style: "house", blank: true,
-    master: { vol: 0, dj: 0, revSize: 0.6, revDecay: 2.6, lo: 0, mid: 0, hi: 0 }, auto: { on: false, amt: 0.5 }, gens: [], created: Date.now(), changed: Date.now() };
+    master: { vol: 0, dj: 0, revSize: 0.6, revDecay: 2.6, lo: 0, mid: 0, hi: 0, fill: 0.5 }, auto: { on: false, amt: 0.5 }, gens: [], created: Date.now(), changed: Date.now() };
   return S.set;
 }
 function buildStyle(st, { onlyAdd = false } = {}) {
@@ -271,7 +272,7 @@ function buildStyle(st, { onlyAdd = false } = {}) {
   return add;
 }
 function fixSet(s) {
-  s.master = Object.assign({ vol: 0, dj: 0, revSize: 0.6, revDecay: 2.6, lo: 0, mid: 0, hi: 0 }, s.master || {});
+  s.master = Object.assign({ vol: 0, dj: 0, revSize: 0.6, revDecay: 2.6, lo: 0, mid: 0, hi: 0, fill: 0.5 }, s.master || {});
   s.auto = Object.assign({ on: false, amt: 0.5 }, s.auto || {});
   s.gens = (s.gens || []).filter(g => KIND[g.kind]).slice(0, MAX_GEN);
   const used = new Set();
@@ -307,7 +308,7 @@ function makeIR(ctx, size, decay) {
     for (let i = 0; i < len; i++) { const t = i / sr, env = Math.pow(10, -3 * t / decay), k = 0.15 + 0.8 * Math.min(1, t / decay); const x = rnd(); lp = lp + (x - lp) * (1 - k); d[pre + i] = lp * env * 0.35; }
     for (let e = 0; e < 7; e++) { const at = pre + Math.floor(sr * (0.004 + size * 0.012 * (e + 1) + (c ? 0.0017 : 0))); if (at < d.length) d[at] += (0.5 - e * 0.06) * (e % 2 ? -1 : 1); }
   }
-  return buf;
+  return normIR(buf);                        // 3.21: feste Energie (+3 dB) — vorher +24 dB, Hall lauter als das Instrument
 }
 async function ensureAudio() {
   if (S.ctx && S.g) { if (S.ctx.state !== "running") { try { await S.ctx.resume(); } catch (e) { /* braucht eine Geste */ } } return true; }
@@ -332,19 +333,20 @@ function buildGraph() {
   const djLP = c.createBiquadFilter(), djHP = c.createBiquadFilter(), apLP = c.createBiquadFilter(), apHP = c.createBiquadFilter();
   djLP.type = apLP.type = "lowpass"; djHP.type = apHP.type = "highpass"; djLP.frequency.value = apLP.frequency.value = 20000; djHP.frequency.value = apHP.frequency.value = 10;
   djLP.Q.value = djHP.Q.value = 1.1; apLP.Q.value = apHP.Q.value = 0.9;
-  const mvol = c.createGain();
+  const mvol = c.createGain(), mono = monoBass(c), fill = fullness(c);     // 3.21: Bass mono, Fülle
   // 3.20: Klang der Summe — Tiefen (Kuhschwanz 110 Hz), Mitten (Glocke 1 kHz), Höhen (Kuhschwanz 7 kHz)
   const mlo = c.createBiquadFilter(), mmid = c.createBiquadFilter(), mhi = c.createBiquadFilter();
   mlo.type = "lowshelf"; mlo.frequency.value = 110; mmid.type = "peaking"; mmid.frequency.value = 1000; mmid.Q.value = 0.7; mhi.type = "highshelf"; mhi.frequency.value = 7000;
-  const limiter = new AudioWorkletNode(c, "mws-limiter", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { ceil: -1.5 } });
+  const limiter = new AudioWorkletNode(c, "mws-limiter", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { ceil: -2 } });   // 3.21: −2 dBFS (vorher −1,5) — der dichtere Klang hielt sonst die echten Spitzen nicht unter −1 dBTP
   const tap = new AudioWorkletNode(c, "mws-tap", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] });
   const out = c.createGain();
-  bus.connect(djLP); djLP.connect(djHP); djHP.connect(apLP); apLP.connect(apHP); apHP.connect(mlo); mlo.connect(mmid); mmid.connect(mhi); mhi.connect(mvol); mvol.connect(limiter); limiter.connect(tap); tap.connect(out); out.connect(c.destination);
-  const revIn = c.createGain(), rev = c.createConvolver(), revOut = c.createGain(); rev.normalize = false; revOut.gain.value = 0.8;
-  revIn.connect(rev); rev.connect(revOut); revOut.connect(bus);
+  // 3.21: Klang der Summe nach der Fülle (sonst glich der Kompressor ihn aus)
+  bus.connect(djLP); djLP.connect(djHP); djHP.connect(apLP); apLP.connect(apHP); apHP.connect(mono.inp); mono.out.connect(fill.inp); fill.out.connect(mlo); mlo.connect(mmid); mmid.connect(mhi); mhi.connect(mvol); mvol.connect(limiter); limiter.connect(tap); tap.connect(out); out.connect(c.destination);
+  const revIn = c.createGain(), rev = c.createConvolver(), revOut = c.createGain(), revHP = reverbReturn(c); rev.normalize = false; revOut.gain.value = 0.8;
+  revIn.connect(rev); rev.connect(revHP); revHP.connect(revOut); revOut.connect(bus);
   const metro = c.createGain(); metro.gain.value = 0.5; node.connect(metro, MAX_GEN); metro.connect(c.destination);
   const an = c.createAnalyser(); an.fftSize = 1024; out.connect(an);
-  S.g = { node, bus, djLP, djHP, apLP, apHP, mlo, mmid, mhi, mvol, limiter, tap, out, revIn, rev, revOut, metro, an, anBuf: new Float32Array(1024) };
+  S.g = { node, bus, djLP, djHP, apLP, apHP, mlo, mmid, mhi, mono, fill, mvol, limiter, tap, out, revIn, rev, revOut, metro, an, anBuf: new Float32Array(1024) };
   node.port.onmessage = (e) => onEngine(e.data);
   limiter.port.onmessage = (e) => { S.limit = e.data; };
   tap.port.onmessage = (e) => { for (const f of S.tapUsers) f(e.data); };
@@ -428,6 +430,7 @@ function applyMaster(now0) {
   S.g.djLP.frequency.setTargetAtTime(dj < 0 ? 20000 * Math.pow(150 / 20000, -dj) : 20000, now, tc);
   S.g.djHP.frequency.setTargetAtTime(dj > 0 ? 10 * Math.pow(3000 / 10, dj) : 10, now, tc);
   S.g.mvol.gain.setTargetAtTime(dbGain(m.vol), now, tc);
+  S.g.fill.set(m.fill ?? 0.5, now);
   S.g.mlo.gain.setTargetAtTime(clamp(m.lo || 0, -12, 12), now, tc); S.g.mmid.gain.setTargetAtTime(clamp(m.mid || 0, -12, 12), now, tc); S.g.mhi.gain.setTargetAtTime(clamp(m.hi || 0, -12, 12), now, tc);
   if (S.g.revKey !== m.revSize + ":" + m.revDecay) { S.g.rev.buffer = makeIR(S.ctx, m.revSize, m.revDecay); S.g.revKey = m.revSize + ":" + m.revDecay; }
 }
@@ -837,7 +840,9 @@ async function surprise() {
   if (Math.random() < 0.6 && !S.set.gens.some(g => g.kind === "melody")) { const m = newGen("melody", { preset: pickLead() }); if (m) { S.set.gens.push(m); added.push(m); } }
   // 3.18: die Maschine benutzt die Ideen aus 3.18 gleich mit — Strum, Arp mit Leben, Analog-Drift, ein langsam kreisender Orb
   const rnd = (a, b) => Math.round((a + Math.random() * (b - a)) * 100) / 100;
+  const alt = STYLE_ALT[sk] || {};
   for (const g of added) {
+    const opts = alt[g.kind]; if (opts && opts.length && Math.random() < 0.45) { const key = opts[Math.floor(Math.random() * opts.length)]; if (findPreset(key)) { Object.assign(g, patchFrom(key)); if (g.orb) g.orb.tg = null; } }
     if (g.kind === "chords" && ["lofi", "hiphop", "pop", "disco"].includes(sk) && Math.random() < 0.7) g.p.strum = rnd(0.2, 0.45);
     if (g.kind === "arp") { g.p.life = rnd(0.2, 0.6); if (["techno", "trap", "dnb"].includes(sk) && Math.random() < 0.6) g.p.ratchet = rnd(0.15, 0.4); if (["lofi", "hiphop"].includes(sk)) g.p.human = rnd(0.2, 0.5); }
     if (g.patch && g.patch.engine === "va" && ["synthwave", "ambient", "lofi", "disco"].includes(sk) && Math.random() < 0.6) g.patch.drift = rnd(0.15, 0.4);
@@ -854,7 +859,21 @@ async function surprise() {
   status(T(`🎲 ${st.de} in ${ROOTS[S.set.root]}-${S.set.scale === "major" ? "Dur" : "Moll"}, ${S.set.bpm} BPM — dreh an allem, was dir gefällt.`, `🎲 ${st.en} in ${ROOTS[S.set.root]} ${S.set.scale}, ${S.set.bpm} BPM — turn whatever you like.`)
     + (mn.length ? T(` Dein Eingespieltes bleibt (${mn.join(", ")})${mineH ? ", Tonart und Akkorde kommen aus deinem Spiel" : ""}.`, ` What you played stays (${mn.join(", ")})${mineH ? ", key and chords come from your playing" : ""}.`) : ""));
 }
-function pickLead() { const L = ["mono|Leiter-Lead", "minimoog|Singender Lead", "sh101|101-Lead (PWM)", "ppg|PPG-Stimme", "odyssey|Odyssey-Sync-Lead", "cs80|Vangelis-Lead"]; return L[Math.floor(Math.random() * L.length)]; }
+function pickLead() { const L = ["mono|Leiter-Lead", "minimoog|Singender Lead", "sh101|101-Lead (PWM)", "ppg|PPG-Stimme", "odyssey|Odyssey-Sync-Lead", "cs80|Vangelis-Lead",
+  "orch|Solo-Violine", "orch|Flöte", "orch|Saxofon", "choir|Solo-Stimme „Aah“", "mallet|Vibraphon (Motor)"]; return L[Math.floor(Math.random() * L.length)]; }
+// 3.21: 🎲 greift je Stil auch zu den neuen Instrumenten (Klavier, Chor, Orchester, Mallets)
+const STYLE_ALT = {
+  lofi: { chords: ["piano|Filz-Klavier (Soft Piano)", "piano|Lo-Fi-Kassettenklavier", "mallet|Vibraphon (Motor)"], arp: ["mallet|Kalimba", "mallet|Marimba weich (Filzschlägel)"] },
+  ambient: { chords: ["piano|Nachtklavier (Shimmer)", "choir|Vokal-Fläche wandernd", "orch|Streicher weich (langsam)", "poly|Wolkenfläche"], arp: ["mallet|Spieluhr im Traum", "mallet|Glasharfe", "piano|Celesta im Märchenwald"] },
+  pop: { chords: ["piano|Pop-Flügel hell", "piano|Konzertflügel"], arp: ["mallet|Glockenspiel", "pluck|Stahlsaiten-Gitarre"] },
+  hiphop: { chords: ["piano|Upright warm", "orch|Streichorchester", "choir|Chor „Ooh“ weich"], arp: ["mallet|Glockenspiel"] },
+  trap: { chords: ["choir|Chor „Ooh“ weich", "orch|Filmstreicher"], arp: ["mallet|Spieluhr", "orch|Pizzicato"] },
+  dnb: { chords: ["orch|Filmstreicher", "choir|Engelschor"], arp: ["piano|Ambient-Klavier mit Echo"] },
+  disco: { chords: ["orch|Streichorchester", "piano|Pop-Flügel hell"], arp: ["orch|Pizzicato"] },
+  house: { chords: ["piano|Upright in der Bar"], arp: ["mallet|Steeldrum"] },
+  synthwave: { chords: ["choir|Chor „Aah“ gemischt"], arp: ["mallet|Glocken-Kaskade"] },
+  techno: { chords: ["choir|Mönche im Nebel"], arp: ["mallet|Glasharfe"] },
+};
 
 // =====================================================================================================
 // Autopilot: arrangiert im Takt — tauscht Generatoren, Breakdown mit Filterfahrt, Steigerung vor dem Drop, frische Muster
@@ -1184,7 +1203,8 @@ function fmt(p, v) {
   if (p.k === "cut" && v >= 19900) return T("offen", "open");
   if (u === "Hz") return v >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 1 : 2).replace(".", dec) + " kHz" : (v < 10 ? v.toFixed(2).replace(".", dec) : Math.round(v)) + " Hz";
   if (u === "s") return v < 1 ? Math.round(v * 1000) + " ms" : v.toFixed(2).replace(".", dec) + " s";
-  if (u === "ms") return (v > 0 ? "+" : "") + Math.round(v) + " ms";
+  if (u === "ms") return (p.min < 0 && v > 0 ? "+" : "") + Math.round(v) + " ms";
+  if (u === "vowel") { const V = "aeioum", z = clamp(v, 0, 5), a = Math.floor(Math.min(4.999, z)), f = z - a; return f < 0.05 ? V[a] : f > 0.95 ? V[a + 1] : V[a] + "→" + V[a + 1]; }
   if (u === "%") return Math.round(v * 100) + " %";
   if (u === "ct") return (v > 0 ? "+" : "") + Math.round(v) + " ct";
   if (u === "x") return (Math.round(v * 100) / 100).toString().replace(".", dec) + "×";
@@ -1362,11 +1382,13 @@ const GLOB_MAP = {
   tone: { all: [["fx:hi", 0.3], ["fx:lo", -0.1]] },
   amb: { all: [["fx:rev", 0.45], ["fx:echo", 0.3]] },
   filt: { va: [["s:cut", 0.3], ["s:res", 0.1]], fm: [["s:op2lvl", 0.3], ["s:op3lvl", 0.25], ["s:op4lvl", 0.2], ["s:fb", 0.15]], ep: [["s:tone", 0.45], ["s:bark", 0.25], ["s:bell", 0.2]],
-    organ: [["s:db4", 0.3], ["s:db6", 0.3], ["s:db9", 0.35], ["s:click", 0.2]], pluck: [["s:bright", 0.4], ["s:damp", -0.3]] },
+    organ: [["s:db4", 0.3], ["s:db6", 0.3], ["s:db9", 0.35], ["s:click", 0.2]], pluck: [["s:bright", 0.4], ["s:damp", -0.3]],
+    modal: [["s:hard", 0.35], ["s:velb", 0.15]], vox: [["s:vowel", -0.25], ["s:breath", 0.15]], orch: [["s:bright", 0.4], ["s:expr", 0.15]], wild: [["s:cut", 0.35], ["s:res", 0.1]] },
   env: { va: [["s:aa", 0.3], ["s:ad", 0.2], ["s:ar", 0.3], ["s:fa", 0.2], ["s:fd", 0.2], ["s:fr", 0.25]],
     fm: [1, 2, 3, 4].flatMap(n => [["s:op" + n + "att", 0.25], ["s:op" + n + "dec", 0.2], ["s:op" + n + "rel", 0.25]]),
-    ep: [["s:decay", 0.3], ["s:rel", 0.35], ["s:tinedec", 0.25]], pluck: [["s:decay", 0.3], ["s:rel", 0.35]] },
-  uni: { va: [["s:uni", 0.5], ["s:unidet", 0.3], ["s:unispread", 0.4]] },
+    ep: [["s:decay", 0.3], ["s:rel", 0.35], ["s:tinedec", 0.25]], pluck: [["s:decay", 0.3], ["s:rel", 0.35]],
+    modal: [["s:decay", 0.3], ["s:damper", 0.3]], vox: [["s:att", 0.3], ["s:rel", 0.35]], orch: [["s:att", 0.3], ["s:rel", 0.35]], wild: [["s:att", 0.3], ["s:len", 0.3], ["s:rel", 0.3]] },
+  uni: { va: [["s:uni", 0.5], ["s:unidet", 0.3], ["s:unispread", 0.4]], modal: [["s:uni", 0.4]], vox: [["s:singers", 0.4], ["s:spread", 0.4]], orch: [["s:players", 0.4], ["s:spread", 0.4]] },
 };
 const globOf = (g) => g.glob || (g.glob = { tone: 0, amb: 0, filt: 0, env: 0, vib: 0, uni: 0 });
 function globTargets(g, k) {
@@ -1807,6 +1829,7 @@ function renderTransport() {
       knob(K("revDecay", "Hall-Länge", "Reverb length", 0.4, 8, 2.6, { c: "exp", u: "s" }), S.set.master.revDecay, (v) => { S.set.master.revDecay = Math.round(v * 10) / 10; applyMaster(); changed(); }),
       ...[["lo", "Tiefen", "Lows"], ["mid", "Mitten", "Mids"], ["hi", "Höhen", "Highs"]].map(([k, de, en]) => knob(K("m" + k, de, en, -12, 12, 0, { u: "dB", tip: ["Klang der Summe — wirkt auf alles, auch auf die Aufnahme", "Tone of the master — works on everything, the recording too"] }),
         S.set.master[k] || 0, (v) => { S.set.master[k] = Math.round(v * 2) / 2; applyMaster(); changed(); }, { lk: "master:" + k })),
+      knob(K("mfill", "Fülle", "Body", 0, 1, 0.5, { u: "%", tip: ["Sanfte Sättigung, Wärme um 180 Hz und ein leiser Kompressor auf der Summe — voller, dichter, ohne lauter zu klippen", "Gentle saturation, warmth around 180 Hz and a soft compressor on the master — fuller and denser without clipping"] }), S.set.master.fill ?? 0.5, (v) => { S.set.master.fill = Math.round(v * 100) / 100; applyMaster(); changed(); }, { lk: "master:fill" }),
       knob(K("mvol", "Summe", "Master", -24, 6, 0, { u: "dB" }), S.set.master.vol, (v) => { S.set.master.vol = v; applyMaster(); changed(); }),
       h("canvas", { id: "lpMeter", class: "lp-meter", width: 14, height: 54, "aria-hidden": "true" }), scopeCv("master:out", { cls: "big", title: T("Oszillogramm der Summe (nach dem Begrenzer)", "Oscilloscope of the master (after the limiter)") })),
     h("div", { class: "sb-tgroup lp-auto" },
@@ -1874,10 +1897,27 @@ function soundSelect(g) {
     const s = h("select", { class: "lp-sound", "aria-label": T("Kit", "Kit") }, Object.entries(KITS).map(([k, kt]) => h("option", { value: k, selected: k === g.kit }, EN ? kt.en : kt.de)));
     s.onchange = () => setSound(g, s.value); return s;
   }
-  const s = h("select", { class: "lp-sound", "aria-label": T("Klang", "Sound") },
-    MODEL_GROUPS.filter(([gr]) => gr !== "drums").map(([gr, de, en]) => h("optgroup", { label: EN ? en : de },
-      MODELS.filter(m => m.g === gr).flatMap(m => PRESETS.filter(p => p.model === m.id).map(p => h("option", { value: presetKey(p), selected: presetKey(p) === g.preset }, (EN ? m.en : m.de).split(" · ")[0] + " — " + (EN ? p.en : p.de)))))));
-  s.onchange = () => setSound(g, s.value); return s;
+  // 3.21: statt einer langen Liste die Klangwahl (Kategorien, Suche, Schlagworte, Favoriten, Probehören)
+  const pr = findPreset(g.preset), m = modelOf(g.model), cat = CATS.find(c => c[0] === catOf(pr || { model: g.model, de: "" }));
+  const b = h("button", { type: "button", class: "kw-open lp-sound", title: T("Klang wählen — Kategorien, Suche, Favoriten, Probehören", "Choose a sound — categories, search, favourites, preview") },
+    h("span", { class: "kw-oi", text: cat ? cat[1] : "🎛" }), h("span", { class: "kw-on", text: (pr ? T(pr.de, pr.en) : T("eigener Klang", "custom sound")) + " · " + T(m.de, m.en).split(" · ")[0] }), h("span", { class: "kw-oi", text: "▾" }));
+  b.onclick = () => openSounds(g);
+  return b;
+}
+function soundItems() {
+  return PRESETS.filter(p => modelOf(p.model).engine !== "drums").map(p => { const m = modelOf(p.model);
+    return { key: presetKey(p), name: EN ? p.en : p.de, alt: EN ? p.de : p.en, sub: T(m.de, m.en).split(" · ")[0], cat: catOf(p), tags: tagsOf(p), desc: EN ? m.he : m.hd }; });
+}
+function openSounds(g) {
+  openSoundBrowser({ en: EN, title: T(`Klang für „${g.name}“`, `Sound for “${g.name}”`), items: soundItems(), cats: CATS, tagNames: TAG_NAMES, current: g.preset,
+    onPick: (key) => { const cur = genById(g.id); if (cur) setSound(cur, key); }, onPreview: () => previewSound(genById(g.id)) });
+}
+// ▶︎ Anhören: der gewählte Klang kurz auf diesem Generator (Akkord, einstimmig ein Ton, Bass tief)
+async function previewSound(g) {
+  if (!g || !(await ensureAudio())) return;
+  const mono = g.patch && (g.patch.mode === "mono" || g.patch.mode === "legato"), notes = g.kind === "bass" ? [36] : mono || g.model === "wild" ? [60] : [57, 60, 64];
+  for (const n of notes) post({ t: "note", id: g.id, n, v: 0.85, on: true });
+  setTimeout(() => { for (const n of notes) post({ t: "note", id: g.id, n, on: false }); }, 1200);
 }
 function renderCards() {
   const el = q("#lpCards"); if (!el) return;
@@ -2259,5 +2299,5 @@ export function showLoops(on) {
   else for (const [code, x] of [...S.kbDown]) { S.kbDown.delete(code); noteOff(x.n, x.nn); }
 }
 if (tabVisible()) showLoops(true);
-window.mwsLoops = { show: showLoops, state: S, startAll, stopAll, addGen: (k, o, x) => addGen(k, o, x), toggleTake, undoOwn, clearOwn, freezeGen, drumPad, blankSet, ownSet: (id, own, okey) => { const g = genById(id); g.own = own; g.p.src = "own"; if (okey !== undefined) g.p.okey = okey; post({ t: "gen", g: engineGen(g) }); changed(); paintCard(g); }, takeOver, surprise, yinNotes, detectKey, autoMix, mixTarget, running: () => S.set && S.set.gens.some(genOn),
+window.mwsLoops = { show: showLoops, state: S, setSound: (g, k) => setSound(g, k), openSounds, previewSound, soundItems, startAll, stopAll, addGen: (k, o, x) => addGen(k, o, x), toggleTake, undoOwn, clearOwn, freezeGen, drumPad, blankSet, ownSet: (id, own, okey) => { const g = genById(id); g.own = own; g.p.src = "own"; if (okey !== undefined) g.p.okey = okey; post({ t: "gen", g: engineGen(g) }); changed(); paintCard(g); }, takeOver, surprise, yinNotes, detectKey, autoMix, mixTarget, running: () => S.set && S.set.gens.some(genOn),
   mutate, mutGoto, orbRoll, modDeltas, effFx, flowSave, flowWindow, smf, globTargets, extRow, removeGen, restoreGen, fitNew };

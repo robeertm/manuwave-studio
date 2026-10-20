@@ -925,6 +925,7 @@ class Loops extends AudioWorkletProcessor {
           if (g.ins.l1) modBlock(g.ins, at, to);
           g.ins.render(L, R2, at, to);
           if (!(g.ins instanceof Organ || g.ins instanceof Drums)) { const k = num(g.ins.p.vol, 0.8) / 0.8; if (k !== 1) for (let i = at; i < to; i++) { L[i] *= k; R2[i] *= k; } }
+          if (g.ins.spaceRun) g.ins.spaceRun(L, R2, at, to);           // 3.21: Raum je Instrument
         } else if (g.render) g.render(L, R2, at, to);
       }
       at = to;

@@ -1,0 +1,50 @@
+/* Manuwave Studio 3.21 — Klangwahl (Kategorien, Suche, Kacheln) */
+.kw-wrap{position:fixed;inset:0;z-index:60;background:rgba(5,6,12,.62);display:flex;align-items:center;justify-content:center;padding:24px}
+.kw{width:min(1180px,100%);height:min(780px,100%);display:flex;flex-direction:column;background:linear-gradient(180deg,var(--plate2,#1a1d2e),var(--plate,#12141f));
+  border:1px solid var(--line,#2a2f45);border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.6);overflow:hidden}
+.kw-head{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line,#2a2f45)}
+.kw-title{white-space:nowrap}
+.kw-q{flex:1 1 auto;min-width:0;padding:8px 10px;border-radius:9px;border:1px solid var(--line,#2a2f45);background:rgba(0,0,0,.25);color:inherit;font:inherit}
+.kw-body{flex:1 1 auto;min-height:0;display:flex}
+.kw-nav{flex:0 0 230px;overflow-y:auto;padding:8px;border-right:1px solid var(--line,#2a2f45);display:flex;flex-direction:column;gap:2px}
+.kw-cat{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:7px 9px;border-radius:8px;background:transparent;border:1px solid transparent;color:var(--sub,#a8b0cc);font-size:13px;cursor:pointer}
+.kw-cat:hover{background:rgba(255,255,255,.05);color:inherit}
+.kw-cat.on{background:color-mix(in srgb,var(--neon,#53e3ff) 18%,transparent);border-color:color-mix(in srgb,var(--neon,#53e3ff) 45%,transparent);color:inherit}
+.kw-ci{flex:0 0 22px;text-align:center}
+.kw-cl{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kw-cn{flex:0 0 auto;font-variant-numeric:tabular-nums;font-size:11px;opacity:.7}
+.kw-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column}
+.kw-chips{display:flex;flex-wrap:wrap;gap:6px;padding:10px 12px 4px}
+.kw-chip{font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--line,#2a2f45);background:transparent;color:var(--sub,#a8b0cc);cursor:pointer}
+.kw-chip.on{background:var(--neon,#53e3ff);border-color:var(--neon,#53e3ff);color:#0a0b12}
+.kw-grid{flex:1 1 auto;min-height:0;overflow-y:auto;padding:8px 12px 12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));grid-auto-rows:62px;gap:8px;align-content:start}
+.kw-tile{position:relative;display:flex;flex-direction:column;justify-content:center;gap:3px;text-align:left;padding:8px 30px 8px 11px;border-radius:10px;border:1px solid var(--line,#2a2f45);
+  background:rgba(255,255,255,.03);color:inherit;cursor:pointer;min-width:0}
+.kw-tile:hover{border-color:color-mix(in srgb,var(--neon,#53e3ff) 50%,var(--line,#2a2f45));background:rgba(255,255,255,.06)}
+.kw-tile:focus-visible{outline:2px solid var(--neon,#53e3ff);outline-offset:1px}
+.kw-tile.on{border-color:var(--neon,#53e3ff);background:color-mix(in srgb,var(--neon,#53e3ff) 16%,transparent);box-shadow:0 0 0 1px var(--neon,#53e3ff) inset}
+.kw-tn{font-size:13px;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kw-ts{font-size:11px;color:var(--sub,#a8b0cc);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kw-star{position:absolute;top:6px;right:8px;font-size:14px;color:var(--sub,#a8b0cc);opacity:.55;cursor:pointer}
+.kw-star.on{color:#ffd166;opacity:1}
+.kw-tile:hover .kw-star{opacity:1}
+.kw-none{grid-column:1/-1;color:var(--sub,#a8b0cc)}
+.kw-foot{display:flex;gap:14px;align-items:center;padding:8px 12px;border-top:1px solid var(--line,#2a2f45);font-size:12px;color:var(--sub,#a8b0cc)}
+.kw-hint{margin-left:auto;text-align:right}
+/* Knopf, der die Klangwahl öffnet (statt einer langen Liste) */
+.kw-open{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-width:0;padding:5px 10px;border-radius:8px;border:1px solid var(--line,#2a2f45);background:rgba(0,0,0,.2);color:inherit;font:inherit;font-size:13px;cursor:pointer;text-align:left}
+.kw-open:hover{border-color:var(--neon,#53e3ff)}
+.kw-open .kw-on{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.kw-open .kw-oi{flex:0 0 auto}
+@media (max-width:760px){
+  .kw-wrap{padding:0}
+  .kw{height:100%;border-radius:0}
+  .kw-head{flex-wrap:wrap}
+  .kw-q{order:5;flex:1 1 100%}
+  .kw-body{flex-direction:column}
+  .kw-nav{flex:0 0 auto;flex-direction:row;overflow-x:auto;overflow-y:hidden;border-right:0;border-bottom:1px solid var(--line,#2a2f45)}
+  .kw-cat{width:auto;flex:0 0 auto}
+  .kw-cn{display:none}
+  .kw-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+  .kw-hint{display:none}
+}

@@ -102,6 +102,8 @@ class Biquad {
     this.b0 = (1 + c) / 2 / a0; this.b1 = -(1 + c) / a0; this.b2 = this.b0; this.a1 = -2 * c / a0; this.a2 = (1 - al) / a0; return this; }
   lp(f, q, sr) { const w = TAU * clamp(f, 10, sr * 0.45) / sr, al = Math.sin(w) / (2 * q), c = Math.cos(w), a0 = 1 + al;
     this.b0 = (1 - c) / 2 / a0; this.b1 = (1 - c) / a0; this.b2 = this.b0; this.a1 = -2 * c / a0; this.a2 = (1 - al) / a0; return this; }
+  peak(f, q, db, sr) { const A = Math.pow(10, db / 40), w = TAU * clamp(f, 10, sr * 0.45) / sr, al = Math.sin(w) / (2 * q), c = Math.cos(w), a0 = 1 + al / A;
+    this.b0 = (1 + al * A) / a0; this.b1 = -2 * c / a0; this.b2 = (1 - al * A) / a0; this.a1 = -2 * c / a0; this.a2 = (1 - al / A) / a0; return this; }
   run(x) { const y = this.b0 * x + this.b1 * this.x1 + this.b2 * this.x2 - this.a1 * this.y1 - this.a2 * this.y2;
     this.x2 = this.x1; this.x1 = x; this.y2 = this.y1; this.y1 = y; return y; }
 }
@@ -231,8 +233,16 @@ class Instrument {
     this.arpHeld = []; this.arpIdx = 0; this.arpNote = null; this.arpNext = 0; this.arpOffAt = 0; this.arpUp = true;
     this.setPatch(patch || {});
   }
-  setPatch(p) { this.p = Object.assign({}, p); this.update(); }
-  set(k, v) { this.p[k] = v; this.update(k); }
+  setPatch(p) { this.p = Object.assign({}, p); this.pv = (this.pv || 0) + 1; this.update(); }
+  set(k, v) { this.p[k] = v; this.pv = (this.pv || 0) + 1; this.update(k); }
+  // 3.21 Raum je Instrument (Hall, Echo, Fülle, Breite) — rechnet nur, wenn etwas davon aufgedreht ist, und klingt nach
+  spaceRun(L, R, a, b) {
+    const p = this.p, on = num(p.rvmix, 0) > 0 || num(p.dlmix, 0) > 0 || !!p.rvfreeze || num(p.fwarm, 0) > 0 || num(p.fbody, 0) > 0 || num(p.fair, 0) > 0 || num(p.fwidth, 0) > 0;
+    if (!on && !(this.space && this.space.live())) return;
+    if (!this.space) this.space = new Space(this.sr);
+    if (this.spv !== this.pv || this.sbpm !== this.eng.bpm) { this.spv = this.pv; this.sbpm = this.eng.bpm; this.space.setup(p, this.eng.bpm); }
+    this.space.process(L, R, a, b);
+  }
   update() {}
   // --- Eingang (Live-Tasten UND Sequencer laufen hier durch — der Arpeggiator sieht beide) ---
   input(on, n, v, id) {
@@ -1017,14 +1027,544 @@ class Drums {
 }
 
 // Hat ein Instrument gerade etwas zu tun? (Orgel: Leslie-Nachhall noch 1,5 s)
+// =====================================================================================================
+// 3.21 Raum je Instrument: Hall (8 Leitungen, bis 30 s, Einfrieren, Shimmer eine Oktave höher), Echo (Ping-Pong, im Takt
+// oder in ms) und Klang (Wärme, Körper, Luft, Breite). Läuft nur, wenn etwas davon an ist; klingt nach, auch wenn keine
+// Stimme mehr spielt (busy() fragt space.live()).
+// =====================================================================================================
+const FDN_L = [1031, 1327, 1523, 1709, 1913, 2111, 2309, 2539];
+const ECHO_SYNC = { "1/16": 1, "1/8T": 4 / 3, "1/8": 2, "3/16": 3, "1/4T": 8 / 3, "1/4": 4, "3/8": 6, "1/2": 8, "3/4": 12, "1/1": 16 };
+class Space {
+  constructor(sr) {
+    this.sr = sr; const k = sr / 48000;
+    this.max = Math.ceil(2539 * 2.6 * k) + 16;
+    this.d = FDN_L.map(() => new Float32Array(this.max)); this.w = 0;
+    this.lp = new Float64Array(8); this.len = new Float64Array(8); this.g = new Float64Array(8);
+    this.pre = new Float32Array(Math.ceil(sr * 0.3) + 4); this.pw = 0;
+    this.eL = new Float32Array(Math.ceil(sr * 2.6) + 4); this.eR = new Float32Array(this.eL.length); this.ew = 0; this.etL = 0; this.etR = 0;
+    this.sh = new Float32Array(4096); this.shw = 0; this.shf = 0; this.shOut = 0;
+    this.mph = 0; this.en = 0; this.key = ""; this.on = false;
+    this.wL = 0; this.wR = 0; this.bLo = new Biquad(); this.bLo2 = new Biquad(); this.bMid = new Biquad(); this.bMid2 = new Biquad(); this.air = 0; this.airR = 0; this.hp = 0; this.hpR = 0;
+    this.wd = new Float32Array(1024); this.wdw = 0; this.hpw = 0;
+  }
+  setup(p, bpm) {
+    const sr = this.sr;
+    const key = [p.rvmix, p.rvtime, p.rvsize, p.rvpre, p.rvdamp, p.rvshim, p.rvfreeze, p.dlmix, p.dltime, p.dlms, p.dlfb, p.dltone, p.fwarm, p.fbody, p.fair, p.fwidth, bpm].join("|");
+    if (key === this.key) return; this.key = key;
+    this.rv = clamp(num(p.rvmix, 0), 0, 1); this.dl = clamp(num(p.dlmix, 0), 0, 1);
+    this.warm = clamp(num(p.fwarm, 0), 0, 1); this.bodyA = clamp(num(p.fbody, 0), 0, 1); this.airA = clamp(num(p.fair, 0), 0, 1); this.wid = clamp(num(p.fwidth, 0), 0, 1);
+    this.tone = this.warm > 0 || this.bodyA > 0 || this.airA > 0 || this.wid > 0;
+    this.on = this.rv > 0 || this.dl > 0 || this.tone || !!p.rvfreeze;
+    const size = 0.35 + clamp(num(p.rvsize, 0.6), 0, 1) * 2.2, T = clamp(num(p.rvtime, 3), 0.2, 30);
+    this.freeze = !!p.rvfreeze;
+    for (let i = 0; i < 8; i++) { this.len[i] = Math.min(this.max - 12, FDN_L[i] * size * sr / 48000); this.g[i] = this.freeze ? 1 : Math.pow(10, -3 * this.len[i] / (T * sr)); }
+    const damp = clamp(num(p.rvdamp, 0.5), 0, 1);
+    this.dc = this.freeze ? 0 : Math.exp(-TAU * (1500 + damp * damp * 16000) / sr);
+    this.preN = Math.round(clamp(num(p.rvpre, 0.02), 0, 0.25) * sr);
+    this.shim = clamp(num(p.rvshim, 0), 0, 1);
+    const st = ECHO_SYNC[p.dltime], ms = clamp(num(p.dlms, 350), 20, 2500);
+    this.eN = Math.min(this.eL.length - 4, Math.round(st ? st * 60 / clamp(bpm, 30, 300) / 4 * sr : ms / 1000 * sr));
+    this.efb = clamp(num(p.dlfb, 0.4), 0, 0.95);
+    this.ec = Math.exp(-TAU * (600 + clamp(num(p.dltone, 0.5), 0, 1) ** 2 * 12000) / sr);
+    // Körper (tiefe Mitten, voll) und Luft (Höhen, seidig)
+    this.bLo.peak(170, 0.8, this.bodyA * 6, sr); this.bLo2.peak(170, 0.8, this.bodyA * 6, sr);
+    this.bMid.peak(2600, 1.2, -this.bodyA * 1.5, sr); this.bMid2.peak(2600, 1.2, -this.bodyA * 1.5, sr);
+    this.ac = Math.exp(-TAU * 6000 / sr);
+  }
+  live() { return this.on && (this.en > 1e-6 || this.freeze); }
+  // L/R: das trockene Signal des Instruments in [a, b) — der Raum kommt dazu (trocken bleibt voll erhalten)
+  process(L, R, a, b) {
+    if (!this.on) return;
+    const d = this.d, len = this.len, g = this.g, lp = this.lp, dc = this.dc, max = this.max, rv = this.rv, dl = this.dl;
+    let en = this.en * 0.995;
+    for (let i = a; i < b; i++) {
+      let xl = L[i], xr = R[i];
+      // Klang: Wärme (weiche Sättigung, gerade Obertöne), Körper, Luft, Breite
+      if (this.tone) {
+        if (this.warm > 0) { const k = 1 + this.warm * 3; xl = (tanh(xl * k) + 0.08 * this.warm * xl * xl) / Math.sqrt(k) * (1 + this.warm * 0.4); xr = (tanh(xr * k) + 0.08 * this.warm * xr * xr) / Math.sqrt(k) * (1 + this.warm * 0.4);
+          this.hp += (xl - this.hp) * 0.0004; this.hpR += (xr - this.hpR) * 0.0004; xl -= this.hp; xr -= this.hpR; }
+        if (this.bodyA > 0) { xl = this.bMid.run(this.bLo.run(xl)); xr = this.bMid2.run(this.bLo2.run(xr)); }
+        if (this.airA > 0) { this.air = xl + (this.air - xl) * this.ac; this.airR = xr + (this.airR - xr) * this.ac; xl += (xl - this.air) * this.airA * 0.9; xr += (xr - this.airR) * this.airA * 0.9; }
+        if (this.wid > 0) {   // Breite: die Seite (L−R) lauter, dazu eine kurze Haas-Verzögerung auf der Seite
+          const m = (xl + xr) * 0.5; this.wd[this.wdw] = m; const md = this.wd[(this.wdw - Math.round(this.sr * 0.011) + 1024) & 1023]; this.wdw = (this.wdw + 1) & 1023;
+          // Seite lauter, dazu die um 11 ms verzögerte Mitte als Seite (Haas) — so wird auch ein Mono-Klang breit
+          const s = (xl - xr) * 0.5 * (1 + this.wid * 0.8) + (md - this.hpw) * this.wid * 0.3; this.hpw += (md - this.hpw) * 0.02; xl = m + s; xr = m - s; }
+        L[i] = xl; R[i] = xr;
+      }
+      let oL = 0, oR = 0;
+      if (rv > 0 || this.freeze) {
+        // Vorverzögerung, dann in alle Leitungen
+        this.pre[this.pw] = this.freeze ? 0 : (xl + xr) * 0.5 + this.shOut * this.shim * 0.6;
+        const pin = this.pre[(this.pw - this.preN + this.pre.length) % this.pre.length]; this.pw = (this.pw + 1) % this.pre.length;
+        this.mph += 0.35 / this.sr; if (this.mph > 1) this.mph -= 1;
+        const mo = sinp(this.mph) * 6, mo2 = sinp(this.mph + 0.37) * 5;
+        let sum = 0;
+        for (let k = 0; k < 8; k++) {
+          let rp = this.w - len[k] - (k === 1 ? mo : k === 5 ? mo2 : 0); while (rp < 0) rp += max;
+          const i0 = rp | 0, f = rp - i0, a0 = d[k][i0], a1 = d[k][(i0 + 1) % max], o = a0 + (a1 - a0) * f;
+          lp[k] = o + (lp[k] - o) * dc; sum += lp[k];
+        }
+        sum *= 0.25;
+        for (let k = 0; k < 8; k++) d[k][this.w] = (pin * (k & 1 ? -0.35 : 0.35)) + (lp[k] - sum) * g[k];
+        this.w = (this.w + 1) % max;
+        oL = (lp[0] - lp[2] + lp[4] - lp[6]) * 0.5; oR = (lp[1] - lp[3] + lp[5] - lp[7]) * 0.5;
+        // Shimmer: das Hallende eine Oktave höher zurück in den Hall — zwei Leseköpfe, deren Verzögerung je Sample um eins
+        // schrumpft (= doppelte Geschwindigkeit), um eine halbe Periode versetzt, sin²-Fenster (ergänzen sich zu 1)
+        if (this.shim > 0) {
+          const sh = this.sh, W = 2048; sh[this.shw] = (oL + oR) * 0.5;
+          this.shf += 1 / W; if (this.shf >= 1) this.shf -= 1;
+          const rd = (f) => { const dd = 2 + (1 - f) * W; let rp = this.shw - dd; if (rp < 0) rp += 4096; const i0 = rp | 0, fr = rp - i0; return sh[i0 & 4095] + (sh[(i0 + 1) & 4095] - sh[i0 & 4095]) * fr; };
+          const f2 = (this.shf + 0.5) % 1, w1 = Math.sin(Math.PI * this.shf) ** 2, w2 = Math.sin(Math.PI * f2) ** 2;
+          this.shOut = rd(this.shf) * w1 + rd(f2) * w2; this.shw = (this.shw + 1) & 4095;
+        }
+        oL *= rv * 0.75; oR *= rv * 0.75;
+        if (this.freeze && rv === 0) { oL *= 0; oR *= 0; }
+      }
+      if (dl > 0) {
+        const n = this.eL.length, rp = (this.ew - this.eN + n) % n, yl = this.eL[rp], yr = this.eR[rp];
+        this.etL = yr + (this.etL - yr) * this.ec; this.etR = yl + (this.etR - yl) * this.ec;     // gekreuzt = Ping-Pong
+        this.eL[this.ew] = (xl + xr) * 0.5 + this.etL * this.efb; this.eR[this.ew] = this.etR * this.efb; this.ew = (this.ew + 1) % n;
+        oL += yl * dl; oR += yr * dl;
+      }
+      L[i] = xl + oL; R[i] = xr + oR;
+      const m = Math.abs(oL) + Math.abs(oR) + Math.abs(xl); if (m > en) en = m;
+    }
+    this.en = en;
+  }
+}
+
+// =====================================================================================================
+// gedreht und gedämpft, keine Tabelle). Klavier: Teiltöne gespreizt (Saitensteifigkeit), zwei leicht verstimmte Saiten
+// (Schwebung), Hammer formt das Spektrum (Härte, Anschlag, Filz, Anschlagstelle), hohe Teiltöne klingen schneller ab,
+// Dämpfer beim Loslassen (die obersten Töne haben wie am echten Flügel keinen). Mallets/Glocken: Teiltonverhältnisse
+// gemessener Instrumente (Marimba, Vibraphon, Glockenspiel, Röhrenglocke, Kirchenglocke, Kalimba, Steeldrum, Klangschale …).
+// =====================================================================================================
+// r: Verhältnis zum Grundton, a: Stärke, t: Ausklingzeit relativ, d: Ausklingen in s bei C4
+const MODAL = {
+  marimba: { r: [1, 3.99, 10.65, 18.4], a: [1, 0.32, 0.1, 0.03], t: [1, 0.22, 0.08, 0.04], d: 1.4, mallet: 0.6 },
+  xylo: { r: [1, 3.0, 6.1, 9.9, 14.2], a: [1, 0.5, 0.25, 0.1, 0.05], t: [1, 0.35, 0.18, 0.1, 0.06], d: 0.55, mallet: 1 },
+  vibes: { r: [1, 3.98, 10.1, 16.9], a: [1, 0.22, 0.07, 0.02], t: [1, 0.45, 0.2, 0.1], d: 6.5, mallet: 0.4 },
+  glock: { r: [1, 2.71, 5.33, 8.75, 13.0], a: [1, 0.5, 0.28, 0.14, 0.07], t: [1, 0.75, 0.5, 0.35, 0.22], d: 3.2, mallet: 1 },
+  celesta: { r: [1, 2.0, 3.0, 4.07, 6.1], a: [1, 0.18, 0.1, 0.05, 0.02], t: [1, 0.6, 0.4, 0.25, 0.15], d: 2.2, mallet: 0.5 },
+  musicbox: { r: [1, 5.8, 12.9, 22.1], a: [1, 0.25, 0.08, 0.03], t: [1, 0.3, 0.15, 0.08], d: 1.6, mallet: 1 },
+  kalimba: { r: [1, 5.6, 13.9, 2.0], a: [1, 0.22, 0.06, 0.08], t: [1, 0.25, 0.1, 0.5], d: 1.8, mallet: 0.7 },
+  tubular: { r: [1, 2.76, 5.4, 8.93, 13.34, 18.64], a: [0.6, 1, 0.7, 0.45, 0.25, 0.12], t: [1, 0.85, 0.65, 0.45, 0.3, 0.2], d: 9, mallet: 0.9 },
+  bell: { r: [0.5, 1, 1.183, 1.5, 2, 2.5, 3, 4.2, 5.4], a: [0.5, 1, 0.6, 0.4, 0.7, 0.3, 0.25, 0.15, 0.08], t: [1.4, 1, 0.8, 0.7, 0.55, 0.45, 0.35, 0.25, 0.18], d: 10, mallet: 1 },
+  steel: { r: [1, 2.0, 3.0, 4.03, 1.5, 5.05], a: [1, 0.55, 0.3, 0.18, 0.12, 0.08], t: [1, 0.7, 0.5, 0.35, 0.6, 0.25], d: 1.7, mallet: 0.5 },
+  bowl: { r: [1, 2.71, 5.15, 8.4, 12.2], a: [1, 0.55, 0.3, 0.12, 0.05], t: [1, 0.8, 0.55, 0.35, 0.2], d: 16, mallet: 0.3, beat: 1 },
+  glass: { r: [1, 2.32, 4.25, 6.63, 9.38], a: [1, 0.4, 0.22, 0.12, 0.06], t: [1, 0.8, 0.6, 0.4, 0.25], d: 4.5, mallet: 0.8 },
+  gong: { gen: "gong", d: 14, mallet: 0.4 },
+  toy: { r: [1, 2.82, 5.6, 9.1], a: [1, 0.45, 0.22, 0.1], t: [1, 0.5, 0.3, 0.15], d: 1.3, mallet: 1 },
+};
+const PIANO_T = new Set(["grand", "felt", "upright", "honky", "bright", "dark"]);
+const MAXP = 34;
+class ModalVoice {
+  constructor(ins) {
+    this.ins = ins; this.active = false; this.released = false; this.t = 0; this.n = 60; this.id = 0; this.vel = 1;
+    this.X = new Float64Array(MAXP); this.Y = new Float64Array(MAXP); this.C = new Float64Array(MAXP); this.S = new Float64Array(MAXP);
+    this.A = new Float32Array(MAXP); this.W = new Float64Array(MAXP); this.Rd = new Float64Array(MAXP); this.Pn = new Float32Array(MAXP); this.np = 0;
+    this.att = 0; this.ai = 1; this.nz = 0; this.nzc = 0; this.nf = new SVF(); this.th = new SVF(); this.lvl = 0; this.pm = 1; this.trem = 0; this.quiet = 0;
+  }
+  start(n, v, id, legato, glide, t) {
+    const ins = this.ins, p = ins.p, sr = ins.sr, type = p.mtype || "grand", piano = PIANO_T.has(type);
+    this.n = n; this.id = id; this.vel = v; this.t = t; this.released = false; this.active = true; this.quiet = 0;
+    const hard = clamp(num(p.hard, 0.55), 0, 1), felt = clamp(num(p.felt, 0), 0, 1), vb = clamp(num(p.velb, 0.6), 0, 1);
+    const bright = hard * (1 - felt * 0.85) * (1 - vb * 0.6 + vb * 0.9 * v);
+    const tune = num(p.tune, 0), stretch = num(p.stretch, 0.5) * (piano ? 1 : 0);
+    const st = stretch * 0.08 * Math.sign(n - 64) * Math.pow(Math.abs(n - 64) / 24, 1.8);            // Oktavspreizung (Halbtöne)
+    const f0 = mtof(n + tune / 100 + st);
+    const decay = num(p.decay, 1);
+    let parts = [];
+    if (piano) {
+      const B = num(p.inh, 0.5) * 2.4e-4 * Math.pow(2, (n - 60) / 13), xs = clamp(num(p.pos, 0.125), 0.05, 0.5);
+      const N = Math.min(26, Math.floor(16000 / f0)), T0 = clamp(22 * Math.pow(2, -(n - 21) / 19), 0.35, 26) * decay * (type === "upright" ? 0.6 : 1);
+      const fc = 900 + bright * bright * 9000 + n * 25;
+      for (let k = 1; k <= N; k++) {
+        const fk = k * f0 * Math.sqrt(1 + B * k * k); if (fk > sr * 0.45) break;
+        let a = Math.abs(Math.sin(Math.PI * k * xs)) / Math.pow(k, 0.75) / (1 + Math.pow(fk / fc, 2.2));
+        if (type === "dark") a /= 1 + Math.pow(fk / 1800, 2);
+        const tk = T0 / (1 + Math.pow(fk / 1200, 1.15) * (0.5 + felt));
+        parts.push({ f: fk, a, t: tk });
+      }
+    } else {
+      const M = MODAL[type] || MODAL.marimba, T0 = M.d * decay * Math.pow(2, -(n - 60) / 30);
+      if (M.gen === "gong") { let s = (n * 7919) % 997; for (let k = 0; k < 22; k++) { s = (s * 1103 + 12345) % 9973; const r = 1 + k * 0.37 + (s / 9973) * 0.31; parts.push({ f: f0 * r, a: 1 / (1 + k * 0.35), t: T0 / (1 + k * 0.12) }); } }
+      else {
+        const sp = num(p.inh, 0.5) - 0.5;                                                   // Teiltöne enger/weiter
+        M.r.forEach((r, k) => { const fk = f0 * Math.pow(r, 1 + sp * 0.12); if (fk < sr * 0.45) parts.push({ f: fk, a: M.a[k] * (k ? Math.pow(bright * 1.4 + 0.15, Math.min(3, k)) : 1), t: T0 * M.t[k] }); });
+      }
+    }
+    // zweite Saite (Klavier) bzw. Schwebung (Klangschale, Glocke): die tiefen Teiltöne ein zweites Mal, leicht verstimmt
+    const uni = num(p.uni, 0.3) * (type === "honky" ? 6 : 1), M2 = piano ? Math.min(parts.length, 9) : (MODAL[type] && MODAL[type].beat ? parts.length : 0);
+    for (let k = 0; k < M2 && parts.length < MAXP; k++) { const q = parts[k], c = (0.6 + 1.6 * uni) * (k % 2 ? -1 : 1) * (1 + ((n * 31 + k * 17) % 7) / 10); parts.push({ f: q.f * Math.pow(2, c / 1200), a: q.a * 0.85, t: q.t * 1.15 }); }
+    parts = parts.slice(0, MAXP);
+    let norm = 0; for (const q of parts) norm += q.a * q.a; norm = 1 / Math.sqrt(norm || 1);
+    const g = 0.15 * (0.25 + 0.75 * Math.pow(v, 1.4)), wid = clamp(num(p.width, 0.5), 0, 1);
+    this.np = parts.length; this.f0 = f0;
+    for (let k = 0; k < this.np; k++) {
+      const q = parts[k], w = TAU * q.f / sr, r = Math.exp(-6.9078 / (Math.max(0.02, q.t) * sr));
+      this.W[k] = w; this.Rd[k] = r; this.C[k] = r * Math.cos(w); this.S[k] = r * Math.sin(w);
+      this.X[k] = 1; this.Y[k] = 0; this.A[k] = q.a * norm * g; this.Pn[k] = (k % 2 ? 1 : -1) * wid * 0.25;
+    }
+    this.pan = clamp((n - 64) / 40, -1, 1) * wid * (piano ? 0.8 : 0.3);
+    this.pm = 1;
+    // Anschlag: harte Hämmer/Schlägel sofort, Filz schwillt ein paar Millisekunden an
+    const atk = piano ? 0.0006 + felt * 0.014 + (1 - hard) * 0.002 : 0.0004 + (1 - ((MODAL[type] || {}).mallet ?? 0.5)) * 0.004 + (1 - hard) * 0.003;
+    this.ai = 1 / Math.max(1, atk * sr); this.att = 0;
+    // Hammer-/Schlägelgeräusch: kurzes, gefiltertes Rauschen (Filz: tiefes Pochen)
+    this.nz = num(p.noise, 0.3) * (0.3 + v) * 0.5; this.nzc = Math.exp(-6.9 / ((0.012 + felt * 0.03) * sr));
+    this.nfc = clamp(f0 * (piano ? 2.2 : 1.6) * (1 - felt * 0.6), 120, 6000);
+    this.thump = piano ? felt * 0.35 * v : 0; this.thc = Math.exp(-6.9 / (0.06 * sr));
+    this.trem = 0;
+  }
+  release() {
+    const ins = this.ins, p = ins.p, sr = ins.sr, type = p.mtype || "grand";
+    this.released = true;
+    if (PIANO_T.has(type) && this.n >= 89) return;                       // keine Dämpfer im obersten Bereich
+    const rel = clamp(num(p.damper, 0.3), 0, 1);                         // 0 = trocken abgedämpft, 1 = klingt weiter
+    const T = PIANO_T.has(type) ? 0.06 + rel * rel * 6 : 0.12 + rel * rel * 8;
+    const q = Math.exp(-6.9078 / (T * sr));
+    for (let k = 0; k < this.np; k++) { const r = Math.min(this.Rd[k], q); this.Rd[k] = r; this.C[k] = r * Math.cos(this.W[k] * this.pm); this.S[k] = r * Math.sin(this.W[k] * this.pm); }
+    const mech = num(p.mech, 0.2); if (mech > 0 && PIANO_T.has(type)) { this.nz = mech * 0.08; this.nzc = Math.exp(-6.9 / (0.03 * sr)); this.nfc = 2200; }
+  }
+  kill() { this.active = false; }
+  render(L, R, a, b) {
+    const ins = this.ins, p = ins.p, sr = ins.sr, m = ins.mod, X = this.X, Y = this.Y, C = this.C, S = this.S, A = this.A, np = this.np;
+    // Tonhöhe (Pitchbend, Vibrato-LFO) je Block: die Drehung neu, die Dämpfung bleibt
+    const pm = m.pitch[a] * ins.pitchMul();
+    if (Math.abs(pm - this.pm) > 1e-5) { this.pm = pm; for (let k = 0; k < np; k++) { const r = this.Rd[k]; C[k] = r * Math.cos(this.W[k] * pm); S[k] = r * Math.sin(this.W[k] * pm); } }
+    const vibes = p.mtype === "vibes", tr = vibes ? clamp(num(p.trem, 0.4), 0, 1) : 0, trr = TAU * num(p.tremrate, 5.5) / sr;
+    const nfg = Math.tan(Math.PI * this.nfc / sr);
+    let peak = 0;
+    for (let i = a; i < b; i++) {
+      if (this.att < 1) this.att = Math.min(1, this.att + this.ai);
+      let s = 0, sp = 0;
+      for (let k = 0; k < np; k++) { const x = X[k], y = Y[k]; X[k] = C[k] * x - S[k] * y; const ny = S[k] * x + C[k] * y; Y[k] = ny; const o = ny * A[k]; s += o; sp += o * this.Pn[k]; }
+      s *= this.att; sp *= this.att;
+      if (this.nz > 1e-5) { const w = rnd() * this.nz; this.nz *= this.nzc; s += this.nf.run(w, nfg, 1.2, 2) * 0.8; }
+      if (this.thump > 1e-5) { this.thump *= this.thc; s += this.th.run(rnd() * this.thump, 0.02, 0.7, 0) * 2.2; }
+      if (tr > 0) { this.trem += trr; if (this.trem > TAU) this.trem -= TAU; const tv = 1 - tr * 0.5 * (1 + Math.sin(this.trem)); s *= tv; sp *= tv; }
+      const amp = m.amp[i], pn = clamp(this.pan + m.pan[i], -1, 1);
+      const o = s * amp; L[i] += (o - sp) * (1 - pn); R[i] += (o + sp) * (1 + pn);
+      const q = s < 0 ? -s : s; if (q > peak) peak = q;
+    }
+    // still genug → Stimme frei (nach dem Anschlag)
+    if (peak < 2e-5 && this.att >= 1) { if (++this.quiet > 8) this.active = false; } else this.quiet = 0;
+  }
+}
+class Modal extends Instrument {
+  constructor(eng, patch) { super(eng, patch); this.l1 = new LFO(); this.l2 = new LFO(); }
+  makeVoice() { return new ModalVoice(this); }
+  envSet() {}
+}
+
+// =====================================================================================================
+// 3.21 Chöre und Stimmen — Formant-Synthese: je Sänger ein Stimmband-Puls (weich, mit eigenem Vibrato, Zittern und
+// Sopran; Kinder = Sopran höher). Ein Ton = bis zu 8 Sänger. Dazu Flüstern, Obertongesang (eine scharfe Resonanz wandert
+// über die Obertöne), Roboter (ohne Zittern, harter Puls).
+// =====================================================================================================
+// [F1..F5 Hz], [Pegel dB], [Bandbreite Hz] — Vokalfolge a e i o u m
+const VOX = {
+  bass: [[[600, 1040, 2250, 2450, 2750], [0, -7, -9, -9, -20], [60, 70, 110, 120, 130]], [[400, 1620, 2400, 2800, 3100], [0, -12, -9, -12, -18], [40, 80, 100, 120, 120]],
+    [[250, 1750, 2600, 3050, 3340], [0, -30, -16, -22, -28], [60, 90, 100, 120, 120]], [[400, 750, 2400, 2600, 2900], [0, -11, -21, -20, -40], [40, 80, 100, 120, 120]],
+    [[350, 600, 2400, 2675, 2950], [0, -20, -32, -28, -36], [40, 80, 100, 120, 120]], [[260, 900, 2200, 2600, 3000], [0, -26, -38, -42, -50], [50, 90, 120, 130, 140]]],
+  tenor: [[[650, 1080, 2650, 2900, 3250], [0, -6, -7, -8, -22], [80, 90, 120, 130, 140]], [[400, 1700, 2600, 3200, 3580], [0, -14, -12, -14, -20], [70, 80, 100, 120, 120]],
+    [[290, 1870, 2800, 3250, 3540], [0, -15, -18, -20, -30], [40, 90, 100, 120, 120]], [[400, 800, 2600, 2800, 3000], [0, -10, -12, -12, -26], [40, 80, 100, 120, 120]],
+    [[350, 600, 2700, 2900, 3300], [0, -20, -17, -14, -26], [40, 60, 100, 120, 120]], [[280, 1000, 2300, 2900, 3300], [0, -26, -36, -40, -48], [50, 90, 120, 130, 140]]],
+  alto: [[[800, 1150, 2800, 3500, 4950], [0, -4, -20, -36, -60], [80, 90, 120, 130, 140]], [[400, 1600, 2700, 3300, 4950], [0, -24, -30, -35, -60], [60, 80, 120, 150, 200]],
+    [[350, 1700, 2700, 3700, 4950], [0, -20, -30, -36, -60], [50, 100, 120, 150, 200]], [[450, 800, 2830, 3500, 4950], [0, -9, -16, -28, -55], [70, 80, 100, 130, 135]],
+    [[325, 700, 2530, 3500, 4950], [0, -12, -30, -40, -64], [50, 60, 170, 180, 200]], [[300, 1100, 2500, 3400, 4900], [0, -28, -38, -44, -60], [60, 100, 140, 160, 200]]],
+  soprano: [[[800, 1150, 2900, 3900, 4950], [0, -6, -32, -20, -50], [80, 90, 120, 130, 140]], [[350, 2000, 2800, 3600, 4950], [0, -20, -15, -40, -56], [60, 100, 120, 150, 200]],
+    [[270, 2140, 2950, 3900, 4950], [0, -12, -26, -26, -44], [60, 90, 100, 120, 120]], [[450, 800, 2830, 3800, 4950], [0, -11, -22, -22, -50], [70, 80, 100, 130, 135]],
+    [[325, 700, 2700, 3800, 4950], [0, -16, -35, -40, -60], [50, 60, 170, 180, 200]], [[320, 1200, 2700, 3700, 4900], [0, -28, -40, -44, -60], [60, 100, 140, 160, 200]]],
+};
+const VOX_SET = (lage, n) => lage === "auto" ? (n < 50 ? "bass" : n < 58 ? "tenor" : n < 66 ? "alto" : "soprano") : lage === "kids" ? "soprano" : (VOX[lage] ? lage : "alto");
+function voxFormants(set, vowel, kids) {   // Vokal 0…5 stufenlos → je Formant f, Pegel (linear), k (= Bandbreite / f)
+  const T = VOX[set], i0 = Math.min(4, Math.floor(vowel)), fr = vowel - i0, A = T[i0], B = T[Math.min(5, i0 + 1)], out = [];
+  const sc = kids ? 1.17 : 1;
+  for (let j = 0; j < 5; j++) {
+    const f = (A[0][j] + (B[0][j] - A[0][j]) * fr) * sc, db = A[1][j] + (B[1][j] - A[1][j]) * fr, bw = (A[2][j] + (B[2][j] - A[2][j]) * fr) * (kids ? 1.1 : 1);
+    out.push([f, Math.pow(10, db / 20), bw / f]);
+  }
+  return out;
+}
+const SINGERS = 8;
+class VoxVoice {
+  constructor(ins) {
+    this.ins = ins; this.active = false; this.released = false; this.t = 0; this.n = 60; this.id = 0; this.vel = 1;
+    this.ph = new Float64Array(SINGERS); this.det = new Float32Array(SINGERS); this.vp = new Float64Array(SINGERS); this.vr = new Float32Array(SINGERS);
+    this.jit = new Float32Array(SINGERS); this.jt = new Float32Array(SINGERS); this.pan = new Float32Array(SINGERS); this.on = new Int32Array(SINGERS);
+    this.fL = [0, 1, 2, 3, 4].map(() => new SVF()); this.fR = [0, 1, 2, 3, 4].map(() => new SVF()); this.ot = new SVF(); this.otR = new SVF();
+    this.env = new Env(); this.age = 0; this.tilt = 0; this.tiltR = 0; this.fq = null; this.fk = 0; this.cur = 60; this.glideFrom = 60;
+  }
+  // eigener Zufall je Stimme (xorshift, je Ton neu gesät) — derselbe Ton klingt gleich, egal was sonst Zufall zieht
+  rr() { let x = this.rs | 0; x ^= x << 13; x ^= x >>> 17; x ^= x << 5; this.rs = x; return ((x >>> 0) / 4294967296) * 2 - 1; }
+  start(n, v, id, legato, glide, t) {
+    this.rs = (n * 2654435761 + 97) | 0 || 1;
+    const p = this.ins.p, sr = this.ins.sr;
+    if (!(legato || glide) || !this.active) this.cur = n;
+    this.glideFrom = this.cur;
+    this.n = n; this.id = id; this.vel = v; this.t = t; this.released = false; this.active = true;
+    if (!legato) { this.age = 0; for (let s = 0; s < SINGERS; s++) { this.ph[s] = (this.rr() * 0.5 + 0.5); this.vp[s] = (this.rr() * 0.5 + 0.5); this.on[s] = Math.floor((this.rr() * 0.5 + 0.5) * 0.03 * sr); } }
+    const spread = num(p.spread, 0.4);
+    for (let s = 0; s < SINGERS; s++) {
+      this.det[s] = s === 0 ? 0 : (this.rr() * 14 + (s % 2 ? 4 : -4)) * spread;     // Cent
+      this.vr[s] = num(p.vibrate, 5.2) * (0.9 + (this.rr() * 0.5 + 0.5) * 0.2); this.pan[s] = s === 0 ? 0 : (s % 2 ? 1 : -1) * (0.3 + 0.6 * (s / SINGERS)) * num(p.width, 0.7);
+    }
+    this.env.set(num(p.att, 0.35), 0.6, 1, num(p.rel, 0.9), sr); this.env.on(legato);
+  }
+  release() { this.released = true; this.env.off(); }
+  kill() { this.active = false; this.env.kill(); }
+  render(L, R, a, b) {
+    const ins = this.ins, p = ins.p, sr = ins.sr, m = ins.mod;
+    const n = clamp(Math.round(num(p.singers, 4)), 1, SINGERS), set = VOX_SET(p.lage || "auto", this.n), kids = p.lage === "kids";
+    const vm = num(p.vmove, 0), vr = num(p.vrate, 0.15);
+    ins.vph = (ins.vph || 0) + vr * (b - a) / sr; if (ins.vph > 1) ins.vph -= 1;
+    const vowel = clamp(num(p.vowel, 0) + vm * 1.6 * Math.sin(TAU * ins.vph) + (ins.mw || 0) * -2, 0, 5);
+    const fq = voxFormants(set, vowel, kids), gs = fq.map(f => Math.tan(Math.PI * Math.min(f[0], sr * 0.45) / sr));
+    const breath = num(p.breath, 0.15), whisper = clamp(num(p.whisper, 0), 0, 1), robot = !!p.robot, ot = clamp(num(p.overtone, 0), 0, 1);
+    const vib = num(p.vib, 0.35) * (robot ? 0 : 1), vdel = num(p.vibdel, 0.5), jitA = robot ? 0 : 0.25 + num(p.spread, 0.4) * 0.5;
+    const glideT = num(p.glide, 0), gc = glideT > 0 ? Math.exp(-1 / (glideT * sr)) : 0;
+    const otp = 6 + Math.round((0.5 + 0.5 * Math.sin(TAU * (ins.vph * 3))) * 6);                   // Obertongesang: Oberton 6…12
+    const pulseW = robot ? 0.5 : 0.35;
+    for (let i = a; i < b; i++) {
+      const e = this.env.next(); if (this.env.st === 0) { this.active = false; break; }
+      this.age++;
+      this.cur = gc ? this.n + (this.cur - this.n) * gc : this.n;
+      const f0 = mtof(this.cur) * m.pitch[i] * ins.pitchMul();
+      const vibOn = Math.min(1, Math.max(0, this.age / sr - vdel) / 0.6);
+      let src = 0, srcR = 0;
+      for (let s = 0; s < n; s++) {
+        if (this.on[s] > 0) { this.on[s]--; continue; }
+        this.vp[s] += this.vr[s] / sr; if (this.vp[s] > 1) this.vp[s] -= 1;
+        if (--this.jt[s] <= 0) { this.jt[s] = sr * (0.05 + (this.rr() * 0.5 + 0.5) * 0.15); this.jit[s] = this.rr() * jitA; }
+        const cents = this.det[s] + sinp(this.vp[s]) * vib * 45 * vibOn + this.jit[s] * 6;
+        const f = f0 * Math.pow(2, cents / 1200), dt = f / sr;
+        let ph = this.ph[s] + dt; if (ph >= 1) ph -= 1; this.ph[s] = ph;
+        // Stimmband: Säge mit weichem Knick (Puls-Anteil), bandbegrenzt
+        let g = 2 * ph - 1 - blep(ph, dt); if (pulseW) { let t2 = ph - pulseW; if (t2 < 0) t2 += 1; g = g * 0.6 + ((ph < pulseW ? 1 : -1) + blep(ph, dt) - blep(t2, dt)) * 0.4 * (robot ? 1.5 : 0.6); }
+        const pn = this.pan[s];
+        src += g * (1 - pn); srcR += g * (1 + pn);
+      }
+      const sc = 1 / Math.sqrt(n);
+      src *= sc; srcR *= sc;
+      // Stimmbänder klingen nach oben weicher (−6 dB/Oktave über ~1 kHz)
+      this.tilt += (src - this.tilt) * 0.35; this.tiltR += (srcR - this.tiltR) * 0.35;
+      const nz = this.rr(), nzR = this.rr();
+      const xL = this.tilt * (1 - whisper) + nz * (breath * 0.6 + whisper * 1.3), xR = this.tiltR * (1 - whisper) + nzR * (breath * 0.6 + whisper * 1.3);
+      let yL = 0, yR = 0;
+      for (let j = 0; j < 5; j++) { const f = fq[j]; yL += this.fL[j].run(xL, gs[j], f[2], 2) * f[1] * f[2] * 3.2; yR += this.fR[j].run(xR, gs[j], f[2], 2) * f[1] * f[2] * 3.2; }
+      if (ot > 0) { const fo = Math.min(sr * 0.4, f0 * otp), go = Math.tan(Math.PI * fo / sr); yL += this.ot.run(xL, go, 0.012, 2) * ot * 0.036; yR += this.otR.run(xR, go, 0.012, 2) * ot * 0.036; }
+      const amp = e * (0.35 + 0.65 * this.vel) * 0.55 * m.amp[i], pn = m.pan[i];
+      L[i] += yL * amp * (1 - pn); R[i] += yR * amp * (1 + pn);
+    }
+  }
+}
+class Vox extends Instrument {
+  constructor(eng, patch) { super(eng, patch); this.l1 = new LFO(); this.l2 = new LFO(); }
+  makeVoice() { return new VoxVoice(this); }
+  envSet() {}
+}
+
+// =====================================================================================================
+// 3.21 Orchester — Streicher, Blech, Holz als Klangmodell: je Instrument eine Quelle (Bogen: Säge mit Bogenrauschen,
+// Blech: Säge, deren Filter mit der Lautstärke aufgeht und kurz von unten anbläst, Holz: Flöte mit Atem, Klarinette nur
+// ungerade Obertöne, Oboe schmaler Puls), Korpus-Resonanzen (drei Formanten je Instrument), Vibrato mit Verzögerung,
+// mehrere Spieler je Ton (Sektion: leicht verstimmt, versetzt einsetzend, jeder mit eigenem Vibrato).
+// =====================================================================================================
+// src: bow|brass|flute|reed|dreed|pluck · f: Korpus-Formanten [Hz, Q, Gain] · n: Spieler · att/rel s · lp: Helligkeit (Vielfaches von f0)
+const ORCH = {
+  violins: { src: "bow", f: [[290, 2, 1.2], [520, 2.5, 0.8], [2900, 1.4, 1.3]], n: 6, att: 0.18, rel: 0.45, lp: 14, vib: 0.5 },
+  violas: { src: "bow", f: [[230, 2, 1.3], [420, 2.5, 0.9], [2200, 1.4, 1.0]], n: 5, att: 0.2, rel: 0.5, lp: 11, vib: 0.45 },
+  cellos: { src: "bow", f: [[160, 2, 1.5], [330, 2.5, 1.0], [1500, 1.3, 0.8]], n: 5, att: 0.22, rel: 0.55, lp: 10, vib: 0.45 },
+  basses: { src: "bow", f: [[90, 2, 1.6], [220, 2.2, 1.0], [900, 1.2, 0.6]], n: 4, att: 0.25, rel: 0.6, lp: 9, vib: 0.3 },
+  strings: { src: "bow", f: [[230, 1.6, 1.3], [480, 2, 0.9], [2600, 1.2, 1.1]], n: 8, att: 0.3, rel: 0.7, lp: 12, vib: 0.4, oct: 1 },
+  solovln: { src: "bow", f: [[290, 2.4, 1.3], [520, 3, 0.9], [3000, 1.6, 1.5]], n: 1, att: 0.09, rel: 0.3, lp: 16, vib: 0.8 },
+  solocello: { src: "bow", f: [[170, 2.4, 1.6], [350, 3, 1.1], [1600, 1.5, 1.0]], n: 1, att: 0.1, rel: 0.35, lp: 12, vib: 0.8 },
+  pizz: { src: "pluck", f: [[260, 2, 1.4], [500, 2.5, 0.9], [2400, 1.3, 0.9]], n: 4, att: 0.002, rel: 0.25, lp: 10, vib: 0, dec: 0.5 },
+  tremolo: { src: "bow", f: [[260, 2, 1.2], [500, 2.5, 0.8], [2700, 1.4, 1.2]], n: 6, att: 0.1, rel: 0.4, lp: 13, vib: 0.15, trem: 14 },
+  horn: { src: "brass", f: [[380, 1.6, 1.4], [800, 2, 0.6], [2400, 2, 0.3]], n: 1, att: 0.06, rel: 0.25, lp: 5, vib: 0.15 },
+  trumpet: { src: "brass", f: [[1100, 1.3, 1.3], [1900, 1.6, 0.9], [3200, 1.8, 0.5]], n: 1, att: 0.035, rel: 0.15, lp: 10, vib: 0.25 },
+  trombone: { src: "brass", f: [[500, 1.4, 1.3], [1200, 1.6, 0.8], [2600, 1.8, 0.4]], n: 1, att: 0.05, rel: 0.2, lp: 7, vib: 0.15 },
+  tuba: { src: "brass", f: [[220, 1.5, 1.5], [500, 1.8, 0.7], [1200, 2, 0.3]], n: 1, att: 0.07, rel: 0.25, lp: 5, vib: 0.1 },
+  brass: { src: "brass", f: [[700, 1.2, 1.3], [1400, 1.5, 0.8], [2800, 1.8, 0.4]], n: 4, att: 0.06, rel: 0.25, lp: 8, vib: 0.15 },
+  flute: { src: "flute", f: [[800, 1, 0.6], [1800, 1.2, 0.4], [4000, 1.4, 0.3]], n: 1, att: 0.06, rel: 0.15, lp: 6, vib: 0.5, air: 0.35 },
+  panflute: { src: "flute", f: [[700, 1, 0.6], [1600, 1.2, 0.4], [3500, 1.4, 0.2]], n: 1, att: 0.04, rel: 0.25, lp: 4, vib: 0.2, air: 0.7, chiff: 1 },
+  clarinet: { src: "reed", f: [[1500, 1.2, 0.8], [2600, 1.6, 0.5], [3800, 2, 0.3]], n: 1, att: 0.045, rel: 0.12, lp: 8, vib: 0.15 },
+  oboe: { src: "dreed", f: [[1100, 2.2, 1.5], [2800, 2.4, 1.0], [4200, 2.4, 0.5]], n: 1, att: 0.04, rel: 0.12, lp: 12, vib: 0.4 },
+  bassoon: { src: "dreed", f: [[480, 2, 1.5], [1150, 2.2, 0.8], [2900, 2.2, 0.3]], n: 1, att: 0.05, rel: 0.15, lp: 8, vib: 0.3 },
+  sax: { src: "brass", f: [[600, 1.4, 1.2], [1500, 1.6, 1.0], [2900, 1.8, 0.6]], n: 1, att: 0.04, rel: 0.15, lp: 9, vib: 0.5, air: 0.15, growl: 1 },
+  woods: { src: "reed", f: [[900, 1, 0.8], [2000, 1.4, 0.5], [3500, 1.8, 0.3]], n: 3, att: 0.08, rel: 0.2, lp: 7, vib: 0.35, air: 0.15 },
+};
+const PLAYERS = 8;
+class OrchVoice {
+  constructor(ins) {
+    this.ins = ins; this.active = false; this.released = false; this.t = 0; this.n = 60; this.id = 0; this.vel = 1;
+    this.ph = new Float64Array(PLAYERS); this.det = new Float32Array(PLAYERS); this.vp = new Float64Array(PLAYERS); this.vr = new Float32Array(PLAYERS);
+    this.dl = new Int32Array(PLAYERS); this.pan = new Float32Array(PLAYERS); this.oc = new Float32Array(PLAYERS);
+    this.lp = new SVF(); this.lpR = new SVF(); this.fb = [0, 1, 2].map(() => new Biquad()); this.fbR = [0, 1, 2].map(() => new Biquad());
+    this.nf = new SVF(); this.env = new Env(); this.age = 0; this.cur = 60; this.blow = 0; this.ev = 0; this.trp = 0;
+  }
+  // eigener Zufall je Stimme (xorshift, je Ton neu gesät) — derselbe Ton klingt gleich, egal was sonst Zufall zieht
+  rr() { let x = this.rs | 0; x ^= x << 13; x ^= x >>> 17; x ^= x << 5; this.rs = x; return ((x >>> 0) / 4294967296) * 2 - 1; }
+  start(n, v, id, legato, glide, t) {
+    this.rs = (n * 2654435761 + 97) | 0 || 1;
+    const p = this.ins.p, sr = this.ins.sr, I = ORCH[p.otype] || ORCH.strings;
+    if (!(legato || glide) || !this.active) this.cur = n;
+    this.n = n; this.id = id; this.vel = v; this.t = t; this.released = false; this.active = true;
+    if (!legato) { this.age = 0; this.blow = 0; for (let s = 0; s < PLAYERS; s++) { this.ph[s] = (this.rr() * 0.5 + 0.5); this.vp[s] = (this.rr() * 0.5 + 0.5); this.dl[s] = s ? Math.floor((this.rr() * 0.5 + 0.5) * 0.045 * sr) : 0; } }
+    const sp = num(p.spread, 0.5), wid = num(p.width, 0.7);
+    for (let s = 0; s < PLAYERS; s++) { this.det[s] = s ? this.rr() * 11 * sp : 0; this.vr[s] = num(p.vibrate, 5.4) * (0.88 + (this.rr() * 0.5 + 0.5) * 0.24); this.pan[s] = s ? (s % 2 ? 1 : -1) * (0.25 + 0.7 * s / PLAYERS) * wid : 0; this.oc[s] = I.oct && s % 3 === 2 ? -12 : 0; }
+    const att = num(p.att, I.att) * (1.4 - v * 0.8), rel = num(p.rel, I.rel);
+    this.env.set(Math.max(0.002, att), I.dec || 1, I.src === "pluck" ? 0 : 1, rel, sr); this.env.on(legato);
+    this.I = I; this.sp = 0;
+    for (let j = 0; j < 3; j++) { const [f, q, g] = I.f[j], gg = g * num(p.body, 0.6) * 1.6; this.fb[j].bp(f, q, sr); this.fbR[j].bp(f * 1.03, q, sr); this.fb[j].g = gg; this.fbR[j].g = gg; }
+  }
+  release() { this.released = true; this.env.off(); }
+  kill() { this.active = false; this.env.kill(); }
+  render(L, R, a, b) {
+    const ins = this.ins, p = ins.p, sr = ins.sr, m = ins.mod, I = this.I || ORCH.strings;
+    const n = clamp(Math.round(num(p.players, I.n)), 1, PLAYERS), src = I.src;
+    const vib = num(p.vib, I.vib), vdel = num(p.vibdel, 0.35), noise = num(p.noise, 0.3), expr = num(p.expr, 0.6), bright = num(p.bright, 0.5);
+    const glideT = num(p.glide, 0), gc = glideT > 0 ? Math.exp(-1 / (glideT * sr)) : 0, trem = I.trem ? TAU * I.trem / sr : 0;
+    const air = (I.air || 0) * (0.5 + noise), mw = ins.mw || 0;
+    for (let i = a; i < b; i++) {
+      const e = this.env.next(); if (this.env.st === 0) { this.active = false; break; }
+      this.age++;
+      this.cur = gc ? this.n + (this.cur - this.n) * gc : this.n;
+      let f0 = mtof(this.cur) * m.pitch[i] * ins.pitchMul();
+      // Blech bläst von unten an (ein Viertelton), Holz mit einem kurzen Anblasen
+      if (src === "brass" && this.age < sr * 0.06) f0 *= Math.pow(2, -0.4 * (1 - this.age / (sr * 0.06)) / 12);
+      const vibOn = Math.min(1, Math.max(0, this.age / sr - vdel) / 0.5) * (vib + mw * 0.8);
+      let sL = 0, sR = 0;
+      for (let s = 0; s < n; s++) {
+        if (this.dl[s] > 0) { this.dl[s]--; continue; }
+        this.vp[s] += this.vr[s] / sr; if (this.vp[s] > 1) this.vp[s] -= 1;
+        const f = f0 * Math.pow(2, (this.det[s] + sinp(this.vp[s]) * vibOn * 22 + this.oc[s] * 100) / 1200), dt = Math.min(0.45, f / sr);
+        let ph = this.ph[s] + dt; if (ph >= 1) ph -= 1; this.ph[s] = ph;
+        let g;
+        if (src === "flute") g = sinp(ph) + 0.18 * sinp(2 * ph) + 0.06 * sinp(3 * ph);
+        else if (src === "reed") { g = ph < 0.5 ? 1 : -1; g += blep(ph, dt); let t2 = ph - 0.5; if (t2 < 0) t2 += 1; g -= blep(t2, dt); g *= 0.7; }
+        else if (src === "dreed") { const pw = 0.16; g = ph < pw ? 1 : -1; g += blep(ph, dt); let t2 = ph - pw; if (t2 < 0) t2 += 1; g -= blep(t2, dt); g *= 0.6; }
+        else { g = 2 * ph - 1 - blep(ph, dt); }
+        const pn = this.pan[s]; sL += g * (1 - pn); sR += g * (1 + pn);
+      }
+      const k = Math.pow(n, -0.75); sL *= k; sR *= k;
+      const dyn = (1 - expr) + expr * this.vel * (src === "brass" ? (0.35 + 0.65 * e) : 1);
+      const fc = clamp(f0 * I.lp * (0.35 + bright * 1.3) * (0.4 + dyn * 0.9) * (1 + mw * 0.6), 200, sr * 0.42), gq = Math.tan(Math.PI * fc / sr);
+      let yL = this.lp.run(sL, gq, src === "brass" ? 0.9 : 1.2, 0), yR = this.lpR.run(sR, gq, src === "brass" ? 0.9 : 1.2, 0);
+      // Bogen-/Atemrauschen (um den Ton herum), Saxofon knurrt
+      if (noise > 0 || air > 0) {
+        const nz = this.rr() * (src === "bow" ? noise * 0.06 : 0) + this.rr() * air * 0.25;
+        const nb = this.nf.run(nz, Math.tan(Math.PI * Math.min(f0 * (src === "flute" ? 1 : 3), sr * 0.4) / sr), 0.35, 2);
+        yL += nb * (src === "flute" ? 1.6 : 1); yR += nb * (src === "flute" ? 1.6 : 1);
+      }
+      if (I.growl && this.vel > 0.7) { const gr = 1 + 0.25 * sinp(this.age * 31 / sr); yL *= gr; yR *= gr; }
+      // Korpus
+      let bL = yL * 0.5, bR = yR * 0.5;
+      for (let j = 0; j < 3; j++) { bL += this.fb[j].run(yL) * this.fb[j].g; bR += this.fbR[j].run(yR) * this.fbR[j].g; }
+      let amp = e * (0.3 + 0.7 * this.vel) * (src === "brass" ? 0.15 : 0.26) * m.amp[i];
+      if (trem) { this.trp += trem; if (this.trp > TAU) this.trp -= TAU; amp *= 0.65 + 0.35 * Math.sin(this.trp); }
+      if (I.chiff && this.age < sr * 0.04) { const c = this.rr() * (1 - this.age / (sr * 0.04)) * 0.5; bL += c; bR += c; }
+      const pn = m.pan[i];
+      L[i] += bL * amp * (1 - pn); R[i] += bR * amp * (1 + pn);
+    }
+  }
+}
+class Orch extends Instrument {
+  constructor(eng, patch) { super(eng, patch); this.l1 = new LFO(); this.l2 = new LFO(); }
+  makeVoice() { return new OrchVoice(this); }
+  envSet() {}
+}
+
+// =====================================================================================================
+// 3.21 Wild & Effekte — ein Klangerzeuger für alles, was kein Instrument ist: Ton (Welle mit Tonhöhen-Fahrt über
+// Metall), Zufallssprünge der Tonhöhe (Alien), Ringmodulation (Roboter), Zerbröseln (Bitcrush), Pulsieren (Meer,
+// Herzschlag, Glitch). Die Voreinstellungen machen daraus Riser, Absturz, Einschlag, Laser, Wind, Regen …
+// =====================================================================================================
+const CURVES = { lin: (x) => x, exp: (x) => x * x * x, log: (x) => 1 - Math.pow(1 - x, 3), sine: (x) => 0.5 - 0.5 * Math.cos(Math.PI * x), bounce: (x) => Math.abs(Math.sin(Math.PI * 2.5 * x)) * (1 - x) };
+class WildVoice {
+  constructor(ins) {
+    this.ins = ins; this.active = false; this.released = false; this.t = 0; this.n = 60; this.id = 0; this.vel = 1;
+    this.ph = 0; this.mph = 0; this.rph = 0; this.lph = 0; this.sh = 0; this.shT = 0; this.age = 0; this.env = new Env();
+    this.f1 = new SVF(); this.f2 = new SVF(); this.comb = new Float32Array(4096); this.cw = 0; this.cl = 0; this.crush = 0; this.crushN = 0;
+    this.dust = 0; this.dustLp = 0; this.walk = 0; this.ph2 = 0;
+  }
+  start(n, v, id, legato) {
+    const p = this.ins.p, sr = this.ins.sr;
+    this.n = n; this.id = id; this.vel = v; this.released = false; this.active = true; this.age = 0;
+    if (!legato) { this.ph = Math.random(); this.mph = 0; this.lph = 0; this.walk = 0; this.comb.fill(0); }
+    this.env.set(num(p.att, 0.01), num(p.len, 2), clamp(num(p.sus, 0.8), 0, 1), num(p.rel, 0.8), sr); this.env.on(legato);
+  }
+  release() { this.released = true; this.env.off(); }
+  kill() { this.active = false; this.env.kill(); }
+  render(L, R, a, b) {
+    const ins = this.ins, p = ins.p, sr = ins.sr, m = ins.mod;
+    const len = Math.max(0.02, num(p.len, 2)), span = num(p.span, 0), crv = CURVES[p.curve] || CURVES.lin;
+    const tone = num(p.tone, 0.6), noiseA = num(p.noise, 0.2), wave = p.wwave || "saw", fmr = num(p.fmr, 1.5), fmi = num(p.fmi, 0), chaos = num(p.chaos, 0);
+    const cut = num(p.cut, 3000), fsw = num(p.fsweep, 0), res = clamp(num(p.res, 0.3), 0, 0.98), fmode = { lp: 0, hp: 1, bp: 2 }[p.fmode] ?? 0;
+    const dustD = num(p.dust, 0), metal = clamp(num(p.metal, 0), 0, 0.97), ring = num(p.ring, 0), ringr = num(p.ringr, 3.1), crushA = clamp(num(p.crush, 0), 0, 1);
+    const lr = num(p.lrate, 1), ld = clamp(num(p.lamt2, 0), 0, 1), lsh = p.lshape2 || "sine", jump = num(p.jump, 0), jr = num(p.jrate, 8), wid = num(p.width, 0.6);
+    const kq = 2 - res * 1.95;
+    for (let i = a; i < b; i++) {
+      const e = this.env.next(); if (this.env.st === 0) { this.active = false; break; }
+      this.age++;
+      const x = Math.min(1, this.age / (len * sr)), c = crv(x);
+      // Zufallssprünge (Alien), Zufallsweg (Chaos)
+      if (jump > 0) { this.shT -= jr / sr; if (this.shT <= 0) { this.shT += 1; this.sh = rnd() * jump * 24; } }
+      if (chaos > 0) this.walk = clamp(this.walk + rnd() * chaos * 0.02, -1, 1) * 0.9995;
+      const semis = span * c + this.sh + this.walk * chaos * 12;
+      const f = clamp(mtof(this.n) * Math.pow(2, semis / 12) * m.pitch[i] * ins.pitchMul(), 2, sr * 0.45), dt = f / sr;
+      // Ton mit FM
+      this.mph += f * fmr / sr; if (this.mph > 1) this.mph -= 1;
+      const fm = fmi > 0 ? sinp(this.mph) * fmi * (1 + this.walk * chaos) * 2 : 0;
+      let ph = this.ph + dt; if (ph >= 1) ph -= 1; this.ph = ph;
+      const pp = ph + fm - Math.floor(ph + fm);
+      let s;
+      if (wave === "sine") s = sinp(pp);
+      else if (wave === "square") s = pp < 0.5 ? 1 : -1;
+      else if (wave === "tri") s = 1 - 4 * Math.abs(pp - 0.5);
+      else s = 2 * pp - 1 - (fm ? 0 : blep(ph, dt));
+      s *= tone;
+      // Rauschen mit Filterfahrt
+      const nz = rnd() * noiseA;
+      // Staub: zufällige Knackser (Regen, Knistern)
+      let dst = 0; if (dustD > 0 && Math.random() < dustD * 40 / sr) dst = (Math.random() * 2 - 1) * (0.4 + Math.random() * 0.6);
+      let y = s + nz + dst;
+      const fc = clamp(cut * Math.pow(2, fsw * c * 6), 30, sr * 0.45);
+      y = this.f1.run(y, Math.tan(Math.PI * fc / sr), kq, fmode) * (fmode === 2 ? 1.6 : 1);
+      // Kamm = Metall (Resonanz auf der Tonhöhe)
+      if (metal > 0) { const T = Math.min(4000, Math.max(2, sr / f)), ri = (this.cw - T + 4096) % 4096, i0 = Math.floor(ri), fr = ri - i0;
+        const d = this.comb[i0 & 4095] + (this.comb[(i0 + 1) & 4095] - this.comb[i0 & 4095]) * fr; const o = y + d * metal; this.comb[this.cw] = tanh(o); this.cw = (this.cw + 1) & 4095; y = o * (1 - metal * 0.6); }
+      if (ring > 0) { this.rph += f * ringr / sr; if (this.rph > 1) this.rph -= 1; y = y * (1 - ring) + y * sinp(this.rph) * ring * 1.4; }
+      if (crushA > 0) { if (--this.crushN <= 0) { this.crushN = 1 + Math.floor(crushA * crushA * 40); const q = Math.pow(2, 16 - crushA * 13); this.crush = Math.round(y * q) / q; } y = this.crush; }
+      // Pulsieren (Meer, Herzschlag, Glitch)
+      let am = 1;
+      if (ld > 0) { this.lph += lr / sr; if (this.lph > 1) this.lph -= 1; const lv = lsh === "square" ? (this.lph < 0.5 ? 1 : 0) : lsh === "heart" ? Math.exp(-this.lph * 18) + 0.7 * Math.exp(-Math.abs(this.lph - 0.22) * 22) : lsh === "rand" ? (Math.sin(this.lph * 97.1) > 0.2 ? 1 : 0) : 0.5 + 0.5 * Math.sin(TAU * this.lph); am = 1 - ld + ld * lv; }
+      const out = tanh(y * 0.9) * e * am * (0.3 + 0.7 * this.vel) * 0.55 * m.amp[i];
+      // Breite: das Rauschen links/rechts verschieden
+      const side = (rnd() * noiseA * 0.3 + dst * 0.5) * wid * e * am * 0.3;
+      const pn = m.pan[i];
+      L[i] += (out + side) * (1 - pn); R[i] += (out - side) * (1 + pn);
+    }
+  }
+}
+class Wild extends Instrument {
+  constructor(eng, patch) { super(eng, patch); this.l1 = new LFO(); this.l2 = new LFO(); }
+  makeVoice() { return new WildVoice(this); }
+  envSet() {}
+}
+
+
 function busy(ins) {
   if (ins.hits) return ins.hits.length > 0;
+  if (ins.space && ins.space.live()) { ins.idle = 0; return true; }     // 3.21: Hall/Echo klingen nach
   for (let i = 0; i < ins.voices.length; i++) if (ins.voices[i].active) { ins.idle = 0; return true; }
   if (ins.lbuf) { ins.idle = (ins.idle || 0) + 1; return ins.idle < 600; }
   return false;
 }
 
-const ENGINES = { va: VA, fm: FM, ep: EP, organ: Organ, pluck: Pluck, drums: Drums };
+const ENGINES = { va: VA, fm: FM, ep: EP, organ: Organ, pluck: Pluck, drums: Drums, modal: Modal, vox: Vox, orch: Orch, wild: Wild };
 function makeInstrument(eng, patch) {
   const C = ENGINES[(patch || {}).engine] || VA;
   return new C(eng, patch);
@@ -1241,6 +1781,7 @@ class Engine extends AudioWorkletProcessor {
           const g = num(ins.p.vol, 0.8) / 0.8;
           if (g !== 1) { const L = this.bufL[ti], R = this.bufR[ti]; for (let i = at; i < to; i++) { L[i] *= g; R[i] *= g; } }
         }
+        if (ins.spaceRun) ins.spaceRun(this.bufL[ti], this.bufR[ti], at, to);
       }
       at = to;
     };
