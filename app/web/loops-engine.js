@@ -112,6 +112,10 @@ class Post {
 // =====================================================================================================
 // Generatoren
 // =====================================================================================================
+// 3.19: Muster-Generatoren setzen phrasengenau ein — ihre Schleife beginnt auf einem Vielfachen ihrer Länge (Takt 0, 4, 8 …),
+// wie die der anderen; vorher lief ein später gestarteter 4-Takt-Generator gegen die übrigen verschoben
+const PHRASE = new Set(["beat", "bass", "chords", "arp", "melody"]);
+const phraseStart = (g, B) => PHRASE.has(g.kind) ? B - mod(B, g.bars()) : B;
 class Gen {
   constructor(eng, g) {
     this.eng = eng; this.id = g.id; this.kind = g.kind; this.slot = g.slot;
@@ -134,10 +138,33 @@ class Gen {
       this.loops++;
     }
     const raw = this.pat[inLoop] || [];
-    const n = [];
+    let n = [];
     for (const e of raw) { const m = this.resolve(e, B); if (m != null && m >= 0 && m <= 127) n.push({ s: e.s, l: e.l, v: e.v, n: m }); }
+    if (this.p.lock && this.p.lock !== "off") n = this.lockTo(B, n);
     this.cache = { B, n };
     return n;
+  }
+  // Die Tonhöhen bleiben die eigenen (der Ton, der an dieser Stelle gerade klänge), nur der Rhythmus kommt vom anderen.
+  lockTo(B, n) {
+    const lk = this.p.lock, comp = lk.endsWith("~"), src = comp ? lk.slice(0, -1) : lk;
+    if (!n.length || this._locking) return n;
+    const g = this.eng.gens.find(x => x !== this && x.on && !x.mute && !x._locking && (src === "kick" ? x.kind === "beat" : x.kind === src));
+    if (!g) return n;                                   // Quelle spielt nicht: eigener Rhythmus
+    this._locking = true;
+    let on;
+    try { on = g.notesFor(B).filter(e => src !== "kick" || e.n === 0).map(e => Math.round(e.s * 4) / 4); } finally { this._locking = false; }
+    on = [...new Set(on)].sort((a, b) => a - b);
+    if (comp) { const gaps = []; for (let s = 0; s < 16; s += 2) if (!on.some(o => Math.abs(o - s) < 1)) gaps.push(s); on = gaps; }
+    if (!on.length) return comp ? [] : n;
+    const groups = new Map();
+    for (const e of n) { const k = Math.round(e.s * 4) / 4; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(e); }
+    const starts = [...groups.keys()].sort((a, b) => a - b), out = [];
+    on.forEach((s, i) => {
+      let k = starts[0]; for (const t of starts) if (t <= s + 1e-6) k = t;
+      const len = Math.max(0.3, Math.min(((i + 1 < on.length ? on[i + 1] : 16) - s) * 0.9, comp ? 1.8 : 8));
+      for (const e of groups.get(k)) out.push({ s, l: len, v: e.v, n: e.n });
+    });
+    return out;
   }
   make() { return []; }
   vary() {}
@@ -640,10 +667,10 @@ class Loops extends AudioWorkletProcessor {
         break; }
       case "cap": this.cap = !!d.on; break;
       case "start": { const g = this.gen(d.id); if (!g) break; if (!this.run) this.begin(); g.stopAt = null;
-        if (d.now || !this.playingAny()) { g.startAt = null; g.on = true; g.startBar = this.barNow(); g.dirty = g.dirty || !g.pat; g.cache = null; }
+        if (d.now || !this.playingAny()) { g.startAt = null; g.on = true; g.startBar = phraseStart(g, this.barNow()); g.dirty = g.dirty || !g.pat; g.cache = null; }
         else g.startAt = this.barNow() + 1;
         this.state(g); break; }
-      case "stop": { const g = this.gen(d.id); if (!g) break; g.startAt = null; if (d.now) { this.halt(g); } else g.stopAt = this.barNow() + 1; this.state(g); break; }
+      case "stop": { const g = this.gen(d.id); if (!g) break; g.startAt = null; if (d.now) { this.halt(g); } else g.stopAt = this.barNow() + 1; this.state(g); if (d.now) this.idleEnd(); break; }
       case "mute": { const g = this.gen(d.id); if (g) g.mute = !!d.on; break; }
       case "run": if (d.on) this.begin(); else this.end(); break;
       case "metro": this.metro = !!d.on; break;
@@ -675,6 +702,8 @@ class Loops extends AudioWorkletProcessor {
     }
   }
   playingAny() { return this.gens.some(g => g.on); }
+  // 3.19: der letzte Generator ist gestoppt → Takt anhalten (lief vorher leer weiter; der Autopilot holte dann wieder jemanden herein)
+  idleEnd() { if (this.run && !this.gens.some(g => g.on || g.startAt != null) && !this.rec && !this.seedRec) this.end(); }
   barNow() { return Math.floor(this.pos / SPB + 1e-9); }
   begin() { if (this.run) return; this.run = true; this.pos = 0; this.lastBar = -1; this.lastStep = -1; this.port.postMessage({ t: "run", on: true }); }
   end() {
@@ -726,10 +755,12 @@ class Loops extends AudioWorkletProcessor {
   }
   barStart(B, frame) {
     // Starts/Stopps am Taktanfang
+    let stopped = false;
     for (const g of this.gens) {
-      if (g.startAt != null && B >= g.startAt) { g.on = true; g.startAt = null; g.startBar = B; g.cache = null; this.state(g); }
-      if (g.stopAt != null && B >= g.stopAt) { this.halt(g); this.state(g); }
+      if (g.startAt != null && B >= g.startAt) { g.on = true; g.startAt = null; g.startBar = phraseStart(g, B); g.cache = null; this.state(g); }
+      if (g.stopAt != null && B >= g.stopAt) { this.halt(g); this.state(g); stopped = true; }
     }
+    if (stopped) this.idleEnd();
     const sr = this.seedRec; if (sr && B === sr.bar0 + sr.bars) this.finishSeed();
     const rc = this.rec;
     if (rc && rc.startClock == null && B === rc.at) {

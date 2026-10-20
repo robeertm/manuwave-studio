@@ -6,7 +6,7 @@
 // → WAV → Bibliothek; der Mac veredelt ihn wie jeden Track, mit Herkunft "selbst eingespielt", nicht KI).
 // Die Oberfläche ist zweisprachig aus sich heraus (T(de, en)) und steht unter translate="no" — der Laufzeit-Übersetzer
 // fasst sie nicht an (Regel aus 3.12: eine Übersetzung ändert, was der Code zurückliest).
-import { SCHEMA, PAD_PARAMS, DRUM_MODELS, GM_TO_PAD, KITS, MODELS, MODEL_GROUPS, PRESETS, defaults, demoProject, knobIdle, markIdle, showValue, fixText } from "./selber-presets.js";
+import { SCHEMA, PAD_PARAMS, DRUM_MODELS, GM_TO_PAD, KITS, MODELS, MODEL_GROUPS, PRESETS, defaults, demoProject, knobIdle, markIdle, showValue, fixText, knobWheel, keepAudioAlive } from "./selber-presets.js";
 
 const EN = window.MWS_LANG === "en";
 const T = (de, en) => (EN ? en : de);
@@ -256,6 +256,7 @@ async function ensureAudio() {
   try { await S.ctx.audioWorklet.addModule("selber-engine.js"); }
   catch (e) { status(T("Klangmotor nicht geladen: ", "Sound engine failed to load: ") + (e.message || e)); return false; }
   S.g = buildGraph(S.ctx, S.project, null);
+  keepAudioAlive(S.ctx, () => !!S.playing);                  // 3.19: Safari setzt den Ton bei Rückfragen aus
   S.g.node.port.onmessage = (e) => onEngine(e.data);
   S.g.limiter.port.onmessage = (e) => { S.limit = e.data; };
   if (S.ctx.state !== "running") { try { await S.ctx.resume(); } catch (e) { /* */ } }
@@ -528,7 +529,7 @@ function knob(p, value, onChange, opts = {}) {
   // 3.17.2: gestufte Regler (Oktave, Halbton, Stimmen …) — ein Rad-/Tastenschritt war kleiner als eine halbe Stufe und wurde
   // zurückgerundet: Mausrad und Pfeiltasten taten nichts. Jetzt mindestens eine Stufe.
   const nudge = (d) => { let nv = fromPos(p, toPos(p, v) + d); if (p.st && nv === v) nv = clamp(v + Math.sign(d) * p.st, p.min, p.max); return nv; };
-  face.addEventListener("wheel", (e) => { e.preventDefault(); set(nudge(-Math.sign(e.deltaY) * (e.shiftKey ? 0.005 : 0.03))); }, { passive: false });
+  knobWheel(face, p, () => v, set, toPos, fromPos);         // 3.18.1: nach Scrollweg, Seiten-Scrollen dreht nicht mit
   face.addEventListener("keydown", (e) => {
     const stp = e.shiftKey ? 0.01 : 0.05;
     if (e.key === "ArrowUp" || e.key === "ArrowRight") { e.preventDefault(); set(nudge(stp)); }

@@ -3,6 +3,34 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.19.0 — 2026-10-20 (bridge 3.17.0)
+
+### Added
+- **New generators fit in.** A generator added to a set takes the set's style for its sound and pattern, the loop
+  length most of the others use, sits an octave away from one of the same kind, and couples its groove where the style
+  does that (in hip-hop, trap, drum & bass, lo-fi, breakbeat and reggaeton the bass plays on the kick; stabs go between
+  the bass notes; a second melody answers the first). If the machine is running, it comes in on the next bar and is
+  mixed in. A message says what it adapted.
+- **🔗 Groove** on bass, chords, arpeggio and melody: play on the kick, between the
+  kicks, with or between the bass, with the chords, or answering the melody. The notes stay the generator's own; only the
+  rhythm comes from the other one.
+
+### Changed
+- **Knobs with a trackpad or mouse wheel** (loop machine and *Make your own*): the knob now follows the distance you
+  scroll — the whole range takes about 1500 px, a wheel notch is 2.5 % as before. Before, every scroll event moved 3 %, so
+  a small trackpad swipe sent the knob to its end. A scroll that starts on the page keeps scrolling the page instead of
+  turning the knobs the pointer passes over.
+- **Removing a generator** no longer asks; the others keep playing, and *↶ bring back* in the message restores it.
+- Pattern generators come in **on the phrase**: a 4-bar loop started in bar 6 lines up with bar 5 like the others.
+
+### Fixed
+- **■ Stop really stops.** With the autopilot on, the transport kept running after all generators stopped and the
+  autopilot brought one back at the next phrase. Now the transport stops with the last generator, and stopping cancels
+  the autopilot's planned re-entries.
+- **Safari stopped the sound after any confirmation dialog** (the audio context was suspended and never resumed). The
+  loop machine and *Make your own* now resume it right away (or on the next click when the browser requires a gesture),
+  also after the screen was locked.
+
 ## 3.18.0 — 2026-10-20 (bridge 3.17.0)
 
 New ways to shape and move sound in the loop machine, built with Manuwave's own sound engine — plus a MIDI output,

@@ -216,6 +216,66 @@ export function mutatePatch(engine, patch, amt, rand = Math.random, opts = {}) {
   return { patch: out, changed };
 }
 
+// 3.18.1: Mausrad, Trackpad und Magic-Mouse-Fläche an den Reglern (Loop-Maschine und Selber machen).
+// Vorher drehte JEDES Rad-Ereignis 3 % — ein Trackpad schickt bei einer kleinen Wischbewegung 30–60 winzige Ereignisse, der
+// Regler stand sofort am Anschlag; und wer die Seite scrollte, verdrehte jeden Regler, über den der Zeiger fuhr.
+// Jetzt: Weg nach gescrollter Strecke (ganzer Bereich ≈ 1500 px, mit Shift 7500 px), je Ereignis höchstens 2,5 % (eine
+// Mausrad-Raste wie bisher); gestufte Regler mit wenigen Stufen (Oktave, Welle …) eine Stufe je Raste oder je ~120 px.
+// Eine Scroll-Geste, die auf der Seite beginnt, scrollt die Seite weiter — auch wenn der Zeiger dabei über Regler fährt.
+const WHEEL = { t: 0, knob: null };
+if (typeof document !== "undefined") document.addEventListener("wheel", (e) => {
+  const now = performance.now(), k = e.target && e.target.closest ? e.target.closest(".sb-kface") : null;
+  if (now - WHEEL.t > 350) WHEEL.knob = k;              // Pause → neue Geste: wo beginnt sie?
+  else if (WHEEL.knob && k) WHEEL.knob = k;             // Geste läuft an Reglern: der unter dem Zeiger dreht
+  WHEEL.t = now;
+}, { capture: true, passive: true });
+export const WHEEL_PX = 1500;
+export function knobWheel(face, p, get, set, toPos, fromPos) {
+  let acc = 0, wp = null, last = 0;
+  const steps = p.st ? Math.round((p.max - p.min) / p.st) : 0, coarse = steps > 0 && steps <= 24;
+  face.addEventListener("wheel", (e) => {
+    let d = e.deltaY;
+    if (!d && e.shiftKey) d = e.deltaX;                 // macOS: Shift macht aus dem Rad eine waagrechte Bewegung
+    if (!d || Math.abs(e.deltaX) > Math.abs(e.deltaY) * 2 && !e.shiftKey) return;     // waagrecht wischen: nicht drehen
+    if (WHEEL.knob !== face) return;                   // die Geste begann auf der Seite: weiter scrollen lassen
+    e.preventDefault();
+    if (e.deltaMode === 1) d *= 16; else if (e.deltaMode === 2) d *= 400;
+    const now = performance.now(); if (now - last > 350) acc = 0; last = now;     // neue Geste: Rest der alten vergessen
+    const v = get();
+    if (coarse) {                                       // wenige Stufen: eine je Raste (großer Ausschlag) oder je ~120 px
+      if (Math.sign(d) !== Math.sign(acc)) acc = 0;
+      acc += d;
+      if (Math.abs(d) < 40 && Math.abs(acc) < 120) return;
+      acc = 0; const nv = Math.min(p.max, Math.max(p.min, v - Math.sign(d) * p.st)); if (nv !== v) set(nv); return;
+    }
+    const cap = e.shiftKey ? 0.005 : 0.025, dp = Math.max(-cap, Math.min(cap, -d / (e.shiftKey ? WHEEL_PX * 5 : WHEEL_PX)));
+    // die Stellung zwischen den Ereignissen fein mitführen (sonst rundet ein Stufenregler kleine Schritte zurück)
+    if (wp == null || Math.abs(fromPos(p, wp) - v) > (p.st || Math.abs(p.max - p.min) * 1e-3)) wp = toPos(p, v);
+    wp = Math.min(1, Math.max(0, wp + dp));
+    const nv = fromPos(p, wp); if (nv !== v) set(nv);
+  }, { passive: false });
+}
+
+// 3.19: Ton am Leben halten. Safari setzt den AudioContext bei jedem Bestätigungsfenster (confirm) aus und nimmt ihn nicht
+// anderen Unterbrechungen. Soll etwas klingen (wanted), wird sofort fortgesetzt; verlangt der Browser dafür eine Geste,
+// beim nächsten Klick oder Tastendruck.
+export function keepAudioAlive(ctx, wanted) {
+  let armed = false;
+  const go = () => {
+    armed = false; document.removeEventListener("pointerdown", go, true); document.removeEventListener("keydown", go, true);
+    if (ctx.state !== "running" && ctx.state !== "closed" && wanted()) ctx.resume().catch(() => {});
+  };
+  const heal = () => {
+    if (ctx.state === "running" || ctx.state === "closed" || !wanted()) return;
+    ctx.resume().catch(() => {});
+    if (!armed) { armed = true; document.addEventListener("pointerdown", go, true); document.addEventListener("keydown", go, true); }
+  };
+  ctx.addEventListener("statechange", () => setTimeout(heal, 30));
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) heal(); });
+  window.addEventListener("focus", heal);
+  return heal;
+}
+
 // 3.17.2: Oberfläche — Regler, die gerade nicht wirken, abdunkeln und sagen warum (beide Ansichten: Loop-Maschine, Selber machen).
 // root: Behälter mit Elementen [data-pk]; idleOf(pk) → knobIdle-Ergebnis; en: englische Oberfläche
 export function markIdle(root, idleOf, en) {
