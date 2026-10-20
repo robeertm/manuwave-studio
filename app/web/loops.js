@@ -11,7 +11,7 @@
 // Zonen im Oszillator, Frequenzverschieber/Vibrato/Ensemble, Granular, Arp-Ratschen/Leben/Menschlich, Strum, Analog-Drift,
 // 🔒 Klang festhalten beim Würfeln, ⏪ Flow Capture (die letzten Takte nachträglich sichern, Audio + MIDI) und 🔌 MIDI-Ausgang je
 // Generator — damit spielt die Loop-Maschine auch andere Klangerzeuger oder Hardware-Synths.
-import { SCHEMA, KITS, MODELS, MODEL_GROUPS, PRESETS, PAD_TO_GM, defaults, knobIdle, markIdle, showValue, fixText, mutatePatch } from "./selber-presets.js";
+import { SCHEMA, KITS, MODELS, MODEL_GROUPS, PRESETS, PAD_TO_GM, defaults, knobIdle, markIdle, showValue, fixText, mutatePatch, knobWheel, keepAudioAlive } from "./selber-presets.js";
 
 const EN = window.MWS_LANG === "en";
 const T = (de, en) => (EN ? en : de);
@@ -64,6 +64,10 @@ const STYLES = {
 const K = (k, de, en, min, max, def, o = {}) => ({ t: "knob", k, de, en, min, max, def, ...o });
 const SEL = (k, de, en, opts, def, o = {}) => ({ t: "sel", k, de, en, opts, def, ...o });
 const TOG = (k, de, en, def = false, o = {}) => ({ t: "tog", k, de, en, def, ...o });
+const LOCK = (own) => SEL("lock", "🔗 Groove", "🔗 Groove", [["off", "eigener Rhythmus", "own rhythm"], ["kick", "auf der Kick", "on the kick"], ["kick~", "zwischen den Kicks", "between the kicks"],
+  ["bass", "mit dem Bass", "with the bass"], ["bass~", "zwischen dem Bass", "between the bass"], ["chords", "mit den Akkorden", "with the chords"], ["melody~", "Antwort auf die Melodie", "answering the melody"]]
+  .filter(o => o[0].replace("~", "") !== own || o[0] === "melody~"), "off",
+  { tip: ["Spielt seine Töne auf den Schlägen eines anderen Generators — oder genau in dessen Lücken", "Plays its notes on the hits of another generator — or exactly in its gaps"] });
 const BARS = (def, opts = [1, 2, 4, 8]) => SEL("bars", "Schleife", "Loop", opts.map(n => [n, n + (n === 1 ? " Takt" : " Takte"), n + (n === 1 ? " bar" : " bars")]), def, { regen: 1 });
 const BEAT_STYLES = [["house", "House", "House"], ["techno", "Techno", "Techno"], ["breakbeat", "Breakbeat", "Breakbeat"], ["hiphop", "Hip-Hop (Boom-Bap)", "Hip-hop (boom bap)"],
   ["trap", "Trap", "Trap"], ["dnb", "Drum & Bass", "Drum & bass"], ["lofi", "Lo-Fi", "Lo-fi"], ["reggaeton", "Reggaeton", "Reggaeton"], ["pop", "Pop / Rock", "Pop / rock"],
@@ -79,22 +83,22 @@ const KIND = {
   bass: { icon: "🎸", de: "Bass", en: "Bass", hd: "Basslinie zur Akkordfolge", he: "Bass line that follows the chords", ins: "bass",
     p: [SEL("style", "Spielweise", "Pattern", [["pulse", "Achtel-Puls", "8th pulse"], ["root", "Grundton lang", "Long roots"], ["offbeat", "Offbeat (House)", "Offbeat (house)"],
       ["octave", "Oktaven (Disco)", "Octaves (disco)"], ["acid", "Acid (303)", "Acid (303)"], ["synco", "Synkopiert (Funk)", "Syncopated (funk)"], ["walking", "Laufend", "Walking"]], "pulse", { regen: 1 }),
-      K("density", "Dichte", "Density", 0, 1, 0.6, { u: "%", regen: 1 }), K("variation", "Variation", "Variation", 0, 1, 0.25, { u: "%" }), K("oct", "Oktave", "Octave", -2, 2, 0, { st: 1 }), BARS(2, [1, 2, 4])] },
+      K("density", "Dichte", "Density", 0, 1, 0.6, { u: "%", regen: 1 }), K("variation", "Variation", "Variation", 0, 1, 0.25, { u: "%" }), K("oct", "Oktave", "Octave", -2, 2, 0, { st: 1 }), BARS(2, [1, 2, 4]), LOCK("bass")] },
   chords: { icon: "🎹", de: "Akkorde", en: "Chords", hd: "Akkorde in der Tonart, weich geführt", he: "Chords in key, smoothly voiced", ins: "chords",
     p: [SEL("style", "Rhythmus", "Rhythm", [["pad", "Fläche (ganzer Takt)", "Pad (whole bar)"], ["half", "Halbe", "Halves"], ["stabs", "Stabs (kurz)", "Stabs (short)"],
       ["offbeat", "Offbeat", "Offbeat"], ["pulse", "Achtel", "8ths"]], "pad", { regen: 1 }), K("color", "Farbe (7/9)", "Colour (7/9)", 0, 1, 0.3, { u: "%", regen: 1 }),
       K("density", "Dichte", "Density", 0, 1, 0.5, { u: "%", regen: 1 }), K("variation", "Variation", "Variation", 0, 1, 0.2, { u: "%" }), K("oct", "Lage", "Register", -1, 1, 0, { st: 1 }),
-      K("strum", "Strum", "Strum", 0, 1, 0, { u: "%", regen: 1, tip: ["Die Töne des Akkords nacheinander anschlagen, abwechselnd auf- und abwärts — wie auf einer Gitarre", "Play the chord's notes one after another, alternating up and down — like a guitar"] }), BARS(1, [1, 2, 4])] },
+      K("strum", "Strum", "Strum", 0, 1, 0, { u: "%", regen: 1, tip: ["Die Töne des Akkords nacheinander anschlagen, abwechselnd auf- und abwärts — wie auf einer Gitarre", "Play the chord's notes one after another, alternating up and down — like a guitar"] }), BARS(1, [1, 2, 4]), LOCK("chords")] },
   arp: { icon: "✨", de: "Arpeggio", en: "Arpeggio", hd: "Zerlegte Akkorde im Takt", he: "Broken chords in time", ins: "arp",
     p: [SEL("rate", "Noten", "Rate", RATES, "1/16", { regen: 1 }), SEL("mode", "Richtung", "Direction", [["up", "aufwärts", "up"], ["down", "abwärts", "down"], ["updown", "auf & ab", "up & down"], ["random", "zufällig", "random"]], "up", { regen: 1 }),
       K("octaves", "Oktaven", "Octaves", 1, 4, 2, { st: 1, regen: 1 }), K("gate", "Notenlänge", "Gate", 0.1, 1, 0.5, { u: "%", regen: 1 }), K("density", "Dichte", "Density", 0, 1, 0.9, { u: "%", regen: 1 }),
       K("variation", "Variation", "Variation", 0, 1, 0.15, { u: "%" }), K("oct", "Oktave", "Octave", -2, 2, 0, { st: 1 }), K("color", "Farbe (7)", "Colour (7)", 0, 1, 0, { u: "%", regen: 1 }),
       K("ratchet", "Ratschen", "Ratchets", 0, 1, 0, { u: "%", regen: 1, tip: ["Manche Schritte zerfallen in 2–4 schnelle Wiederholungen", "Some steps break into 2–4 quick repeats"] }),
       K("life", "Leben", "Life", 0, 1, 0, { u: "%", tip: ["Die Dynamik wandert in einer langsamen Welle und streut — bei jedem Durchgang anders", "Dynamics drift in a slow wave and scatter — different on every pass"] }),
-      K("human", "Menschlich", "Human feel", 0, 1, 0, { u: "%", tip: ["Jede Note ein wenig neben dem Raster", "Every note a little off the grid"] }), BARS(1, [1, 2, 4])] },
+      K("human", "Menschlich", "Human feel", 0, 1, 0, { u: "%", tip: ["Jede Note ein wenig neben dem Raster", "Every note a little off the grid"] }), BARS(1, [1, 2, 4]), LOCK("arp")] },
   melody: { icon: "🎶", de: "Melodie", en: "Melody", hd: "Ein Motiv, das wiederkommt und sich entwickelt", he: "A motif that returns and develops", ins: "lead",
     p: [K("density", "Dichte", "Density", 0, 1, 0.5, { u: "%", regen: 1 }), K("range", "Umfang", "Range", 2, 10, 5, { st: 1, regen: 1 }), K("variation", "Variation", "Variation", 0, 1, 0.3, { u: "%" }),
-      K("oct", "Oktave", "Octave", -2, 2, 0, { st: 1 }), BARS(4)] },
+      K("oct", "Oktave", "Octave", -2, 2, 0, { st: 1 }), BARS(4), LOCK("melody")] },
   seed: { icon: "🎼", de: "Vorgabe", en: "Your bars", hd: "Spiel ein paar Takte ein — die Maschine spielt sie und spinnt sie weiter", he: "Play a few bars — the machine plays them and spins them on", ins: "lead",
     p: [BARS(2, [1, 2, 4]), K("life", "Eigenleben", "Life of its own", 0, 1, 0.4, { u: "%" }), TOG("follow", "Akkorden folgen", "Follow chords", false), K("oct", "Oktave", "Octave", -2, 2, 0, { st: 1 })] },
   osc: { icon: "〰️", de: "Oszillator", en: "Oscillator", hd: "Freier Klangerzeuger: Dauerton, Rauschen, LFO, Tor im Takt", he: "Free tone generator: drone, noise, LFO, gate in time",
@@ -297,6 +301,7 @@ async function ensureAudio() {
   try { await S.ctx.audioWorklet.addModule("selber-engine.js"); await S.ctx.audioWorklet.addModule("loops-engine.js"); }
   catch (e) { status(T("Klangmotor nicht geladen: ", "Sound engine failed to load: ") + (e.message || e)); S.ctx = null; return false; }
   buildGraph();
+  keepAudioAlive(S.ctx, () => S.running || S.set.gens.some(g => genPending(g) === "start"));   // 3.19: Safari setzt den Ton bei Rückfragen aus
   if (S.ctx.state !== "running") { try { await S.ctx.resume(); } catch (e) { /* */ } }
   syncAll();
   for (const g of S.set.gens) if (g.kind === "audio") loadLayers(g).then(ls => { if (ls.length) post({ t: "layers", id: g.id, layers: ls }); paintCard(g); });
@@ -460,28 +465,85 @@ async function startAll() {
   if (!(await ensureAudio())) return;
   for (const g of S.set.gens) if (!genOn(g) && (g.kind !== "seed" || (g.seed && g.seed.length)) && (g.kind !== "audio" || g.nLayers)) post({ t: "start", id: g.id });
 }
-function stopAll(now) { if (now) { post({ t: "run", on: false }); return; } for (const g of S.set.gens) if (genOn(g)) post({ t: "stop", id: g.id }); }
+// 3.19: ■ heißt Schluss — auch geplante Wiedereinsätze des Autopiloten (Ende eines Breakdowns) fallen weg; sind alle Generatoren
+// still, hält der Motor den Takt an (vorher lief er weiter und der Autopilot holte an der nächsten Phrasengrenze jemanden zurück)
+function stopAll(now) { endAutoFx(); if (now) { post({ t: "run", on: false }); return; } for (const g of S.set.gens) if (genOn(g) || genPending(g) === "start") post({ t: "stop", id: g.id }); }
 function setGenParam(g, k, v, spec) {
   g.p[k] = v; dropMod(g, "p:" + k);
   post({ t: "gp", id: g.id, k, v, regen: !!(spec && spec.regen) });
   changed();
 }
 function setFx(g, k, v) { g.fx[k] = v; dropMod(g, "fx:" + k); if (k === "vol") g.volHand = true; applyFx(g); changed(); }
-function addGen(kind, o) {
+function addGen(kind, o, { fit = false } = {}) {
+  let said = [];
+  if (fit && !o) ({ o, said } = fitNew(kind));
   const g = newGen(kind, o);
   if (!g) { status(T("Höchstens 12 Generatoren.", "At most 12 generators.")); return null; }
   S.set.gens.push(g); changed();
   if (S.g) { makeChain(g); sendGen(g); }
   S.sel = g.id;
   renderCards();
+  // 3.19: läuft die Maschine, setzt der neue am nächsten Phrasenanfang mit ein und wird eingemischt
+  if (fit && S.running && g.kind !== "seed" && g.kind !== "audio") { post({ t: "start", id: g.id }); autoMix({ ids: [g.id] }); said.push(T("setzt am nächsten Takt ein", "comes in on the next bar")); }
+  if (fit && said.length) status(T(`🔗 ${g.name} passt sich an: `, `🔗 ${g.name} fits in: `) + said.join(" · "));
   return g;
 }
-function removeGen(g) {
+// 3.19: ein neuer Generator passt zu dem, was schon da ist — Klang und Muster im Stil des Sets, Schleifenlänge der anderen,
+// eine Oktave neben einem gleichartigen, Groove an Beat oder Bass gekoppelt, wo das im Stil üblich ist (Hip-Hop/Trap: Bass auf der Kick)
+function fitNew(kind) {
+  const st = STYLES[S.set.style] || STYLES.house, o = { p: {} }, said = [], gens = S.set.gens, have = (k) => gens.find(x => x.kind === k);
+  const lab = (k) => { const sp = KIND[kind].p.find(x => x.k === k), opt = sp && sp.opts && sp.opts.find(x => String(x[0]) === String(o.p[k])); return opt ? T(opt[1], opt[2]) : o.p[k]; };
+  if (kind === "beat") { o.kit = st.kit; o.p.style = st.beat; said.push(T(`Stil ${st.de}`, `${st.en} style`)); }
+  if (kind === "bass") { o.preset = st.bassP; o.p.style = st.bass; said.push(T(`Bass im Stil ${st.de} (${lab("style")})`, `${st.en} bass (${lab("style")})`)); }
+  if (kind === "chords") { o.preset = st.chordP; o.p.style = st.chords; o.fx = { rev: 0.3 }; said.push(T(`Akkorde im Stil ${st.de} (${lab("style")})`, `${st.en} chords (${lab("style")})`)); }
+  if (kind === "arp") { o.preset = st.arp || "poly|Glasklare Keys"; o.p.rate = S.set.bpm >= 140 ? "1/8" : "1/16"; o.fx = { echo: 0.3, rev: 0.25 }; said.push(T(`Arpeggio in ${o.p.rate}`, `arpeggio in ${o.p.rate}`)); }
+  if (kind === "melody") { o.preset = pickLead(); }
+  // Schleifenlänge: wie die laufenden Muster-Generatoren (die häufigste), soweit dieser Generator sie kann
+  const sp = KIND[kind].p.find(x => x.k === "bars");
+  const runB = gens.filter(x => ["beat", "bass", "chords", "arp", "melody"].includes(x.kind) && (genOn(x) || !S.running)).map(x => +x.p.bars).filter(Boolean);
+  if (sp && runB.length) { const cnt = {}; for (const b of runB) cnt[b] = (cnt[b] || 0) + 1; let best = +Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a] || b - a)[0];
+    const ok = sp.opts.map(x => +x[0]); if (!ok.includes(best)) best = ok.filter(x => x <= best).pop() || ok[0];
+    if (best !== sp.def) { o.p.bars = best; said.push(T(`${best} Takt${best > 1 ? "e" : ""} wie die anderen`, `${best} bar${best > 1 ? "s" : ""} like the others`)); } }
+  // Lage: gibt es schon einen gleicher Art, eine Oktave daneben
+  const same = gens.filter(x => x.kind === kind);
+  if (same.length && ["bass", "chords", "arp", "melody"].includes(kind)) {
+    const used = same.map(x => Math.round(+x.p.oct || 0)), lim = kind === "chords" ? 1 : 2;
+    const pick = [1, -1, 2, -2].find(d => Math.abs(d) <= lim && !used.includes(d));
+    if (pick != null) { o.p.oct = pick; said.push(pick > 0 ? T("eine Oktave über dem anderen", "an octave above the other") : T("eine Oktave unter dem anderen", "an octave below the other")); }
+  }
+  // Groove koppeln, wo es im Stil üblich ist
+  const bt = have("beat"), bs = have("bass"), mel = have("melody");
+  if (kind === "bass" && bt && ["hiphop", "trap", "dnb", "lofi", "breakbeat", "reggaeton"].includes(bt.p.style)) { o.p.lock = "kick"; said.push(T("spielt auf der Kick", "plays on the kick")); }
+  if (kind === "chords" && bs && o.p.style === "stabs") { o.p.lock = "bass~"; said.push(T("Stabs zwischen den Basstönen", "stabs between the bass notes")); }
+  if (kind === "melody" && mel) { o.p.lock = "melody~"; said.push(T("antwortet der anderen Melodie", "answers the other melody")); }
+  said.push(T(`Tonart ${ROOTS[S.set.root]}-${MAJORISH.includes(S.set.scale) ? "Dur" : "Moll"} und Akkordfolge wie alle`, `key ${ROOTS[S.set.root]} ${MAJORISH.includes(S.set.scale) ? "major" : "minor"} and progression like all`));
+  return { o, said };
+}
+function removeGen(g, { undo = false } = {}) {
+  const keep = undo ? { g: JSON.parse(JSON.stringify(g)), idx: S.set.gens.indexOf(g), wasOn: genOn(g) || genPending(g) === "start", layers: null } : null;
   extAllOff(g); S.mods.delete(g.id);
   post({ t: "del", id: g.id }); dropChain(g.id);
   S.set.gens = S.set.gens.filter(x => x !== g); if (S.sel === g.id) S.sel = null;
-  if (g.kind === "audio") saveLayers(g, []);
+  if (g.kind === "audio") { if (keep) loadLayers(g).then(ls => { keep.layers = ls; return saveLayers(g, []); }); else saveLayers(g, []); }
   changed(); renderCards();
+  if (keep) {
+    S.undoGen = keep;
+    status(T(`✕ „${g.name}“ entfernt — der Rest spielt weiter.`, `✕ “${g.name}” removed — the rest keeps playing.`));
+    const m = q("#lpMsg"); if (m) m.append(" ", h("button", { type: "button", class: "ghost btn-s lp-undo", text: T("↶ zurückholen", "↶ bring back"), onclick: restoreGen }));
+  }
+}
+function restoreGen() {
+  const k = S.undoGen; if (!k) return; S.undoGen = null;
+  if (S.set.gens.length >= MAX_GEN) { status(T("Höchstens 12 Generatoren.", "At most 12 generators.")); return; }
+  const g = k.g; if (S.set.gens.some(x => x.slot === g.slot)) g.slot = freeSlot();
+  S.set.gens.splice(Math.min(k.idx, S.set.gens.length), 0, g);
+  if (S.g) {
+    makeChain(g); sendGen(g);
+    if (g.kind === "audio" && k.layers && k.layers.length) { post({ t: "layers", id: g.id, layers: k.layers }); saveLayers(g, k.layers); g.nLayers = k.layers.length; }
+    if (k.wasOn && S.running) post({ t: "start", id: g.id });
+  }
+  changed(); renderCards();
+  status(T(`↶ „${g.name}“ ist wieder da${k.wasOn && S.running ? " und setzt am nächsten Takt ein" : ""}.`, `↶ “${g.name}” is back${k.wasOn && S.running ? " and comes in on the next bar" : ""}.`));
 }
 function setSound(g, key) {
   // ein neuer Klang beginnt einen neuen Mutations-Verlauf; Orb-Ziele des alten Instruments passen nicht mehr
@@ -678,6 +740,7 @@ function autopilotBar(d) {
   if ((B + 1) % 8 !== 0 || B < 7) return;                // nur an Phrasengrenzen (alle 8 Takte)
   if (Math.random() > 0.35 + A.amt * 0.6) return;
   const on = S.set.gens.filter(g => genOn(g)), off = S.set.gens.filter(g => !genOn(g) && (g.kind !== "seed" || (g.seed && g.seed.length)) && (g.kind !== "audio" || g.nLayers));
+  if (!on.length) return;                                // 3.19: spielt nichts (■ gedrückt), holt der Autopilot niemanden zurück
   const core = on.filter(g => g.kind === "beat" || g.kind === "bass");
   const r = Math.random(), at = B + 1;
   const say = (de, en) => { S.auto.log = T(`Takt ${at + 1}: `, `Bar ${at + 1}: `) + T(de, en); renderAutoLog(); };
@@ -1064,7 +1127,7 @@ function knob(p, value, onChange, opts = {}) {
   // 3.17.2: gestufte Regler (Oktave, Halbton, Stimmen …) — ein Rad-/Tastenschritt war kleiner als eine halbe Stufe und wurde
   // zurückgerundet: Mausrad und Pfeiltasten taten nichts. Jetzt mindestens eine Stufe.
   const nudge = (d) => { let nv = fromPos(p, toPos(p, v) + d); if (p.st && nv === v) nv = clamp(v + Math.sign(d) * p.st, p.min, p.max); return nv; };
-  face.addEventListener("wheel", (e) => { e.preventDefault(); set(nudge(-Math.sign(e.deltaY) * (e.shiftKey ? 0.005 : 0.03))); }, { passive: false });
+  knobWheel(face, p, () => v, set, toPos, fromPos);         // 3.18.1: nach Scrollweg, Seiten-Scrollen dreht nicht mit
   face.addEventListener("keydown", (e) => {
     const stp = e.shiftKey ? 0.01 : 0.05;
     if (e.key === "ArrowUp" || e.key === "ArrowRight") { e.preventDefault(); set(nudge(stp)); }
@@ -1099,6 +1162,8 @@ function loopIdle(g, pk) {
     if ((k === "etime" || k === "efb") && !(f.echo > 0)) return R("wirkt, sobald Echo über 0 ist", "works once echo is above 0", { echo: 0.25 });
     return null;
   }
+  if (k === "lock" && p.lock && p.lock !== "off") { const src = p.lock.replace("~", ""), has = S.set.gens.some(x => x !== g && (src === "kick" ? x.kind === "beat" : x.kind === src));
+    if (!has) return R(`folgt, sobald es ${{ kick: "einen Beat", bass: "einen Bass", chords: "Akkorde", melody: "eine Melodie" }[src]} gibt — bis dahin eigener Rhythmus`, `follows once there is ${{ kick: "a beat", bass: "a bass", chords: "chords", melody: "a melody" }[src]} — own rhythm until then`); }
   if (g.kind === "audio" && /^(gsize|gdens|gspray|gpitch|gfreeze)$/.test(k) && !(num(p.gran, 0) > 0)) return R("wirkt, sobald „Granular“ über 0 ist", "works once “Granular” is above 0", { gran: 0.6 });
   if (g.kind !== "osc") return null;
   const zones = !!p.zones, wave = p.wave || "saw", noise = !zones && /noise|pink|brown/.test(wave), lsync = p.lsync && p.lsync !== "off";
@@ -1522,7 +1587,7 @@ function shell() {
     h("div", { id: "lpKi", class: "lp-ki hidden" }),
     h("div", { class: "lp-addbar" }, h("span", { class: "sb-cap", text: T("＋ Generator", "＋ Generator") }),
       ...Object.keys(KIND).map(k => h("button", { type: "button", class: "ghost btn-s lp-add", "data-kind": k, title: T(KIND[k].hd, KIND[k].he), text: KIND[k].icon + " " + T(KIND[k].de, KIND[k].en),
-        onclick: () => { const g = addGen(k); if (g && k === "audio") micOn(); } })),
+        onclick: () => { const g = addGen(k, null, { fit: true }); if (g && k === "audio") micOn(); } })),
       h("span", { class: "spacer" }),
       h("button", { id: "lpKiOpen", type: "button", class: "ghost btn-s lp-kibtn", title: T("Die Musik-KI auf deinem Mac spielt deinen Jam weiter oder die Band zu deinem Gesang", "The music AI on your computer continues your jam or plays the band for your voice"),
         text: T("🤖 KI baut weiter", "🤖 AI takes over"), onclick: () => { S.ki.open = !S.ki.open; renderKi(); if (S.ki.open) q("#lpKi").scrollIntoView({ block: "nearest" }); } }),
@@ -1696,7 +1761,7 @@ function card(g) {
       text: g.lock ? "🔒" : "🔓", onclick: (e) => { g.lock = !g.lock; e.target.textContent = g.lock ? "🔒" : "🔓"; e.target.classList.toggle("on", g.lock); e.target.setAttribute("aria-pressed", String(g.lock)); changed(); } }),
     h("button", { type: "button", class: "ghost btn-s lp-mute" + (g.mute ? " on" : ""), title: T("Stumm (läuft weiter)", "Mute (keeps running)"), text: "M", onclick: (e) => { g.mute = !g.mute; e.target.classList.toggle("on", g.mute); applyFx(g); changed(); } }),
     h("button", { type: "button", class: "ghost btn-s lp-solo" + (g.solo ? " on" : ""), title: T("Solo", "Solo"), text: "S", onclick: (e) => { g.solo = !g.solo; e.target.classList.toggle("on", g.solo); for (const x of S.set.gens) applyFx(x); changed(); } }),
-    h("button", { type: "button", class: "ghost btn-s lp-x", title: T("Generator entfernen", "Remove generator"), text: "✕", onclick: () => { if (confirm(T(`„${g.name}“ entfernen?`, `Remove “${g.name}”?`))) removeGen(g); } })));
+    h("button", { type: "button", class: "ghost btn-s lp-x", title: T("Generator entfernen (die anderen spielen weiter, ↶ holt ihn zurück)", "Remove generator (the others keep playing, ↶ brings it back)"), text: "✕", onclick: () => removeGen(g, { undo: true }) })));
   c.append(h("div", { class: "lp-prog", "aria-hidden": "true" }, h("i"), h("canvas", { class: "lp-gmeter", width: 120, height: 4 })));
   c.append(h("p", { class: "sub small lp-hint", text: T(k.hd, k.he) }));
   // Klangquelle
@@ -2023,4 +2088,4 @@ export function showLoops(on) {
 }
 if (tabVisible()) showLoops(true);
 window.mwsLoops = { show: showLoops, state: S, startAll, stopAll, addGen: (k, o) => addGen(k, o), takeOver, surprise, yinNotes, detectKey, autoMix, mixTarget, running: () => S.set && S.set.gens.some(genOn),
-  mutate, mutGoto, orbRoll, modDeltas, effFx, flowSave, flowWindow, smf, globTargets, extRow };
+  mutate, mutGoto, orbRoll, modDeltas, effFx, flowSave, flowWindow, smf, globTargets, extRow, removeGen, restoreGen, fitNew };
