@@ -46,6 +46,70 @@ const BEATS = {
 const PROB = (ch) => ch === "x" || ch === "X" ? 1 : ch >= "1" && ch <= "9" ? (+ch) / 10 : 0;
 
 // =====================================================================================================
+// 3.18: Nachbearbeitung je Generator — Frequenzverschieber (auch gegenläufig links/rechts),
+// Vibrato und Ensemble (Unisono-Breite für jeden Klang). Läuft nur, wenn etwas davon an ist.
+// =====================================================================================================
+// Hilbert-Paar: zwei Ketten aus je vier Allpässen 2. Ordnung, deren Ausgänge über fast den ganzen Hörbereich um 90° versetzt sind
+const HA = [0.6923878, 0.9360654322959, 0.9882295226860, 0.9987488452737].map(a => a * a);
+const HB = [0.4021921162426, 0.8561710882420, 0.9722909545651, 0.9952884791278].map(a => a * a);
+class Hilbert {
+  constructor() { this.s = new Float64Array(32); this.d = 0; this.I = 0; this.Q = 0; }
+  run(x) {
+    const s = this.s; let a = x, b = x;
+    for (let k = 0; k < 4; k++) {       // y = c·(x + y[n−2]) − x[n−2]
+      let o = k * 4, y = HA[k] * (a + s[o + 3]) - s[o + 1]; s[o + 1] = s[o]; s[o] = a; s[o + 3] = s[o + 2]; s[o + 2] = y; a = y;
+      o = 16 + k * 4; y = HB[k] * (b + s[o + 3]) - s[o + 1]; s[o + 1] = s[o]; s[o] = b; s[o + 3] = s[o + 2]; s[o + 2] = y; b = y;
+    }
+    this.I = this.d; this.d = a; this.Q = b;   // Kette A um ein Sample verzögert = Realteil, Kette B = Imaginärteil
+  }
+}
+const rdLine = (buf, w, d) => { let rp = w - d; while (rp < 0) rp += 4096; const i0 = rp | 0, fr = rp - i0; return buf[i0 & 4095] + (buf[(i0 + 1) & 4095] - buf[i0 & 4095]) * fr; };
+class Post {
+  constructor(sr) {
+    this.sr = sr; this.p = { shift: 0, smix: 0, smode: "up", vib: 0, ens: 0 };
+    this.hL = new Hilbert(); this.hR = new Hilbert(); this.ph = 0;
+    this.mx = 0; this.vb = 0; this.vk = 0; this.en = 0; this.dl = new Float32Array(4096); this.dr = new Float32Array(4096); this.w = 0; this.vph = 0; this.eph = [0, 0.37, 0.71];
+  }
+  set(d) { for (const k of ["shift", "smix", "vib", "ens"]) if (d[k] != null) this.p[k] = clamp(num(d[k], 0), k === "shift" ? -2000 : 0, k === "shift" ? 2000 : 1); if (d.smode) this.p.smode = d.smode; }
+  active() { const p = this.p; return (p.smix > 0 && p.shift !== 0) || p.vib > 0 || p.ens > 0 || this.mx > 1e-4 || this.vk > 1e-4 || this.en > 1e-4; }
+  process(L, R, n) {
+    const p = this.p, sr = this.sr, mxT = p.shift !== 0 ? p.smix : 0, dual = p.smode === "dual", sgn = p.smode === "down" ? -1 : 1;
+    const dph = Math.abs(p.shift) / sr, vibOn = p.vib > 0 ? 1 : 0, eT = p.ens;
+    for (let i = 0; i < n; i++) {
+      this.mx += (mxT - this.mx) * 0.002; this.vb += (p.vib - this.vb) * 0.002; this.vk += (vibOn - this.vk) * 0.004; this.en += (eT - this.en) * 0.002;
+      let l = L[i], r = R[i];
+      // Frequenzverschieber: alle Teiltöne um dieselben Hz (nicht harmonisch — metallisch, schwebend); dual = links hoch, rechts runter
+      if (this.mx > 1e-4) {
+        this.ph += dph; if (this.ph >= 1) this.ph -= 1;
+        const c = D.sinp(this.ph + 0.25), s = D.sinp(this.ph), up = p.shift >= 0 ? sgn : -sgn;
+        this.hL.run(l); this.hR.run(r);
+        const wl = this.hL.I * c + up * this.hL.Q * s, wr = this.hR.I * c + (dual ? -up : up) * this.hR.Q * s;
+        l += (wl - l) * this.mx; r += (wr - r) * this.mx;
+      }
+      // Vibrato (Tonhöhe schwingt, 5,6 Hz) und Ensemble (drei langsam schwebende Kopien, breit) aus einer Verzögerungsleitung
+      if (this.vk > 1e-4 || this.en > 1e-4) {
+        const w = this.w; this.dl[w] = l; this.dr[w] = r; this.w = (w + 1) & 4095;
+        if (this.vk > 1e-4) {
+          this.vph += 5.6 / sr; if (this.vph >= 1) this.vph -= 1;
+          const d = (0.004 + 0.0009 * this.vb * D.sinp(this.vph)) * sr;   // bis ±3 % (gut ein Viertelton)
+          l += (rdLine(this.dl, w, d) - l) * this.vk; r += (rdLine(this.dr, w, d) - r) * this.vk;
+        }
+        if (this.en > 1e-4) {
+          let el = 0, er = 0;
+          for (let k = 0; k < 3; k++) {
+            this.eph[k] += (0.31 + k * 0.17) / sr; if (this.eph[k] >= 1) this.eph[k] -= 1;
+            const m = D.sinp(this.eph[k]), d = (0.011 + k * 0.0045 + 0.0035 * m) * sr, d2 = (0.011 + k * 0.0045 - 0.0035 * m) * sr;
+            el += rdLine(this.dl, w, d) * (k === 1 ? 0.6 : 1); er += rdLine(this.dr, w, d2) * (k === 0 ? 0.6 : 1);
+          }
+          l = l * (1 - 0.3 * this.en) + el * 0.42 * this.en; r = r * (1 - 0.3 * this.en) + er * 0.42 * this.en;
+        }
+      }
+      L[i] = l; R[i] = r;
+    }
+  }
+}
+
+// =====================================================================================================
 // Generatoren
 // =====================================================================================================
 class Gen {
@@ -57,6 +121,7 @@ class Gen {
     this.pat = null; this.dirty = true; this.loops = 0; this.cache = null;
     this.seed = Array.isArray(g.seed) ? g.seed : null; this.seedKey = g.seedKey || null;
     this.layers = []; this.mute = false;
+    this.post = null; this.ext = false; this.local = true;   // 3.18: Nachbearbeitung, MIDI-Ausgang (ext), interner Klang dabei (local)
   }
   bars() { return clamp(Math.round(num(this.p.bars, 2)), 1, 8); }
   // Noten für den globalen Takt B — einmal je Takt aufgelöst (Tonart/Akkord gelten ab dem nächsten Takt)
@@ -182,8 +247,14 @@ class ChordGen extends ToneGen {
     return d;
   }
   bar() {
-    const st = this.p.style || "pad", ev = [], vs = this.voicing(), dens = num(this.p.density, 0.5);
-    const hit = (s, l, v) => { for (const d of vs) ev.push({ s, l, d, v }); };
+    const st = this.p.style || "pad", ev = [], vs = this.voicing(), dens = num(this.p.density, 0.5), strum = num(this.p.strum, 0);
+    // 3.18 Strum: die Töne eines Akkords nacheinander anschlagen, abwechselnd auf- und abwärts
+    let dir = 1;
+    const hit = (s, l, v) => {
+      const gap = strum * 0.45, n = vs.length;
+      vs.forEach((d, j) => { const o = (dir > 0 ? j : n - 1 - j) * gap; if (s + o < 15.9) ev.push({ s: s + o, l: Math.max(0.3, l - o), d, v: v * (1 - j * strum * 0.06) }); });
+      if (strum > 0) dir = -dir;
+    };
     switch (st) {
       case "half": hit(0, 7.6, 0.75); hit(8, 7.6, 0.68); break;
       case "stabs": { const r = pick([[0, 3, 6, 10, 14], [2, 6, 10, 14], [0, 3, 7, 10, 12], [3, 6, 11, 14]]);
@@ -210,7 +281,7 @@ class ArpGen extends ToneGen {
   make(L) { this.idx = 0; const o = []; for (let b = 0; b < L; b++) o.push(this.bar(b)); return o; }
   bar() {
     const step = ARP_STEPS[this.p.rate] || 1, gate = num(this.p.gate, 0.5), oct = clamp(Math.round(num(this.p.octaves, 2)), 1, 4);
-    const dens = num(this.p.density, 0.9), mode = this.p.mode || "up";
+    const dens = num(this.p.density, 0.9), mode = this.p.mode || "up", rat = num(this.p.ratchet, 0);
     let tones = []; for (let o = 0; o < oct; o++) for (const d of [0, 2, 4]) tones.push(d + 7 * o);
     if (num(this.p.color, 0) > 0.5) tones.push(6, 13);
     tones.sort((a, b) => a - b);
@@ -220,11 +291,27 @@ class ArpGen extends ToneGen {
     for (let s = 0, i = 0; s < 16 - 1e-6; s += step, i++) {
       if (R() > dens) continue;
       const d = mode === "random" ? pick(tones) : tones[(this.idx++) % tones.length];
-      ev.push({ s, l: Math.max(0.2, step * gate), d, v: i % 4 === 0 ? 0.85 : 0.65 + R() * 0.1 });
+      // 3.18 Ratschen — ein Schritt zerfällt in 2–4 Wiederholungen (Leben und Menschlich: notesFor)
+      const v = i % 4 === 0 ? 0.85 : 0.65 + R() * 0.1;
+      if (rat > 0 && R() < rat * 0.45 && step >= 0.5) {
+        const k = pick([2, 2, 3, 4]), sub = step / k;
+        for (let j = 0; j < k; j++) ev.push({ s: s + j * sub, l: Math.max(0.12, sub * 0.7), d, v: v * (1 - j * 0.16) });
+      } else ev.push({ s, l: Math.max(0.2, step * gate), d, v });
     }
     return ev;
   }
   vary() { const v = num(this.p.variation, 0.15); if (v > 0) for (let b = 0; b < this.pat.length; b++) if (R() < v * 0.5) this.pat[b] = this.bar(b); }
+  // Leben: die Dynamik wandert in einer langsamen Welle über 4 Takte und streut; Menschlich: jede Note ein wenig neben dem Raster —
+  // beides bei jedem Durchgang neu (das Muster selbst bleibt, wie es ist)
+  notesFor(B) {
+    const n = super.notesFor(B), c = this.cache; if (c.lived) return n; c.lived = true;
+    const life = num(this.p.life, 0), hum = num(this.p.human, 0);
+    if (life > 0 || hum > 0) for (const e of n) {
+      if (life > 0) e.v = clamp(e.v * (1 - life * 0.55 * (0.5 + 0.5 * Math.sin(TAU * (B * 16 + e.s) / 64))) + (R() - 0.5) * life * 0.25, 0.12, 1);
+      if (hum > 0 && e.s > 0) e.s = clamp(e.s + (R() - 0.5) * hum * 0.35, 0, 15.95);
+    }
+    return n;
+  }
 }
 
 // Melodie: ein Motiv, das wiederkommt (A A' A B) — starke Zeiten auf Akkordtöne, sonst Schritte
@@ -352,6 +439,8 @@ class OscGen extends Gen {
     const lr = OSC_SYNC[p.lsync] ? (this.eng.bpm / 60) / OSC_SYNC[p.lsync] : num(p.lrate, 0.5), ldest = p.ldest || "off", lamt = num(p.lamt, 0), lsh = p.lshape || "sine";
     const drift = num(p.drift, 0), gate = GATE[p.gate] ? GATE[p.gate] * this.eng.sps : 0, gl = num(p.gatelen, 0.5);
     const norm = 0.22 / Math.pow(uni, 0.55);
+    // 3.18 Zonen — vier Wellen nebeneinander, ein Regler (oder der LFO) blendet stufenlos von A über B, C nach D
+    const zones = !!p.zones, zw = zones ? [p.za || "sine", p.zb || "saw", p.zc || "square", p.zd || "noise"] : null, zpos = num(p.zpos, 0);
     this.lAmp = 0;                                     // 3.17.1: was gerade klingt, für die Regler (live)
     for (let i = a; i < b; i++) {
       this.lvl += (lvlT - this.lvl) * 0.0015;
@@ -367,7 +456,20 @@ class OscGen extends Gen {
       const pw = clamp(pwB + (ldest === "pw" ? lv * lamt * 0.45 : 0), 0.03, 0.97);
       const fma = fmA + (ldest === "fm" ? (lv * 0.5 + 0.5) * lamt : 0);
       let s = 0;
-      if (wave === "noise" || wave === "pink" || wave === "brown") {
+      if (zones) {
+        const z = clamp(zpos + (ldest === "zone" ? lv * lamt * 1.5 : 0), 0, 3), z0 = Math.min(2, Math.floor(z)), zf = z - z0;
+        this.mph += f * fmR / sr; if (this.mph >= 1) this.mph -= 1;
+        const fm = fma > 0 ? D.sinp(this.mph) * fma * 2.5 : 0;
+        for (let u = 0; u < uni; u++) {
+          const off = uni === 1 ? 0 : (u / (uni - 1) - 0.5) * 2, fu = f * Math.pow(2, off * det * 0.5 / 12), dt = Math.min(0.45, fu / sr);
+          let ph = this.ph[u] + dt; if (ph >= 1) ph -= 1; this.ph[u] = ph;
+          const pp = fm ? ph + fm - Math.floor(ph + fm) : ph;
+          s += (zf < 0.999 ? this.zwave(zw[z0], pp, dt, pw) * (1 - zf) : 0) + (zf > 0.001 ? this.zwave(zw[z0 + 1], pp, dt, pw) * zf : 0);
+        }
+        s *= norm * 4.5;
+        if (sub > 0) { this.sph += f * 0.5 / sr; if (this.sph >= 1) this.sph -= 1; s += D.sinp(this.sph) * sub * 0.8; }
+        this.lZ = z;
+      } else if (wave === "noise" || wave === "pink" || wave === "brown") {
         const w = R() * 2 - 1;
         if (wave === "noise") s = w * 0.5;
         else if (wave === "pink") { const P = this.pink; P[0] = 0.99886 * P[0] + w * 0.0555179; P[1] = 0.99332 * P[1] + w * 0.0750759; P[2] = 0.969 * P[2] + w * 0.153852;
@@ -408,22 +510,44 @@ class OscGen extends Gen {
       if (i === b - 1) { this.lF = f; this.lPw = pw; this.lFm = fma; this.lAmp = amp; this.lPan = pan; this.lLfo = ldest !== "off" ? lv : 0; }
     }
   }
-  // 3.17.1: klingende Werte (Frequenz mit Einrasten/Gleiten/Drift/LFO, Pulsbreite, FM, Pegel mit Tor und LFO, Panorama, LFO-Ausschlag)
-  live() { return this.active() ? [this.lF || this.f, this.lPw ?? num(this.p.pw, 0.5), this.lFm ?? num(this.p.fma, 0), this.lAmp || 0, this.lPan || 0, this.lLfo || 0] : null; }
+  // alle Wellen mit dem Grundton in gleicher Phase wie der Sinus — sonst löscht sich beim Überblenden der Grundton aus (Säge war gegenphasig)
+  zwave(w, pp, dt, pw) {
+    if (w === "sine") return D.sinp(pp);
+    if (w === "tri") { const t = pp + 0.25; return 1 - 4 * Math.abs(t - Math.floor(t) - 0.5); }
+    if (w === "square") { let v = pp < pw ? 1 : -1; v += blep(pp, dt); let t2 = pp - pw; if (t2 < 0) t2 += 1; return v - blep(t2, dt); }
+    if (w === "noise") return R() * 2 - 1;
+    return 1 - 2 * pp + blep(pp, dt);
+  }
+  // 3.17.1: klingende Werte (Frequenz mit Einrasten/Gleiten/Drift/LFO, Pulsbreite, FM, Pegel mit Tor und LFO, Panorama, LFO-Ausschlag; 3.18 Zone)
+  live() { return this.active() ? [this.lF || this.f, this.lPw ?? num(this.p.pw, 0.5), this.lFm ?? num(this.p.fma, 0), this.lAmp || 0, this.lPan || 0, this.lLfo || 0, this.p.zones ? this.lZ ?? num(this.p.zpos, 0) : null] : null; }
   active() { return this.on || this.lvl > 1e-5; }
 }
 
 // ---- Mikrofon-Schleife: Schichten (Overdub), synchron zum Takt; bei anderem Tempo läuft sie schneller/langsamer ----
+// 3.18 Granular — aus der gesungenen Schleife wird eine Wolke kurzer Körner: Größe, Dichte, Streuung,
+// Tonhöhe, Einfrieren. Die Körner lesen aus der Summe aller Schichten (einmal je Änderung gemischt).
+const GMAX = 48;
 class AudioGen extends Gen {
-  constructor(eng, g) { super(eng, g); this.layers = []; this.g = 0; }
+  constructor(eng, g) { super(eng, g); this.layers = []; this.g = 0; this.layV = 0; this.mixV = -1; this.gm = 0; this.gT = 0; this.gn = 0; this.fz = null;
+    this.gr = []; for (let k = 0; k < GMAX; k++) this.gr.push({ st: 0, age: 0, len: 1, rate: 1, pan: 0 }); }
   notesFor() { return []; }
+  mixLayers() {
+    const lay = this.layers, n = lay[0].L.length, l = new Float32Array(n), r = new Float32Array(n);
+    for (const ly of lay) for (let i = 0; i < n && i < ly.L.length; i++) { l[i] += ly.L[i]; r[i] += ly.R[i]; }
+    this.mL = l; this.mR = r; this.mixV = this.layV;
+  }
   render(L, R2, a, b) {
     const lay = this.layers; if (!lay.length) return;
     const want = this.on && !this.mute ? num(this.p.level, 0.9) : 0;
     const bars = lay[0].bars, steps = bars * SPB, len = lay[0].L.length;
     const rev = !!this.p.reverse, chop = num(this.p.chop, 0);
+    const gran = num(this.p.gran, 0), sr = this.eng.sr;
+    if ((gran > 0 || this.gm > 1e-4) && this.mixV !== this.layV) this.mixLayers();
+    const gsize = clamp(num(this.p.gsize, 0.12), 0.01, 0.6) * sr, gdens = clamp(num(this.p.gdens, 20), 1, 120), spray = num(this.p.gspray, 0.2);
+    const grate = Math.pow(2, Math.round(num(this.p.gpitch, 0)) / 12), gnorm = 1 / Math.sqrt(Math.max(1, gdens * gsize / sr * 0.75));
+    if (this.p.gfreeze) { if (this.fz == null) this.fz = this.lastX || 0; } else this.fz = null;
     for (let i = a; i < b; i++) {
-      this.g += (want - this.g) * 0.003;
+      this.g += (want - this.g) * 0.003; this.gm += (gran - this.gm) * 0.002;
       if (this.g < 1e-5 && want === 0) continue;
       // Position aus dem Takt (nicht aus einem eigenen Zähler) — bleibt synchron, auch nach Tempowechsel
       let st = mod(this.eng.posAt(i) - this.startBar * SPB, steps);
@@ -434,6 +558,26 @@ class AudioGen extends Gen {
       const i0 = Math.floor(x), fr = x - i0, i1 = i0 + 1 >= len ? 0 : i0 + 1;
       let l = 0, r = 0;
       for (const ly of lay) { l += ly.L[i0] + (ly.L[i1] - ly.L[i0]) * fr; r += ly.R[i0] + (ly.R[i1] - ly.R[i0]) * fr; }
+      this.lastX = x;
+      if (this.gm > 1e-4 && this.mL) {
+        // neues Korn fällig? (Abstand schwankt ±50 %, damit es nicht wie ein Raster klingt)
+        if (--this.gT <= 0 && gran > 0) {
+          this.gT = sr / gdens * (0.5 + R());
+          if (this.gn < GMAX) {
+            const q = this.gr[this.gn++], base = this.fz != null ? this.fz : x;
+            q.st = mod(base - R() * spray * len * 0.5, len); q.age = 0; q.len = gsize * (0.75 + R() * 0.5); q.rate = grate * (1 + (R() - 0.5) * 0.012); q.pan = (R() * 2 - 1) * (0.25 + spray * 0.5);
+          }
+        }
+        let cl = 0, cr = 0; const mL = this.mL, mR = this.mR;
+        for (let k = 0; k < this.gn; k++) {
+          const q = this.gr[k];
+          if (q.age >= q.len) { const t = this.gr[--this.gn]; this.gr[this.gn] = q; this.gr[k] = t; k--; continue; }
+          const e = D.sinp(q.age / q.len * 0.5), env = e * e, px = mod(q.st + q.age * q.rate, len), j0 = px | 0, jf = px - j0, j1 = j0 + 1 >= len ? 0 : j0 + 1;
+          const sl = (mL[j0] + (mL[j1] - mL[j0]) * jf) * env, sr2 = (mR[j0] + (mR[j1] - mR[j0]) * jf) * env;
+          cl += sl * (1 - q.pan); cr += sr2 * (1 + q.pan); q.age++;
+        }
+        l += (cl * gnorm - l) * this.gm; r += (cr * gnorm - r) * this.gm;
+      }
       L[i] += l * this.g; R2[i] += r * this.g;
     }
   }
@@ -455,6 +599,7 @@ class Loops extends AudioWorkletProcessor {
     this.gens = []; this.offs = []; this.nid = 1; this.metro = false; this.click = [];
     this.bufL = []; this.bufR = []; for (let i = 0; i < MAX_GEN; i++) { this.bufL.push(new Float32Array(128)); this.bufR.push(new Float32Array(128)); }
     this.rec = null; this.seedRec = null; this.liveHeld = new Map();
+    this.nev = []; this.cap = false;                 // 3.18: Noten nach außen (MIDI-Ausgang, Flow Capture)
     this.port.onmessage = (e) => this.msg(e.data);
   }
   gen(id) { return this.gens.find(g => g.id === id); }
@@ -486,6 +631,14 @@ class Loops extends AudioWorkletProcessor {
       case "mod": { const g = this.gen(d.id); if (g && g.ins) g.ins.mw = clamp(num(d.v, 0), 0, 1); break; }
       case "pedal": { const g = this.gen(d.id); if (g && g.ins && g.ins.pedal) g.ins.pedal(!!d.on); break; }
       case "del": this.del(d.id); break;
+      // 3.18: Nachbearbeitung (Frequenzverschieber, Vibrato, Ensemble) · MIDI-Ausgang je Generator · Noten mitschneiden
+      case "post": { const g = this.gen(d.id); if (!g) break; if (!g.post) g.post = new Post(this.sr); g.post.set(d.p || {}); break; }
+      case "ext": { const g = this.gen(d.id); if (!g) break;
+        if (g.ext && !d.on) for (const o of this.offs) if (o.g === g) this.nev.push([g.id, 0, o.n, 0, currentTime]);
+        g.ext = !!d.on; g.local = d.local !== false || !d.on;
+        if (g.ext && !g.local && g.ins) g.ins.allOff();
+        break; }
+      case "cap": this.cap = !!d.on; break;
       case "start": { const g = this.gen(d.id); if (!g) break; if (!this.run) this.begin(); g.stopAt = null;
         if (d.now || !this.playingAny()) { g.startAt = null; g.on = true; g.startBar = this.barNow(); g.dirty = g.dirty || !g.pat; g.cache = null; }
         else g.startAt = this.barNow() + 1;
@@ -495,8 +648,9 @@ class Loops extends AudioWorkletProcessor {
       case "run": if (d.on) this.begin(); else this.end(); break;
       case "metro": this.metro = !!d.on; break;
       case "note": { const g = this.gen(d.id); if (!g || !g.ins) break;
-        if (d.on) { g.ins.input(true, d.n, clamp(num(d.v, 0.8), 0.02, 1), -1 - d.n); this.seedNote(g, d.n, d.v, true); }
-        else { g.ins.input(false, d.n, 0, -1 - d.n); this.seedNote(g, d.n, 0, false); }
+        if (g.ext || this.cap) this.nev.push([g.id, d.on ? 1 : 0, d.n, d.on ? clamp(num(d.v, 0.8), 0.02, 1) : 0, currentTime]);
+        if (d.on) { if (g.local) g.ins.input(true, d.n, clamp(num(d.v, 0.8), 0.02, 1), -1 - d.n); this.seedNote(g, d.n, d.v, true); }
+        else { if (g.local) g.ins.input(false, d.n, 0, -1 - d.n); this.seedNote(g, d.n, 0, false); }
         break; }
       case "seedrec": { const g = this.gen(d.id); if (!g || g.kind !== "seed") break;
         if (!d.on) { this.seedRec = null; break; }
@@ -515,8 +669,8 @@ class Loops extends AudioWorkletProcessor {
         const lat = Math.max(0, Math.round(num(d.lat, 0) * this.sr));
         this.rec = { id: g.id, bars, at, lat, overdub: !!d.overdub && g.layers.length > 0, startClock: null, len: 0, L: null, R: null, w: 0 };
         this.port.postMessage({ t: "recarm", id: g.id, at }); break; }
-      case "layers": { const g = this.gen(d.id); if (!g || g.kind !== "audio") break; g.layers = (d.layers || []).map(x => ({ L: x.L, R: x.R || x.L, bars: x.bars, bpm: x.bpm })); break; }
-      case "undolayer": { const g = this.gen(d.id); if (g && g.layers && g.layers.length) g.layers.pop(); break; }
+      case "layers": { const g = this.gen(d.id); if (!g || g.kind !== "audio") break; g.layers = (d.layers || []).map(x => ({ L: x.L, R: x.R || x.L, bars: x.bars, bpm: x.bpm })); g.layV++; break; }
+      case "undolayer": { const g = this.gen(d.id); if (g && g.layers && g.layers.length) { g.layers.pop(); g.layV++; } break; }
       case "panic": for (const g of this.gens) if (g.ins) g.ins.panic(); this.offs = []; break;
     }
   }
@@ -529,7 +683,7 @@ class Loops extends AudioWorkletProcessor {
   }
   halt(g) {
     g.on = false; g.stopAt = null; g.cache = null;
-    for (const o of this.offs) if (o.g === g && g.ins) g.ins.input(false, o.n, 0, o.id);
+    for (const o of this.offs) if (o.g === g) { if (g.ins) g.ins.input(false, o.n, 0, o.id); if (g.ext || this.cap) this.nev.push([g.id, 0, o.n, 0, currentTime]); }
     this.offs = this.offs.filter(o => o.g !== g);
     if (g.ins && g.ins.allOff) g.ins.allOff();
   }
@@ -635,6 +789,8 @@ class Loops extends AudioWorkletProcessor {
     for (const e of ev) {
       runTo(Math.min(N, e.f));
       const ins = e.g.ins; if (!ins) continue;
+      if (!e.arp && (e.g.ext || this.cap)) this.nev.push([e.g.id, e.on ? 1 : 0, e.n, e.on ? e.v : 0, currentTime + e.f / this.sr]);
+      if (!e.arp && !e.g.local) continue;            // MIDI-Ausgang ohne eigenen Klang: das externe Gerät spielt
       this.evAt = this.clock + e.f;                  // genauer Zeitpunkt (für den Prüfstand)
       if (e.arp === 1) ins.arpTick();
       else if (e.arp === 2) { if (ins.arpNote != null) { ins.noteOff(ins.arpNote, -7); ins.arpNote = null; } }
@@ -642,6 +798,8 @@ class Loops extends AudioWorkletProcessor {
       else ins.input(false, e.n, 0, e.id);
     }
     runTo(N);
+    for (const g of this.gens) if (g.post && g.post.active()) { const L = this.bufL[g.slot], R2 = this.bufR[g.slot]; if (L) g.post.process(L, R2, N); }
+    if (this.nev.length) { this.port.postMessage({ t: "nev", ev: this.nev }); this.nev = []; }
     // Mikrofon aufnehmen (mit Laufzeitausgleich: der Ton kommt um "lat" später an, als er gespielt wurde)
     const rc = this.rec;
     if (rc && rc.startClock != null) {
@@ -658,7 +816,7 @@ class Loops extends AudioWorkletProcessor {
           if (!rc.overdub) { g.layers = [layer]; g.startBar = rc.at; }
           else g.layers.push(layer);
           if (g.layers.length > 8) g.layers.shift();
-          g.on = true; g.startAt = null; this.state(g);
+          g.layV++; g.on = true; g.startAt = null; this.state(g);
         }
         this.port.postMessage({ t: "layer", id: rc.id, L: rc.L.slice(), R: rc.R.slice(), bars: rc.bars, bpm: rc.bpm, overdub: rc.overdub, startBar: rc.at });
       } else if ((this.clock >> 7) % 24 === 0) this.port.postMessage({ t: "recpos", id: rc.id, frac: rc.w / rc.len });

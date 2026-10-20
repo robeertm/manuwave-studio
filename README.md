@@ -85,12 +85,20 @@ when the tab is in the background, and the offline render is sample-identical to
 | 📈 **Oscilloscopes** | Every group of knobs has a small oscilloscope of the signal at exactly that point: the generator itself, after the filter, after the tone controls, the echo and reverb send, the channel (left and right after the fader, so pan and volume show), the instrument sound, the master after the limiter, the microphone, and the oscillator's LFO. |
 | 🎚 **Auto mix** | Listens for two bars, measures how loud each generator really is (before the fader, weighted like the ear) and sets its volume to a target for its role — beat and bass carry, chords and arpeggios sit below, a voice on top — adjusted per style. Runs by itself for *Surprise me*, *Take over the rest* and when the autopilot brings a generator in; volumes you set by hand stay. *Mix* sets all of them. |
 | ⌨️ **Keys** | The on-screen keyboard always sits at the bottom of the screen, full width, two to five octaves depending on the width (61 keys at 1920 px); it folds away. |
+| 🔮 **Orb** | Drag the dot and three to six knobs move at once — direction picks which, distance how much. It can circle by itself in time (*Motion*, *Chaos*), keeps rolling when you let go, and loops a recorded *gesture*. Your settings stay; the knobs turn visibly. |
+| 🎛 **Global** | *Tone, Ambience, Filter, Envelope, Vibrato, Unison* on every sound generator — they know which controls of the current instrument to turn, so they work with every sound. |
+| 🧬 **Mutate** | A related variation of the sound, from subtle to extreme, always audible; every mutation is kept and ⟲ brings back the original. Also for the drum kit and the oscillator. |
+| 🌀 **Motion & more** | Frequency shifter (also opposed left/right), vibrato and ensemble on every generator; four crossfading **zones** on the oscillator; **granular** mic loop with freeze; arpeggio **ratchets, life, human feel**; **strummed** chords; **analog drift**. |
+| 🔌 **MIDI out** | Each generator can play an external device — music software via the Mac's IAC driver, or a hardware synth — on its own channel, timed ahead; the beat as GM drums; optional MIDI clock. Chrome or Edge. |
+| 🔒 **Lock · ⏪ Flow capture** | Lock a generator so *Surprise me* and the autopilot leave it alone. The machine always listens: *Save what just played* puts the last 4/8/16 bars into the library after the fact, *⬇ MIDI* gives the same bars as a MIDI file. |
 | 🎹 **Harmony** | Key (ten scales incl. pentatonic and blues), chord progression and bars per chord apply to all generators; a change takes effect on the next bar. |
 | 🪄 **Take over the rest** | From your bars or your voice the machine finds the key, then adds beat, bass and chords (plus an arpeggio for some styles) in the style you choose and switches on the **autopilot**, which arranges every eight bars: swaps generators, builds a breakdown with a closing filter, a build-up to the drop, fresh patterns. 🎲 *Surprise me* starts a random style. |
 | 🤖 **AI takes over** | *Continue the jam*: the next 4, 8 or 16 bars are captured exactly from the downbeat and the music AI continues from there (ACE-Step repaint) to the song length you pick — matched in loudness. *Band for your voice*: your mic loop is repeated to song length and ACE-Step's *complete* task plays drums, bass, keys and more around it; Demucs then removes the AI's own re-sung voice and puts **your** voice back on top. Runs on your computer like any render; needs the base model for the full band (installer step *Loop machine AI*). |
 | ⏺ **Record** | ● records what you hear (after the limiter) into the library as a 24-bit WAV — self-played, no music AI involved. Sets and loops are saved in the browser. |
 
 ![AI takes over](docs/screenshots/loops_ki.png)
+
+![Orb, Global and mutations on a generator](docs/screenshots/loops_orb.png)
 
 ## Requirements
 
