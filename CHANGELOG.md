@@ -3,6 +3,39 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.18.0 — 2026-10-20 (bridge 3.17.0)
+
+New ways to shape and move sound in the loop machine, built with Manuwave's own sound engine — plus a MIDI output,
+so the loop machine can also play other instruments (music software or any hardware synth).
+
+### Added
+- **🔮 Orb** on every generator: drag the dot and it moves three to six knobs at once — the direction picks which, the
+  distance from the centre how much. *Motion* lets it circle by itself in time with the music, *Chaos* makes that
+  restless, it keeps rolling after you let go, and *● Gesture* records a movement that then loops in time. The orb only
+  picks knobs that have an effect right now and lies on top of your settings; the knobs turn visibly with it.
+- **🎛 Global** on every sound generator: *Tone, Ambience, Filter, Envelope, Vibrato, Unison* — they know which controls
+  of the current instrument to turn (cutoff on the analog synth, modulator levels on FM, drawbars on the organ …), so they
+  work with every sound. Where an instrument has nothing to turn (the organ has no envelope), the knob is dimmed and says
+  why.
+- **🧬 Mutate**: a related variation of the current sound, from *subtle* to *extreme*. Pitch and play mode stay; every
+  variation stays audible (tested over all factory sounds). Every mutation is kept — ⟲ brings back the original, a number
+  any earlier one. Works for the drum kit (tuning, length, tone, snap) and the oscillator too.
+- **New sound controls**: a group *Motion* on every generator with a **frequency shifter** (±1000 Hz, as turned,
+  reversed, or opposed left/right), **vibrato** and **ensemble**; **zones** on the oscillator (four waves A–D, one knob
+  or the LFO crossfades through them); **granular** on the mic loop (grain size, grains per second, spray, pitch,
+  freeze); **ratchets, life and human feel** on the arpeggio; **strum** on the chords; **analog drift** on the analog
+  synth (also in *Make your own*).
+- **🔌 MIDI out** per generator: output, channel (the beat goes out as General MIDI drums on channel 10), optionally the
+  own sound too, an offset, a test note. Notes are scheduled ahead with timestamps, so they land in time; pitch bend
+  and mod wheel go along. **⏱ MIDI clock** sends tempo and start/stop. On a Mac, switch on the IAC driver in *Audio MIDI
+  Setup* and your music software plays along. Needs Chrome or Edge (Safari has no Web MIDI).
+- **🔒 Lock** a generator: *Surprise me* and the autopilot leave it as it is.
+- **⏪ Flow capture**: the loop machine always listens. *Save what just played* puts the last 4, 8 or 16 complete bars
+  into the library, exactly on the bar; *⬇ MIDI* downloads the notes of the same bars as a MIDI file (one track per
+  generator).
+- *Surprise me* uses the new ideas too: strummed chords for some styles, an arpeggio with life (and ratchets in techno,
+  trap and drum & bass), analog drift, and a slowly circling orb.
+
 ## 3.17.2 — 2026-10-19 (bridge 3.17.0)
 
 ### Fixed

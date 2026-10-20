@@ -56,7 +56,8 @@ export const SCHEMA = {
     { id: "mix", de: "Mischer & Unisono", en: "Mixer & unison", p: [
       K("sub", "Sub-Oszillator", "Sub oscillator", 0, 1, 0, { u: "%" }), K("noise", "Rauschen", "Noise", 0, 1, 0, { u: "%" }),
       K("uni", "Unisono", "Unison", 1, 7, 1, { st: 1 }), K("unidet", "Verstimmung", "Detune", 0, 1, 0.2, { u: "%" }),
-      K("unispread", "Stereobreite", "Stereo width", 0, 1, 0.5, { u: "%" }), K("drive", "Drive", "Drive", 0, 1, 0, { u: "%" })] },
+      K("unispread", "Stereobreite", "Stereo width", 0, 1, 0.5, { u: "%" }), K("drive", "Drive", "Drive", 0, 1, 0, { u: "%" }),
+      K("drift", "Analog-Drift", "Analog drift", 0, 1, 0, { u: "%" })] },
     { id: "wt", de: "Wavetable", en: "Wavetable", p: [
       SEL("wtset", "Satz", "Set", [["analog", "Analog (Sinus → Puls)", "Analog (sine → pulse)"], ["pwm", "Pulsbreite", "Pulse width"], ["sync", "Sync", "Sync"],
         ["fold", "Wavefolder", "Wavefolder"], ["vocal", "Vokale A-E-I-O-U", "Vowels A-E-I-O-U"], ["bell", "Glas & Glocke", "Glass & bell"]], "analog"),
@@ -163,6 +164,56 @@ export function knobIdle(eng, k, p) {
   if (eng === "fm" && (m = /^op([234])(ratio|fine|att|dec|sus|rel|vel)$/.exec(k)) && !on("op" + m[1] + "lvl")) return R(`wirkt, sobald Operator ${m[1]} einen Pegel hat`, `works once operator ${m[1]} has a level`, { ["op" + m[1] + "lvl"]: 0.4 });
   if (eng === "organ" && /^perc(3|fast|soft)$/.test(k) && !v("perc", false)) return R("wirkt, sobald Perkussion an ist", "works once percussion is on", { perc: true });
   return null;
+}
+
+// extrem (0,9). Gedreht wird in der Reglerstellung (0…1), nicht in Einheiten: so verhalten sich Hz, Sekunden und % gleich.
+// Was die Tonhöhe verschiebt (Halbtöne, Träger-Verhältnis) oder die Spielweise ändert, bleibt; danach wird geprüft, dass der
+// Klang hörbar bleibt (Pegel, Filter nicht zu, Saite klingt aus). opts.short: Bass/Arp/Lead — Einschwingen bleibt kurz.
+const MUT_SKIP = /^(vol|voices|pb|glide|mode|mw|arp|arprate|arpoct|arpgate|arplatch|o[123]semi|o1oct|op1ratio|op1fine|l[12]sync|kit|kitName|engine)$/;
+const posOf = (q, v) => q.c === "exp" ? Math.log(v / q.min) / Math.log(q.max / q.min) : q.c === "exp0" ? Math.sqrt(Math.max(0, v / q.max)) : (v - q.min) / (q.max - q.min);
+const valOf = (q, x) => { x = Math.min(1, Math.max(0, x)); let v = q.c === "exp" ? q.min * Math.pow(q.max / q.min, x) : q.c === "exp0" ? x * x * q.max : q.min + x * (q.max - q.min); if (q.st) v = Math.round(v / q.st) * q.st; return Math.min(q.max, Math.max(q.min, v)); };
+export function mutatePatch(engine, patch, amt, rand = Math.random, opts = {}) {
+  const out = JSON.parse(JSON.stringify(patch)), changed = [];
+  const gauss = () => (rand() + rand() + rand() - 1.5) * 1.15;          // ungefähr normalverteilt, Breite ~1
+  for (const sec of SCHEMA[engine] || []) for (const q of sec.p) {
+    if (MUT_SKIP.test(q.k)) continue;
+    if (/^o[23]oct$|^op[234]ratio$|^algo$/.test(q.k) && amt < 0.75) continue;
+    const cur = out[q.k] !== undefined ? out[q.k] : q.def;
+    if (q.t === "knob") {
+      if (rand() > 0.35 + amt * 0.5) continue;
+      const nv = valOf(q, posOf(q, cur) + gauss() * (0.04 + amt * 0.3));
+      if (nv !== cur) { out[q.k] = Math.round(nv * 10000) / 10000; changed.push(q.k); }
+    } else if (q.t === "sel" && amt >= 0.5 && rand() < amt * 0.3) {
+      let opts2 = q.opts.map(o => o[0]);
+      if (q.k === "o1w") opts2 = opts2.filter(x => x !== "noise");
+      if (q.k === "ftype") opts2 = ["lp24", "lp12"];          // Bandpass mit hohem Cutoff klang dünn und 20–30 dB leiser (Prüfstand)
+      if (/^l[12]dest$/.test(q.k) && opts.short) opts2 = opts2.filter(x => x !== "amp");
+      const nv = opts2[Math.floor(rand() * opts2.length) % opts2.length];
+      if (nv !== cur) { out[q.k] = nv; changed.push(q.k); if (/^l[12]dest$/.test(q.k) && nv !== "off" && !(Number(out[q.k[0] + q.k[1] + "amt"]) > 0)) out[q.k[0] + q.k[1] + "amt"] = 0.25; }
+    }
+  }
+  // hörbar halten
+  const lim = (k, lo, hi) => { if (out[k] === undefined) return; out[k] = Math.min(hi, Math.max(lo, out[k])); };
+  if (engine === "va") {
+    if (!(out.o1lvl >= 0.4) && !(out.o2lvl >= 0.4)) out.o1lvl = 0.6;
+    if (out.ftype !== "hp12") lim("cut", 160, 20000); else lim("cut", 20, 2000);
+    // eine negative Filter-Hüllkurve schließt den Filter beim Anschlag — mit tiefem Cutoff wurde es still (Prüfstand, −20 dB)
+    const fe0 = Number(patch.fenv) || 0;
+    if (out.fenv < 0 && fe0 >= 0) out.fenv = Math.max(out.fenv, -0.25);
+    if (out.fenv < 0 && out.ftype !== "hp12") out.cut = Math.min(20000, Math.max(out.cut, 260 / Math.pow(2, out.fenv * 7 * 0.6)));
+    if (out.hpf !== undefined) out.hpf = Math.min(out.hpf, Math.max(Number(patch.hpf) || 20, 200));
+    lim("res", 0, 0.85); lim("noise", 0, 0.5);
+    if (opts.short) { lim("aa", 0.001, 0.04); lim("ar", 0.005, 0.8); lim("fa", 0.001, 0.12); }
+    else lim("aa", 0.001, 1.2);
+  }
+  if (engine === "fm") {
+    out.op1lvl = Math.max(0.6, Number(out.op1lvl) || 0.6); lim("fb", 0, 0.8);
+    for (const n of [1, 2, 3, 4]) { if (opts.short) lim("op" + n + "att", 0.001, 0.03); else lim("op" + n + "att", 0.001, 1); }
+  }
+  if (engine === "ep") { lim("decay", 0.8, 12); lim("rel", 0.05, 2); }
+  if (engine === "pluck") { lim("decay", 0.4, 12); lim("damp", 0, 0.85); lim("bright", 0.15, 1); }
+  if (engine === "organ") { if (Math.max(Number(out.db1) || 0, Number(out.db2) || 0, Number(out.db3) || 0) < 4) out.db3 = 6; }
+  return { patch: out, changed };
 }
 
 // 3.17.2: Oberfläche — Regler, die gerade nicht wirken, abdunkeln und sagen warum (beide Ansichten: Loop-Maschine, Selber machen).

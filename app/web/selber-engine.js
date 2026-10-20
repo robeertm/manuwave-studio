@@ -412,6 +412,15 @@ class VAVoice {
     const bendM = ins.pitchMul();
     const dms = this.dms || (this.dms = new Float64Array(7)), pans = this.pans || (this.pans = new Float64Array(7));
     for (let u = 0; u < uni; u++) { const off = uni === 1 ? 0 : (u / (uni - 1) - 0.5) * 2; dms[u] = Math.pow(2, off * det / 12); pans[u] = off * spread; }
+    // der Filter bis ±¼ Oktave; wie ein warmgelaufener, nie ganz stabiler Analogsynth
+    let dCut = 0;
+    const drift = num(p.drift, 0);
+    if (drift > 0) {
+      const dv = this.dv || (this.dv = new Float64Array(8)), dg = this.dg || (this.dg = new Float64Array(8)), nb = b - a, k = Math.min(1, nb / (sr * 0.4));
+      for (let u = 0; u <= uni; u++) { if (rnd() * 0.5 + 0.5 < nb / (sr * 0.6)) dg[u] = rnd(); dv[u] += (dg[u] - dv[u]) * k; }
+      for (let u = 0; u < uni; u++) dms[u] *= Math.pow(2, dv[u] * drift * 0.3 / 12);
+      dCut = dv[uni] * drift * 0.25;
+    }
     const tri1 = this.tr1 || (this.tr1 = new Float64Array(7)), tri2 = this.tr2 || (this.tr2 = new Float64Array(7)), tri3 = this.tr3 || (this.tr3 = new Float64Array(7));
     const ampAcc = 1 + accent * 0.5;
     const stereo = uni > 1 && spread > 0;          // ohne Stereobreite reicht ein Filter (halbe Rechenzeit)
@@ -465,7 +474,7 @@ class VAVoice {
       }
       // Filter (Steuerrate: alle 4 Samples)
       if ((i & 3) === 0 || i === a) {
-        const oct = baseOct + fenvA * fe * 7 + m.cut[i] + accent * 1.2;
+        const oct = baseOct + dCut + fenvA * fe * 7 + m.cut[i] + accent * 1.2;
         const fc = clamp(20 * Math.pow(2, oct), 20, sr * 0.45);
         g = Math.tan(Math.PI * fc / sr);
       }

@@ -96,6 +96,27 @@
 .lp-keys.small .lp-kb{display:none}
 .lp-keys.small .lp-kbhead{margin-bottom:0}
 .lp-kbfold{margin-left:auto;padding:2px 9px}
+/* 3.18: Orb (Kreis-Regler), Global, Mutationen, MIDI-Ausgang, Klang festhalten, Flow Capture */
+.lp-lock.on{color:#0a0b12;background:var(--gc);border-color:var(--gc)}
+.lp-omni{display:flex;gap:10px 14px;flex-wrap:wrap;align-items:flex-start}
+.lp-orbbox{display:flex;gap:10px;align-items:flex-start;min-width:0}
+.lp-orb{width:118px;height:118px;border-radius:50%;cursor:crosshair;touch-action:none;flex:0 0 auto;outline-offset:2px}
+.lp-orb:focus-visible{outline:2px solid var(--gc)}
+.lp-orbbox .lp-knobs .sb-knob.small{width:56px}
+.lp-orbt{margin:0;max-width:220px;line-height:1.25}
+.lp-orbrec.armed{animation:lpPulse .5s infinite alternate;border-color:var(--pink);color:var(--pink)}
+.lp-orbrec.on{border-color:var(--gc);color:var(--gc)}
+.lp-glob .sb-knob.small{width:54px}
+.lp-mut{gap:5px}
+.lp-mutamt{max-width:110px}
+.lp-mutchip{padding:2px 7px;min-width:26px}
+.lp-mutchip.on{background:var(--gc);color:#0a0b12;border-color:var(--gc)}
+.lp-extbtn.on{border-color:var(--neon);color:var(--neon)}
+.lp-ext{padding:5px 7px;border:1px dashed var(--line);border-radius:9px}
+.lp-ext select{max-width:230px;min-width:0}
+.lp-ext .sb-knob.small{width:56px}
+.lp-card:not(.zon) .lp-zsel{display:none}
+.lp-flow select{max-width:110px}
 @keyframes lpPulse{from{opacity:1}to{opacity:.45}}
 @media (max-width:640px){
   .lp-cards{grid-template-columns:1fr}
@@ -104,4 +125,6 @@
   #lpTitle{width:100%!important}
   .lp-kb{height:62px}
   .lp-scope.big{width:84px;height:36px}
+  .lp-orbbox{flex-wrap:wrap}
+  .lp-ext select{max-width:100%}
 }
