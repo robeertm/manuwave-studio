@@ -129,7 +129,7 @@ function fixProject(p) {
   for (const k of Object.keys(p.patterns)) { const P = p.patterns[k]; P.bars = clamp(Math.round(P.bars || 4), 1, 16); P.notes = P.notes || {}; }
   p.song = Array.isArray(p.song) ? p.song.filter(e => p.patterns[e.p]) : [];
   p.fx = Object.assign({ revSize: 0.55, revDecay: 2.2, dlyTime: "3/16", dlyFb: 0.35, dlyTone: 0.5 }, p.fx || {});
-  p.master = Object.assign({ vol: 0 }, p.master || {});
+  p.master = Object.assign({ vol: 0, lo: 0, mid: 0, hi: 0 }, p.master || {});
   p.tracks = (p.tracks || []).slice(0, MAX_TRACKS).map(t => {
     const m = model(t.model);
     t.patch = Object.assign(defaults(m.engine), t.patch || {}); t.patch.engine = m.engine;
@@ -178,7 +178,11 @@ function buildGraph(ctx, p, bounce) {
   master.gain.value = HEADROOM;               // Reserve: die Summe soll selten an den Limiter stoßen (sonst klingt es gequetscht)
   const mvol = ctx.createGain(); mvol.gain.value = dbGain(p.master.vol || 0);
   const limiter = new AudioWorkletNode(ctx, "mws-limiter", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { ceil: -1.5 } });
-  master.connect(mvol); mvol.connect(limiter);
+  // 3.20: Klang der Summe — Tiefen (Kuhschwanz 110 Hz), Mitten (Glocke 1 kHz), Höhen (Kuhschwanz 7 kHz); gilt auch beim Erzeugen des Tracks
+  const mlo = ctx.createBiquadFilter(), mmid = ctx.createBiquadFilter(), mhi = ctx.createBiquadFilter();
+  mlo.type = "lowshelf"; mlo.frequency.value = 110; mmid.type = "peaking"; mmid.frequency.value = 1000; mmid.Q.value = 0.7; mhi.type = "highshelf"; mhi.frequency.value = 7000;
+  mlo.gain.value = clamp(+p.master.lo || 0, -12, 12); mmid.gain.value = clamp(+p.master.mid || 0, -12, 12); mhi.gain.value = clamp(+p.master.hi || 0, -12, 12);
+  master.connect(mlo); mlo.connect(mmid); mmid.connect(mhi); mhi.connect(mvol); mvol.connect(limiter);
   const out = ctx.createGain(); limiter.connect(out); out.connect(ctx.destination);
   // Hall
   const revIn = ctx.createGain(), rev = ctx.createConvolver(), revOut = ctx.createGain();
@@ -190,7 +194,7 @@ function buildGraph(ctx, p, bounce) {
   tone.type = "lowpass"; tone.Q.value = 0.5;
   dlyIn.connect(tone); tone.connect(dL); dL.connect(merge, 0, 0); dL.connect(fbL); fbL.connect(dR); dR.connect(merge, 0, 1); dR.connect(fbR); fbR.connect(tone);
   merge.connect(dlyOut); dlyOut.gain.value = 0.7; dlyOut.connect(master);
-  const g = { ctx, node, master, mvol, limiter, out, revIn, rev, revOut, dlyIn, dL, dR, fbL, fbR, tone, chains: [], bounce: !!bounce };
+  const g = { ctx, node, master, mlo, mmid, mhi, mvol, limiter, out, revIn, rev, revOut, dlyIn, dL, dR, fbL, fbR, tone, chains: [], bounce: !!bounce };
   applyFx(g, p);
   buildChains(g, p);
   if (!bounce) {
@@ -1053,6 +1057,8 @@ function renderFx(body, t) {
       gk({ k: "dlyFb", de: "Wiederholungen", en: "Feedback", min: 0, max: 0.9, def: 0.35, u: "%" }, fx.dlyFb, (v) => (fx.dlyFb = v)),
       gk({ k: "dlyTone", de: "Ton", en: "Tone", min: 0, max: 1, def: 0.5, u: "%" }, fx.dlyTone, (v) => (fx.dlyTone = v))]),
     sec(T("Summe", "Master"), [
+      ...[["lo", "Tiefen", "Lows"], ["mid", "Mitten", "Mids"], ["hi", "Höhen", "Highs"]].map(([k, de, en]) => Object.assign(knob({ k: "m" + k, de, en, min: -12, max: 12, def: 0, u: "dB", st: 0.5, tip: ["Klang der Summe — wirkt auf alle Spuren, auch im fertigen Track", "Tone of the master — works on all tracks, in the finished track too"] },
+        S.project.master[k] || 0, (v) => { S.project.master[k] = v; if (S.g) S.g["m" + k].gain.setTargetAtTime(v, S.ctx.currentTime, 0.02); changed("none"); }), { id: "sbM" + k })),
       knob({ k: "mvol", de: "Gesamtpegel", en: "Master level", min: -24, max: 6, def: 0, u: "dB", st: 0.5 }, S.project.master.vol, (v) => { S.project.master.vol = v; if (S.g) S.g.mvol.gain.setTargetAtTime(dbGain(v), S.ctx.currentTime, 0.02); changed("none"); }),
       h("p", { class: "sub small", text: T("Am Ende sitzt ein Limiter bei −1,5 dBFS — nichts übersteuert, auch nicht im fertigen Track.", "A limiter at −1.5 dBFS sits at the end — nothing clips, not in the finished track either.") })]),
   ));

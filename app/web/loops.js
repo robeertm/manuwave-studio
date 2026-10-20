@@ -11,7 +11,7 @@
 // Zonen im Oszillator, Frequenzverschieber/Vibrato/Ensemble, Granular, Arp-Ratschen/Leben/Menschlich, Strum, Analog-Drift,
 // 🔒 Klang festhalten beim Würfeln, ⏪ Flow Capture (die letzten Takte nachträglich sichern, Audio + MIDI) und 🔌 MIDI-Ausgang je
 // Generator — damit spielt die Loop-Maschine auch andere Klangerzeuger oder Hardware-Synths.
-import { SCHEMA, KITS, MODELS, MODEL_GROUPS, PRESETS, PAD_TO_GM, defaults, knobIdle, markIdle, showValue, fixText, mutatePatch, knobWheel, keepAudioAlive } from "./selber-presets.js";
+import { SCHEMA, KITS, MODELS, MODEL_GROUPS, PRESETS, PAD_TO_GM, GM_TO_PAD, defaults, knobIdle, markIdle, showValue, fixText, mutatePatch, knobWheel, keepAudioAlive } from "./selber-presets.js";
 
 const EN = window.MWS_LANG === "en";
 const T = (de, en) => (EN ? en : de);
@@ -69,6 +69,15 @@ const LOCK = (own) => SEL("lock", "🔗 Groove", "🔗 Groove", [["off", "eigene
   .filter(o => o[0].replace("~", "") !== own || o[0] === "melody~"), "off",
   { tip: ["Spielt seine Töne auf den Schlägen eines anderen Generators — oder genau in dessen Lücken", "Plays its notes on the hits of another generator — or exactly in its gaps"] });
 const BARS = (def, opts = [1, 2, 4, 8]) => SEL("bars", "Schleife", "Loop", opts.map(n => [n, n + (n === 1 ? " Takt" : " Takte"), n + (n === 1 ? " bar" : " bars")]), def, { regen: 1 });
+// 3.20 ✋ Selbst einspielen: was der Generator spielt, Raster beim Einspielen (stehen in der Einspiel-Zeile der Karte, nicht oben)
+const SRC = SEL("src", "Spielt", "Plays", [["auto", "🤖 sein Muster (Maschine)", "🤖 its own pattern (machine)"], ["own", "✋ dein Eingespieltes", "✋ what you played"]], "auto",
+  { take: 1, tip: ["Maschine: der Generator denkt sich sein Muster aus · Eingespieltes: er spielt genau das, was du eingespielt hast", "Machine: the generator makes up its pattern · Played: it plays exactly what you recorded"] });
+const QNT = SEL("q", "Raster", "Grid", [["1/4", "1/4", "1/4"], ["1/8", "1/8", "1/8"], ["1/8T", "1/8 Triole", "1/8 triplet"], ["1/16", "1/16", "1/16"], ["1/16T", "1/16 Triole", "1/16 triplet"],
+  ["1/32", "1/32", "1/32"], ["off", "frei (kein Raster)", "free (no grid)"]], "1/16",
+  { take: 1, tip: ["Beim Einspielen rückt jeder Ton auf die nächste Stelle dieses Rasters — „frei“ lässt ihn, wo du ihn gespielt hast", "While recording every note moves to the nearest step of this grid — “free” leaves it where you played it"] });
+const TAKE_K = new Set(["beat", "bass", "chords", "arp", "melody", "osc"]);
+const MACHINE_P = { beat: ["style", "density", "variation", "human", "fill"], bass: ["style", "density", "variation", "lock"], chords: ["style", "color", "density", "variation", "strum", "lock"],
+  arp: ["rate", "mode", "octaves", "gate", "density", "variation", "color", "ratchet", "life", "human", "lock"], melody: ["density", "range", "variation", "lock"], osc: ["freq", "snap"] };
 const BEAT_STYLES = [["house", "House", "House"], ["techno", "Techno", "Techno"], ["breakbeat", "Breakbeat", "Breakbeat"], ["hiphop", "Hip-Hop (Boom-Bap)", "Hip-hop (boom bap)"],
   ["trap", "Trap", "Trap"], ["dnb", "Drum & Bass", "Drum & bass"], ["lofi", "Lo-Fi", "Lo-fi"], ["reggaeton", "Reggaeton", "Reggaeton"], ["pop", "Pop / Rock", "Pop / rock"],
   ["disco", "Disco", "Disco"], ["ambient", "Ambient (spärlich)", "Ambient (sparse)"]];
@@ -79,26 +88,26 @@ const ZWAVES = [["sine", "Sinus", "Sine"], ["tri", "Dreieck", "Triangle"], ["saw
 const KIND = {
   beat: { icon: "🥁", de: "Beat", en: "Beat", hd: "Schlagzeug, das sich selbst ausdenkt — Stil, Dichte, Variation, Fills", he: "Drums that make themselves up — style, density, variation, fills",
     p: [SEL("style", "Stil", "Style", BEAT_STYLES, "house", { regen: 1 }), K("density", "Dichte", "Density", 0, 1, 0.5, { u: "%", regen: 1 }), K("variation", "Variation", "Variation", 0, 1, 0.3, { u: "%" }),
-      K("human", "Menschlich", "Human feel", 0, 1, 0.2, { u: "%", regen: 1 }), TOG("fill", "Fills", "Fills", true, { regen: 1 }), BARS(2, [1, 2, 4])] },
+      K("human", "Menschlich", "Human feel", 0, 1, 0.2, { u: "%", regen: 1 }), TOG("fill", "Fills", "Fills", true, { regen: 1 }), BARS(2, [1, 2, 4]), SRC, QNT] },
   bass: { icon: "🎸", de: "Bass", en: "Bass", hd: "Basslinie zur Akkordfolge", he: "Bass line that follows the chords", ins: "bass",
     p: [SEL("style", "Spielweise", "Pattern", [["pulse", "Achtel-Puls", "8th pulse"], ["root", "Grundton lang", "Long roots"], ["offbeat", "Offbeat (House)", "Offbeat (house)"],
       ["octave", "Oktaven (Disco)", "Octaves (disco)"], ["acid", "Acid (303)", "Acid (303)"], ["synco", "Synkopiert (Funk)", "Syncopated (funk)"], ["walking", "Laufend", "Walking"]], "pulse", { regen: 1 }),
-      K("density", "Dichte", "Density", 0, 1, 0.6, { u: "%", regen: 1 }), K("variation", "Variation", "Variation", 0, 1, 0.25, { u: "%" }), K("oct", "Oktave", "Octave", -2, 2, 0, { st: 1 }), BARS(2, [1, 2, 4]), LOCK("bass")] },
+      K("density", "Dichte", "Density", 0, 1, 0.6, { u: "%", regen: 1 }), K("variation", "Variation", "Variation", 0, 1, 0.25, { u: "%" }), K("oct", "Oktave", "Octave", -2, 2, 0, { st: 1 }), BARS(2, [1, 2, 4]), LOCK("bass"), SRC, QNT] },
   chords: { icon: "🎹", de: "Akkorde", en: "Chords", hd: "Akkorde in der Tonart, weich geführt", he: "Chords in key, smoothly voiced", ins: "chords",
     p: [SEL("style", "Rhythmus", "Rhythm", [["pad", "Fläche (ganzer Takt)", "Pad (whole bar)"], ["half", "Halbe", "Halves"], ["stabs", "Stabs (kurz)", "Stabs (short)"],
       ["offbeat", "Offbeat", "Offbeat"], ["pulse", "Achtel", "8ths"]], "pad", { regen: 1 }), K("color", "Farbe (7/9)", "Colour (7/9)", 0, 1, 0.3, { u: "%", regen: 1 }),
       K("density", "Dichte", "Density", 0, 1, 0.5, { u: "%", regen: 1 }), K("variation", "Variation", "Variation", 0, 1, 0.2, { u: "%" }), K("oct", "Lage", "Register", -1, 1, 0, { st: 1 }),
-      K("strum", "Strum", "Strum", 0, 1, 0, { u: "%", regen: 1, tip: ["Die Töne des Akkords nacheinander anschlagen, abwechselnd auf- und abwärts — wie auf einer Gitarre", "Play the chord's notes one after another, alternating up and down — like a guitar"] }), BARS(1, [1, 2, 4]), LOCK("chords")] },
+      K("strum", "Strum", "Strum", 0, 1, 0, { u: "%", regen: 1, tip: ["Die Töne des Akkords nacheinander anschlagen, abwechselnd auf- und abwärts — wie auf einer Gitarre", "Play the chord's notes one after another, alternating up and down — like a guitar"] }), BARS(1, [1, 2, 4]), LOCK("chords"), SRC, QNT] },
   arp: { icon: "✨", de: "Arpeggio", en: "Arpeggio", hd: "Zerlegte Akkorde im Takt", he: "Broken chords in time", ins: "arp",
     p: [SEL("rate", "Noten", "Rate", RATES, "1/16", { regen: 1 }), SEL("mode", "Richtung", "Direction", [["up", "aufwärts", "up"], ["down", "abwärts", "down"], ["updown", "auf & ab", "up & down"], ["random", "zufällig", "random"]], "up", { regen: 1 }),
       K("octaves", "Oktaven", "Octaves", 1, 4, 2, { st: 1, regen: 1 }), K("gate", "Notenlänge", "Gate", 0.1, 1, 0.5, { u: "%", regen: 1 }), K("density", "Dichte", "Density", 0, 1, 0.9, { u: "%", regen: 1 }),
       K("variation", "Variation", "Variation", 0, 1, 0.15, { u: "%" }), K("oct", "Oktave", "Octave", -2, 2, 0, { st: 1 }), K("color", "Farbe (7)", "Colour (7)", 0, 1, 0, { u: "%", regen: 1 }),
       K("ratchet", "Ratschen", "Ratchets", 0, 1, 0, { u: "%", regen: 1, tip: ["Manche Schritte zerfallen in 2–4 schnelle Wiederholungen", "Some steps break into 2–4 quick repeats"] }),
       K("life", "Leben", "Life", 0, 1, 0, { u: "%", tip: ["Die Dynamik wandert in einer langsamen Welle und streut — bei jedem Durchgang anders", "Dynamics drift in a slow wave and scatter — different on every pass"] }),
-      K("human", "Menschlich", "Human feel", 0, 1, 0, { u: "%", tip: ["Jede Note ein wenig neben dem Raster", "Every note a little off the grid"] }), BARS(1, [1, 2, 4]), LOCK("arp")] },
+      K("human", "Menschlich", "Human feel", 0, 1, 0, { u: "%", tip: ["Jede Note ein wenig neben dem Raster", "Every note a little off the grid"] }), BARS(1, [1, 2, 4]), LOCK("arp"), SRC, QNT] },
   melody: { icon: "🎶", de: "Melodie", en: "Melody", hd: "Ein Motiv, das wiederkommt und sich entwickelt", he: "A motif that returns and develops", ins: "lead",
     p: [K("density", "Dichte", "Density", 0, 1, 0.5, { u: "%", regen: 1 }), K("range", "Umfang", "Range", 2, 10, 5, { st: 1, regen: 1 }), K("variation", "Variation", "Variation", 0, 1, 0.3, { u: "%" }),
-      K("oct", "Oktave", "Octave", -2, 2, 0, { st: 1 }), BARS(4), LOCK("melody")] },
+      K("oct", "Oktave", "Octave", -2, 2, 0, { st: 1 }), BARS(4), LOCK("melody"), SRC, QNT] },
   seed: { icon: "🎼", de: "Vorgabe", en: "Your bars", hd: "Spiel ein paar Takte ein — die Maschine spielt sie und spinnt sie weiter", he: "Play a few bars — the machine plays them and spins them on", ins: "lead",
     p: [BARS(2, [1, 2, 4]), K("life", "Eigenleben", "Life of its own", 0, 1, 0.4, { u: "%" }), TOG("follow", "Akkorden folgen", "Follow chords", false), K("oct", "Oktave", "Octave", -2, 2, 0, { st: 1 })] },
   osc: { icon: "〰️", de: "Oszillator", en: "Oscillator", hd: "Freier Klangerzeuger: Dauerton, Rauschen, LFO, Tor im Takt", he: "Free tone generator: drone, noise, LFO, gate in time",
@@ -117,7 +126,7 @@ const KIND = {
       K("lamt", "LFO-Menge", "LFO amount", 0, 1, 0, { u: "%" }), K("level", "Pegel", "Level", 0, 1, 0.6, { u: "%" }),
       TOG("zones", "Zonen (4 Wellen)", "Zones (4 waves)", false, { tip: ["Vier Wellen nebeneinander — „Zone“ blendet stufenlos von A über B und C nach D", "Four waves side by side — “Zone” crossfades smoothly from A via B and C to D"] }),
       SEL("za", "Zone A", "Zone A", ZWAVES, "sine"), SEL("zb", "Zone B", "Zone B", ZWAVES, "saw"), SEL("zc", "Zone C", "Zone C", ZWAVES, "square"), SEL("zd", "Zone D", "Zone D", ZWAVES, "noise"),
-      K("zpos", "Zone", "Zone", 0, 3, 0, { u: "zone" })] },
+      K("zpos", "Zone", "Zone", 0, 3, 0, { u: "zone" }), { ...BARS(1, [1, 2, 4, 8]), take: 1 }, SRC, QNT] },
   audio: { icon: "🎤", de: "Mikrofon-Loop", en: "Mic loop", hd: "Einsingen oder -spielen im Takt — Schichten übereinander (Overdub)", he: "Sing or play in time — layer on layer (overdub)",
     p: [BARS(2), K("level", "Pegel", "Level", 0, 1.5, 0.9, { u: "%" }), K("chop", "Stottern", "Stutter", 0, 1, 0, { u: "%" }), TOG("reverse", "Rückwärts", "Reverse", false),
       K("lat", "Versatz", "Offset", -60, 120, 0, { u: "ms", st: 1 }),
@@ -155,6 +164,7 @@ const S = {
   mic: null, rec: null, auto: { log: "", plan: [], fx: [] }, states: new Map(), recArm: null, saveT: 0, msgT: 0,
   tapUsers: new Set(), barWait: [], ki: { open: false, busy: false },
   mods: new Map(), orbRt: new Map(), orbRec: null, flow: null, clockOn: false,   // 3.18
+  take: null, ownHist: new Map(),                                                 // 3.20 ✋ Einspielen
 };
 // Abgriff hinter dem Limiter: mehrere Nutzer (Aufnahme, Mitschnitt für die KI) — an, solange einer zuhört
 function tapOn(fn) { S.tapUsers.add(fn); S.g.tap.port.postMessage({ on: true }); }
@@ -235,10 +245,16 @@ function newGen(kind, o = {}) {
 function demoSet() {
   const st = STYLES.synthwave;
   S.set = { v: 1, id: uid(), name: T("Neon-Schleife", "Neon loop"), bpm: st.bpm, swing: 0.5, root: 9, scale: "minor", prog: "i76", per: 1, style: "synthwave",
-    master: { vol: 0, dj: 0, revSize: 0.6, revDecay: 2.6 }, auto: { on: false, amt: 0.5 }, gens: [], created: Date.now(), changed: Date.now() };
+    master: { vol: 0, dj: 0, revSize: 0.6, revDecay: 2.6, lo: 0, mid: 0, hi: 0 }, auto: { on: false, amt: 0.5 }, gens: [], created: Date.now(), changed: Date.now() };
   buildStyle(st, { onlyAdd: true });
   const o = newGen("osc", { p: { wave: "supersaw", freq: 55, snap: "root", level: 0.5, ldest: "pitch", lamt: 0.01, lrate: 0.2 }, fx: { cut: 900, res: 0.4, wob: "1/2", wdepth: 0.35 } });
   if (o) { o.name = T("Drone", "Drone"); S.set.gens.push(o); }
+  return S.set;
+}
+// 3.20: ein neues Set ist leer — man wählt die Generatoren selbst, stellt sie ein und spielt sie ein; nur 🎲 stellt alles selbst zusammen
+function blankSet() {
+  S.set = { v: 1, id: uid(), name: T("Neues Set", "New set"), bpm: 120, swing: 0.5, root: 9, scale: "minor", prog: "i6", per: 1, style: "house", blank: true,
+    master: { vol: 0, dj: 0, revSize: 0.6, revDecay: 2.6, lo: 0, mid: 0, hi: 0 }, auto: { on: false, amt: 0.5 }, gens: [], created: Date.now(), changed: Date.now() };
   return S.set;
 }
 function buildStyle(st, { onlyAdd = false } = {}) {
@@ -255,7 +271,7 @@ function buildStyle(st, { onlyAdd = false } = {}) {
   return add;
 }
 function fixSet(s) {
-  s.master = Object.assign({ vol: 0, dj: 0, revSize: 0.6, revDecay: 2.6 }, s.master || {});
+  s.master = Object.assign({ vol: 0, dj: 0, revSize: 0.6, revDecay: 2.6, lo: 0, mid: 0, hi: 0 }, s.master || {});
   s.auto = Object.assign({ on: false, amt: 0.5 }, s.auto || {});
   s.gens = (s.gens || []).filter(g => KIND[g.kind]).slice(0, MAX_GEN);
   const used = new Set();
@@ -275,7 +291,7 @@ function sendGen(g) { S.mods.delete(g.id); post({ t: "gen", g: engineGen(g) }); 
 function engineGen(g) {
   const p = Object.assign({}, g.p, { comp: comp(g) });
   if (g.kind === "audio") p.lat = undefined;
-  return { id: g.id, kind: g.kind, slot: g.slot, p, patch: g.kind === "beat" ? drumPatch(g) : g.patch || null };
+  return { id: g.id, kind: g.kind, slot: g.slot, p, patch: g.kind === "beat" ? drumPatch(g) : g.patch || null, own: TAKE_K.has(g.kind) ? (g.own || []) : undefined };
 }
 
 // =====================================================================================================
@@ -317,15 +333,18 @@ function buildGraph() {
   djLP.type = apLP.type = "lowpass"; djHP.type = apHP.type = "highpass"; djLP.frequency.value = apLP.frequency.value = 20000; djHP.frequency.value = apHP.frequency.value = 10;
   djLP.Q.value = djHP.Q.value = 1.1; apLP.Q.value = apHP.Q.value = 0.9;
   const mvol = c.createGain();
+  // 3.20: Klang der Summe — Tiefen (Kuhschwanz 110 Hz), Mitten (Glocke 1 kHz), Höhen (Kuhschwanz 7 kHz)
+  const mlo = c.createBiquadFilter(), mmid = c.createBiquadFilter(), mhi = c.createBiquadFilter();
+  mlo.type = "lowshelf"; mlo.frequency.value = 110; mmid.type = "peaking"; mmid.frequency.value = 1000; mmid.Q.value = 0.7; mhi.type = "highshelf"; mhi.frequency.value = 7000;
   const limiter = new AudioWorkletNode(c, "mws-limiter", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { ceil: -1.5 } });
   const tap = new AudioWorkletNode(c, "mws-tap", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] });
   const out = c.createGain();
-  bus.connect(djLP); djLP.connect(djHP); djHP.connect(apLP); apLP.connect(apHP); apHP.connect(mvol); mvol.connect(limiter); limiter.connect(tap); tap.connect(out); out.connect(c.destination);
+  bus.connect(djLP); djLP.connect(djHP); djHP.connect(apLP); apLP.connect(apHP); apHP.connect(mlo); mlo.connect(mmid); mmid.connect(mhi); mhi.connect(mvol); mvol.connect(limiter); limiter.connect(tap); tap.connect(out); out.connect(c.destination);
   const revIn = c.createGain(), rev = c.createConvolver(), revOut = c.createGain(); rev.normalize = false; revOut.gain.value = 0.8;
   revIn.connect(rev); rev.connect(revOut); revOut.connect(bus);
   const metro = c.createGain(); metro.gain.value = 0.5; node.connect(metro, MAX_GEN); metro.connect(c.destination);
   const an = c.createAnalyser(); an.fftSize = 1024; out.connect(an);
-  S.g = { node, bus, djLP, djHP, apLP, apHP, mvol, limiter, tap, out, revIn, rev, revOut, metro, an, anBuf: new Float32Array(1024) };
+  S.g = { node, bus, djLP, djHP, apLP, apHP, mlo, mmid, mhi, mvol, limiter, tap, out, revIn, rev, revOut, metro, an, anBuf: new Float32Array(1024) };
   node.port.onmessage = (e) => onEngine(e.data);
   limiter.port.onmessage = (e) => { S.limit = e.data; };
   tap.port.onmessage = (e) => { for (const f of S.tapUsers) f(e.data); };
@@ -409,29 +428,51 @@ function applyMaster(now0) {
   S.g.djLP.frequency.setTargetAtTime(dj < 0 ? 20000 * Math.pow(150 / 20000, -dj) : 20000, now, tc);
   S.g.djHP.frequency.setTargetAtTime(dj > 0 ? 10 * Math.pow(3000 / 10, dj) : 10, now, tc);
   S.g.mvol.gain.setTargetAtTime(dbGain(m.vol), now, tc);
+  S.g.mlo.gain.setTargetAtTime(clamp(m.lo || 0, -12, 12), now, tc); S.g.mmid.gain.setTargetAtTime(clamp(m.mid || 0, -12, 12), now, tc); S.g.mhi.gain.setTargetAtTime(clamp(m.hi || 0, -12, 12), now, tc);
   if (S.g.revKey !== m.revSize + ":" + m.revDecay) { S.g.rev.buffer = makeIR(S.ctx, m.revSize, m.revDecay); S.g.revKey = m.revSize + ":" + m.revDecay; }
 }
 const post = (m) => { if (S.g) S.g.node.port.postMessage(m); };
-function syncHarmony() { const pr = (PROGS.find(p => p[0] === S.set.prog) || PROGS[0])[2]; post({ t: "harmony", root: S.set.root, scale: S.set.scale, prog: pr, per: S.set.per }); }
+function progArr() { return S.set.prog === "own" && Array.isArray(S.set.progOwn) && S.set.progOwn.length ? S.set.progOwn : (PROGS.find(p => p[0] === S.set.prog) || PROGS[0])[2]; }
+function syncHarmony() { const pr = progArr(); post({ t: "harmony", root: S.set.root, scale: S.set.scale, prog: pr, per: S.set.per }); }
 function syncAll() {
   post({ t: "tempo", bpm: S.set.bpm, swing: S.set.swing }); syncHarmony(); post({ t: "metro", on: !!S.metro });
   for (const g of S.set.gens) { sendGen(g); if (g.kind === "seed" && g.seed) post({ t: "seed", id: g.id, notes: g.seed, key: g.seedKey }); }
 }
 function onEngine(d) {
   switch (d.t) {
-    case "bar": S.bar = d.bar; S.barTime = d.time; S.spb = d.spb; autopilotBar(d); mixBar(d); paintBar(); { const w = S.barWait; S.barWait = []; for (const f of w) f(d); }
+    case "bar": S.bar = d.bar; S.barTime = d.time; S.spb = d.spb; autopilotBar(d); mixBar(d); paintBar(); if (S.take) paintCard(genById(S.take.id)); { const w = S.barWait; S.barWait = []; for (const f of w) f(d); }
       if (S.flow) { S.flow.bars.push({ bar: d.bar, time: d.time }); if (S.flow.bars.length > 80) S.flow.bars.shift(); }
       midiClockBar(d); break;
     case "nev": onNotes(d.ev); break;
     case "pos": S.step = d.step; paintPos(); break;
     case "live": S.live = d.v; break;
-    case "run": S.running = d.on; if (!d.on) { S.states.clear(); S.bar = -1; endAutoFx(); midiClockStop(); for (const g of S.set.gens) extAllOff(g); } else { flowStart(); if (S.flow) S.flow.bars = []; } paintTransport(); paintCards(); break;
+    case "run": S.running = d.on; if (!d.on) { S.states.clear(); S.take = null; S.bar = -1; endAutoFx(); midiClockStop(); for (const g of S.set.gens) extAllOff(g); } else { flowStart(); if (S.flow) S.flow.bars = []; } paintTransport(); paintCards(); break;
     case "state": S.states.set(d.id, d); paintCard(genById(d.id)); paintTransport(); break;
     case "seedarm": status(T(`🎼 Einzählen … ab Takt ${d.at + 1} spielst du ein.`, `🎼 Count-in … you play from bar ${d.at + 1}.`)); S.recArm = { id: d.id, at: d.at, kind: "seed" }; paintCards(); break;
     case "seed": { const g = genById(d.id); S.recArm = null; if (g && d.notes.length) { g.seed = d.notes; g.seedKey = d.key; changed(); }
       status(d.notes.length ? T(`🎼 ${d.notes.length} Noten aufgenommen — die Maschine spielt sie jetzt und spinnt weiter.`, `🎼 ${d.notes.length} notes recorded — the machine plays them now and spins them on.`)
         : T("🎼 Keine Noten gehört — noch einmal ● und während der Aufnahme spielen.", "🎼 No notes heard — press ● again and play during the recording."));
       paintCards(); break; }
+    case "takearm": { const g = genById(d.id); if (!g) break;
+      S.take = { id: d.id, at: d.at, over: d.over, pass: 0 }; pushOwn(g);
+      g.p.src = "own"; g.p.bars = d.bars; g.p.okey = d.okey; if (!d.over) g.own = [];
+      status(d.over ? T(`✋ Overdub in „${g.name}“ ab Takt ${d.at + 1} — spiel dazu, jede Runde kommt dazu. ● (oder R) beendet.`, `✋ Overdub into “${g.name}” from bar ${d.at + 1} — play along, every pass adds up. ● (or R) finishes.`)
+        : d.fresh ? T(`✋ Einzählen … ab Takt ${d.at + 1} spielst du in „${g.name}“ ein (${d.bars} Takt${d.bars > 1 ? "e" : ""}). Danach spielt er es als Schleife — weiterspielen legt dazu.`, `✋ Count-in … from bar ${d.at + 1} you record into “${g.name}” (${d.bars} bar${d.bars > 1 ? "s" : ""}). Then it loops it — keep playing to add more.`)
+        : T(`✋ Ab Takt ${d.at + 1} spielst du in „${g.name}“ ein (${d.bars} Takt${d.bars > 1 ? "e" : ""}) — im Takt der anderen.`, `✋ From bar ${d.at + 1} you record into “${g.name}” (${d.bars} bar${d.bars > 1 ? "s" : ""}) — in time with the others.`));
+      rerenderCard(g); renderKeys(); break; }
+    case "own": { const g = genById(d.id); if (!g) break;
+      if (d.frozen || d.added) pushOwn(g);                    // ↶ führt zum Stand vor dieser Runde
+      g.own = d.own; if (d.src) g.p.src = d.src; if (d.okey !== undefined) g.p.okey = d.okey; changed();
+      if (S.take && S.take.id === d.id && !d.final) S.take.pass = d.pass;
+      if (d.frozen) { rerenderCard(g); status(T(`📌 „${g.name}“: das Muster der Maschine ist jetzt dein Eingespieltes (${d.own.length} Töne) — ● legt deine Töne dazu.`, `📌 “${g.name}”: the machine's pattern is now yours (${d.own.length} notes) — ● adds your notes.`)); }
+      else if (!d.final && d.added) status(d.pass === 1 && !(S.take && S.take.over) ? T(`✋ ${d.own.length} Töne im Takt — „${g.name}“ spielt sie jetzt als Schleife. Spiel weiter, um mehr dazuzulegen; ● beendet, ↶ nimmt die letzte Runde zurück.`, `✋ ${d.own.length} notes in time — “${g.name}” loops them now. Keep playing to add more; ● finishes, ↶ takes back the last pass.`)
+        : T(`✋ +${d.added} in Runde ${d.pass} (${d.own.length} Töne) — ↶ nimmt sie zurück.`, `✋ +${d.added} in pass ${d.pass} (${d.own.length} notes) — ↶ takes it back.`));
+      paintCard(g); break; }
+    case "takeend": { const g = genById(d.id); S.take = null; if (!g) { renderKeys(); break; }
+      if (d.src) g.p.src = d.src; changed();
+      status(d.n ? T(`✋ Fertig — „${g.name}“ spielt deine ${d.n} Töne im Takt. Regler drehen, ● spielt mehr dazu, 🎲 baut den Rest.`, `✋ Done — “${g.name}” plays your ${d.n} notes in time. Turn knobs, ● adds more, 🎲 builds the rest.`)
+        : T(`Nichts gespielt — „${g.name}“ bleibt, wie er war.`, `Nothing played — “${g.name}” stays as it was.`));
+      rerenderCard(g); renderKeys(); break; }
     case "recarm": status(T(`🎤 Einzählen … Aufnahme ab Takt ${d.at + 1}.`, `🎤 Count-in … recording from bar ${d.at + 1}.`)); S.recArm = { id: d.id, at: d.at, kind: "audio" }; paintCards(); break;
     case "recgo": status(T("🎤 Aufnahme läuft …", "🎤 Recording …")); if (S.recArm) S.recArm.go = true; paintCards(); break;
     case "recpos": if (S.recArm) { S.recArm.frac = d.frac; paintRecBar(d.id); } break;
@@ -461,6 +502,74 @@ function stopGen(g, now = false) { post({ t: "stop", id: g.id, now }); }
 function genOn(g) { const s = S.states.get(g.id); return !!(s && s.on); }
 function genPending(g) { const s = S.states.get(g.id); return s && (s.startAt != null ? "start" : s.stopAt != null ? "stop" : null); }
 function toggleGen(g) { if (genOn(g) && genPending(g) !== "stop") stopGen(g); else startGen(g); }
+// ---------- 3.20 ✋ Selbst einspielen ----------
+const hasOwn = (g) => TAKE_K.has(g.kind) && g.p.src === "own" && Array.isArray(g.own) && g.own.length > 0;
+// leere Sets und Sets, in denen alles eingespielt ist: ein neuer Generator wartet auf dein Spiel, statt sich ein Muster auszudenken
+function ownWorld() { const t = S.set.gens.filter(x => TAKE_K.has(x.kind)); return t.length ? t.every(x => x.p.src === "own") : !!S.set.blank; }
+// gehört wird, was vor der Ausgabeverzögerung gerechnet wurde — so viel früher zählt ein Anschlag
+function takeLat() { const c = S.ctx; return c ? clamp((c.outputLatency || 0) + (c.baseLatency || 0), 0, 0.5) : 0; }
+async function toggleTake(g) {
+  if (!g || !TAKE_K.has(g.kind)) return;
+  if (S.take && S.take.id === g.id) { post({ t: "take", id: g.id, on: false }); return; }
+  if (!(await ensureAudio())) return;
+  if (S.take) post({ t: "take", id: S.take.id, on: false });
+  S.sel = g.id; qa(".lp-card").forEach(x => x.classList.toggle("sel", x.id === "lpCard-" + g.id));
+  post({ t: "take", id: g.id, on: true, bars: +g.p.bars || 1, lat: takeLat() });
+}
+// ↶ je Generator: die Stände vor jeder Runde, vor Leeren, Übernehmen und Längenänderung (nur für diese Sitzung)
+function pushOwn(g) {
+  const st = S.ownHist.get(g.id) || []; st.push(JSON.parse(JSON.stringify(g.own || [])));
+  while (st.length > 40) st.shift(); S.ownHist.set(g.id, st);
+}
+function undoOwn(g) {
+  const st = S.ownHist.get(g.id) || []; let prev = st.pop();
+  while (prev && JSON.stringify(prev) === JSON.stringify(g.own || [])) prev = st.pop();
+  if (!prev) { status(T("Nichts zurückzunehmen.", "Nothing to take back.")); return; }
+  g.own = prev; post({ t: "own", id: g.id, own: g.own }); changed(); paintCard(g);
+  status(T(`↶ „${g.name}“: ${g.own.length} Töne.`, `↶ “${g.name}”: ${g.own.length} notes.`));
+}
+function clearOwn(g) {
+  if (!(g.own && g.own.length)) return;
+  pushOwn(g); g.own = []; post({ t: "own", id: g.id, own: [] }); changed(); paintCard(g);
+  status(T(`🗑 „${g.name}“ ist leer — ● spielt neu ein, ↶ holt es zurück.`, `🗑 “${g.name}” is empty — ● records anew, ↶ brings it back.`));
+}
+async function freezeGen(g) { if (!(await ensureAudio())) return; post({ t: "freeze", id: g.id }); }
+// Länge geändert: länger = das Eingespielte wiederholt sich (darüber lässt sich weiterspielen), kürzer = hinten abgeschnitten
+function resizeOwn(g, oldBars, bars) {
+  if (!(g.own && g.own.length) || oldBars === bars) return;
+  pushOwn(g);
+  const o = SPB * oldBars, n = SPB * bars, out = [];
+  for (const e of g.own) for (let k = 0; e.s + k * o < n; k++) out.push({ ...e, s: e.s + k * o, l: Math.min(e.l, n - e.s - k * o) });
+  g.own = out.sort((a, b) => a.s - b.s || a.n - b.n); post({ t: "own", id: g.id, own: g.own });
+}
+// Trommeln auf einer Klaviertastatur: tief (wie ein Pad-Controller) nach General MIDI, darüber in jeder Oktave dieselbe Belegung —
+// C Kick, C# Rim, D Snare, D# Clap, F/G/A Toms, F# Hi-Hat zu, A# Hi-Hat offen, C# Crash, D# Ride …
+const DRUM_FOLD = [0, 8, 1, 2, 1, 5, 3, 5, 3, 6, 4, 6, 7, 10, 7, 11, 13, 11, 12, 15, 9, 10, 14, 11];
+function drumPad(n) { if (n >= 35 && n <= 59 && GM_TO_PAD[n] != null) return GM_TO_PAD[n]; return DRUM_FOLD[(((n - 36) % 24) + 24) % 24]; }
+const PAD_SHORT = [["Kick", "Kick"], ["Snare", "Snare"], ["Clap", "Clap"], ["HH zu", "HH cl"], ["HH auf", "HH op"], ["Tom 1", "Tom 1"], ["Tom 2", "Tom 2"], ["Tom 3", "Tom 3"],
+  ["Rim", "Rim"], ["Glocke", "Bell"], ["Crash", "Crash"], ["Ride", "Ride"], ["Shaker", "Shaker"], ["Conga", "Conga"], ["Clave", "Clave"], ["Zap", "Zap"]];
+// 🎲 hört zu, was du eingespielt hast: Tonart, und je Takt der Akkord unter dem tiefsten eingespielten Generator
+function ownHarmony() {
+  const tonal = S.set.gens.filter(g => hasOwn(g) && g.kind !== "beat");
+  if (!tonal.length) return null;
+  const sh = (g) => { const r = S.set.root, o = g.p.okey; return o == null ? 0 : ((((r - o + 5) % 12) + 12) % 12) - 5; };
+  const abs = (g) => g.own.map(e => ({ ...e, n: e.n + sh(g) + 12 * Math.round(+g.p.oct || 0) }));
+  const all = tonal.flatMap(abs);
+  const key = detectKey(all, { root: S.set.root, scale: S.set.scale });
+  if (!key) return null;
+  const low = tonal.map(g => ({ g, n: abs(g) })).sort((a, b) => Math.min(...a.n.map(e => e.n)) - Math.min(...b.n.map(e => e.n)))[0];
+  const L = clamp(+low.g.p.bars || 1, 1, 8);
+  const steps = key.scale === "major" ? [0, 2, 4, 5, 7, 9, 11] : [0, 2, 3, 5, 7, 8, 10];
+  const prog = [];
+  for (let b = 0; b < L; b++) {
+    const inb = low.n.filter(e => e.s >= b * SPB && e.s < (b + 1) * SPB); if (!inb.length) { prog.push(prog.length ? prog[prog.length - 1] : 0); continue; }
+    // der Ton, der in diesem Takt am meisten trägt: lang, früh, auf schweren Zeiten
+    const best = inb.map(e => ({ e, w: Math.max(0.5, e.l) * ((e.s % 16) === 0 ? 2 : (e.s % 4) === 0 ? 1.3 : 1) })).sort((a, b2) => b2.w - a.w)[0].e;
+    const rel = (((best.n - key.r) % 12) + 12) % 12; let d = steps.indexOf(rel); if (d < 0) d = steps.findIndex((x, i) => x < rel && (steps[i + 1] == null || steps[i + 1] > rel));
+    prog.push(Math.max(0, d));
+  }
+  return { key, prog };
+}
 async function startAll() {
   if (!(await ensureAudio())) return;
   for (const g of S.set.gens) if (!genOn(g) && (g.kind !== "seed" || (g.seed && g.seed.length)) && (g.kind !== "audio" || g.nLayers)) post({ t: "start", id: g.id });
@@ -469,14 +578,20 @@ async function startAll() {
 // still, hält der Motor den Takt an (vorher lief er weiter und der Autopilot holte an der nächsten Phrasengrenze jemanden zurück)
 function stopAll(now) { endAutoFx(); if (now) { post({ t: "run", on: false }); return; } for (const g of S.set.gens) if (genOn(g) || genPending(g) === "start") post({ t: "stop", id: g.id }); }
 function setGenParam(g, k, v, spec) {
+  const was = g.p[k];
   g.p[k] = v; dropMod(g, "p:" + k);
+  if (k === "bars" && g.p.src === "own") resizeOwn(g, +was || 1, +v || 1);
+  if (k === "src") setTimeout(() => rerenderCard(g), 0);
   post({ t: "gp", id: g.id, k, v, regen: !!(spec && spec.regen) });
   changed();
 }
 function setFx(g, k, v) { g.fx[k] = v; dropMod(g, "fx:" + k); if (k === "vol") g.volHand = true; applyFx(g); changed(); }
 function addGen(kind, o, { fit = false } = {}) {
   let said = [];
+  const mine = fit && !o && TAKE_K.has(kind) && ownWorld();
   if (fit && !o) ({ o, said } = fitNew(kind));
+  // 3.20: in einem leeren (oder ganz eingespielten) Set denkt sich der neue nichts aus — er wartet auf dein Spiel
+  if (mine) { o.p.src = "own"; o.p.lock = "off"; said = [T("Klang passend zum Stil", "sound to fit the style"),T("wartet auf dein Spiel: ● (oder R), dann auf der Tastatur spielen — die Maschine bringt es in den Takt", "waits for your playing: ● (or R), then play on the keyboard — the machine puts it in time")]; }
   const g = newGen(kind, o);
   if (!g) { status(T("Höchstens 12 Generatoren.", "At most 12 generators.")); return null; }
   S.set.gens.push(g); changed();
@@ -484,8 +599,9 @@ function addGen(kind, o, { fit = false } = {}) {
   S.sel = g.id;
   renderCards();
   // 3.19: läuft die Maschine, setzt der neue am nächsten Phrasenanfang mit ein und wird eingemischt
-  if (fit && S.running && g.kind !== "seed" && g.kind !== "audio") { post({ t: "start", id: g.id }); autoMix({ ids: [g.id] }); said.push(T("setzt am nächsten Takt ein", "comes in on the next bar")); }
-  if (fit && said.length) status(T(`🔗 ${g.name} passt sich an: `, `🔗 ${g.name} fits in: `) + said.join(" · "));
+  renderKeys();
+  if (fit && S.running && !mine && g.kind !== "seed" && g.kind !== "audio") { post({ t: "start", id: g.id }); autoMix({ ids: [g.id] }); said.push(T("setzt am nächsten Takt ein", "comes in on the next bar")); }
+  if (fit && said.length) status(mine ? T(`✋ ${g.name}: `, `✋ ${g.name}: `) + said.join(" · ") : T(`🔗 ${g.name} passt sich an: `, `🔗 ${g.name} fits in: `) + said.join(" · "));
   return g;
 }
 // 3.19: ein neuer Generator passt zu dem, was schon da ist — Klang und Muster im Stil des Sets, Schleifenlänge der anderen,
@@ -664,7 +780,7 @@ async function micToSeed(g) {
   const sd = addGen("seed", { preset: "minimoog|Singender Lead", p: { bars: r.bars, life: 0.35 } }); if (!sd) return null;
   sd.name = T("🎼 aus dem Gesang", "🎼 from your voice");
   // Tonartbezug der Vorgabe = die Tonart, die jetzt gilt
-  const prog = (PROGS.find(p => p[0] === S.set.prog) || PROGS[0])[2];
+  const prog = progArr();
   sd.seed = r.notes; sd.seedKey = { root: S.set.root, scale: S.set.scale, prog, per: S.set.per, bar0: 0, bars: r.bars };
   post({ t: "seed", id: sd.id, notes: sd.seed, key: sd.seedKey });
   changed(); renderCards();
@@ -701,10 +817,21 @@ async function surprise() {
   if (!(await ensureAudio())) return;
   const keys = Object.keys(STYLES), sk = keys[Math.floor(Math.random() * keys.length)], st = STYLES[sk];
   endAutoFx();
-  const keep = S.set.gens.filter(g => g.lock && genOn(g));      // 3.18: 🔒 festgehaltene bleiben, wie sie sind (und spielen weiter)
+  // 3.18: 🔒 festgehaltene bleiben, wie sie sind (und spielen weiter) · 3.20: was du eingespielt hast, bleibt auch — 🎲 baut darum herum
+  const keep = S.set.gens.filter(g => (g.lock && genOn(g)) || hasOwn(g));
+  const mineH = ownHarmony(), mineAny = S.set.gens.some(hasOwn);
   stopAll(true);
-  for (const g of S.set.gens.slice()) if (["beat", "bass", "chords", "arp", "melody"].includes(g.kind) && !g.lock) { post({ t: "del", id: g.id }); dropChain(g.id); S.set.gens = S.set.gens.filter(x => x !== g); }
-  S.set.style = sk; S.set.bpm = st.bpm; S.set.root = Math.floor(Math.random() * 12); S.set.scale = Math.random() < 0.7 ? "minor" : "major"; S.set.prog = st.prog;
+  for (const g of S.set.gens.slice()) if (["beat", "bass", "chords", "arp", "melody"].includes(g.kind) && !g.lock && !hasOwn(g)) { post({ t: "del", id: g.id }); dropChain(g.id); S.set.gens = S.set.gens.filter(x => x !== g); }
+  S.set.style = sk; S.set.prog = st.prog;
+  if (!mineAny) S.set.bpm = st.bpm;                               // dein Tempo bleibt, wenn du schon etwas eingespielt hast
+  if (mineH) {
+    // Tonart und Akkorde aus deinem Spiel; deine Töne klingen danach genau wie vorher (Bezug auf die neue Tonart umgerechnet)
+    for (const g of S.set.gens.filter(x => hasOwn(x) && x.kind !== "beat")) {
+      const o = g.p.okey, d = o == null ? 0 : ((((S.set.root - o + 5) % 12) + 12) % 12) - 5;
+      g.own = g.own.map(e => ({ ...e, n: e.n + d })); g.p.okey = mineH.key.r;
+    }
+    S.set.root = mineH.key.r; S.set.scale = mineH.key.scale; S.set.progOwn = mineH.prog; S.set.prog = "own"; S.set.per = 1;
+  } else { S.set.root = Math.floor(Math.random() * 12); S.set.scale = Math.random() < 0.7 ? "minor" : "major"; }
   if (S.set.scale === "major" && ["i6", "i4", "i76", "i3", "iiv"].includes(S.set.prog)) S.set.prog = "pop";
   const added = buildStyle(st, { onlyAdd: true });
   if (Math.random() < 0.6 && !S.set.gens.some(g => g.kind === "melody")) { const m = newGen("melody", { preset: pickLead() }); if (m) { S.set.gens.push(m); added.push(m); } }
@@ -717,11 +844,15 @@ async function surprise() {
     if ((g.kind === "chords" || g.kind === "arp") && Math.random() < 0.5) { orbRoll(g); Object.assign(g.orb, { motion: rnd(0.1, 0.3), depth: rnd(0.35, 0.6), x: 0.55, y: 0, x0: 0.55, y0: 0 }); }
   }
   for (const g of added) makeChain(g);
-  syncAll(); renderCards(); paintTransport();
-  for (const g of added.concat(keep)) post({ t: "start", id: g.id });
+  syncAll(); renderCards(); renderTransport();
+  // 3.20: alle gemeinsam sofort (vorher setzte nur der erste gleich ein, alle anderen — auch die festgehaltenen — erst am nächsten Takt,
+  // bei langsamen Stilen fast 3 s Pause)
+  for (const g of keep.concat(added)) post({ t: "start", id: g.id, now: true });
   S.set.auto.on = true; changed();
   autoMix();                                                  // 3.17.1: nicht alle gleich laut — ausmischen, sobald sie spielen
-  status(T(`🎲 ${st.de} in ${ROOTS[S.set.root]}-${S.set.scale === "major" ? "Dur" : "Moll"}, ${st.bpm} BPM — dreh an allem, was dir gefällt.`, `🎲 ${st.en} in ${ROOTS[S.set.root]} ${S.set.scale}, ${st.bpm} BPM — turn whatever you like.`));
+  const mn = S.set.gens.filter(hasOwn).map(g => g.name);
+  status(T(`🎲 ${st.de} in ${ROOTS[S.set.root]}-${S.set.scale === "major" ? "Dur" : "Moll"}, ${S.set.bpm} BPM — dreh an allem, was dir gefällt.`, `🎲 ${st.en} in ${ROOTS[S.set.root]} ${S.set.scale}, ${S.set.bpm} BPM — turn whatever you like.`)
+    + (mn.length ? T(` Dein Eingespieltes bleibt (${mn.join(", ")})${mineH ? ", Tonart und Akkorde kommen aus deinem Spiel" : ""}.`, ` What you played stays (${mn.join(", ")})${mineH ? ", key and chords come from your playing" : ""}.`) : ""));
 }
 function pickLead() { const L = ["mono|Leiter-Lead", "minimoog|Singender Lead", "sh101|101-Lead (PWM)", "ppg|PPG-Stimme", "odyssey|Odyssey-Sync-Lead", "cs80|Vangelis-Lead"]; return L[Math.floor(Math.random() * L.length)]; }
 
@@ -767,14 +898,15 @@ function autopilotBar(d) {
     if (goIn) { post({ t: "start", id: goIn.id }); autoMix({ ids: [goIn.id] }); }
     say((goIn ? goIn.name + " kommt" : "") + (goIn && goOut ? ", " : "") + (goOut ? goOut.name + " geht" : ""), (goIn ? goIn.name + " comes in" : "") + (goIn && goOut ? ", " : "") + (goOut ? goOut.name + " leaves" : ""));
   } else {
-    const ton = on.filter(g => ["bass", "chords", "arp", "melody", "beat"].includes(g.kind) && !g.lock);
+    const ton = on.filter(g => ["bass", "chords", "arp", "melody", "beat"].includes(g.kind) && !g.lock && g.p.src !== "own");
     if (!ton.length) return;
     const g = ton[Math.floor(Math.random() * ton.length)];
     post({ t: "gp", id: g.id, k: "_fresh", v: Date.now(), regen: true });
     say(g.name + " erfindet ein neues Muster", g.name + " invents a new pattern");
   }
 }
-function renderAutoLog() { const e = q("#lpAutoLog"); if (e) e.textContent = S.set.auto.on ? (S.auto.log || T("hört zu … (handelt an Phrasengrenzen, alle 8 Takte)", "listening … (acts at phrase boundaries, every 8 bars)")) : ""; }
+function renderAutoLog() { const e = q("#lpAutoLog"); if (!e) return; const t = S.set.auto.on ? (S.auto.log || T("hört zu … (handelt an Phrasengrenzen, alle 8 Takte)", "listening … (acts at phrase boundaries, every 8 bars)")) : "";
+  if (e.textContent !== t) { e.textContent = t; e.title = t; } }
 
 // =====================================================================================================
 // Aufnahme → Bibliothek
@@ -969,16 +1101,16 @@ async function kiGo() {
 // Spielen: Computertastatur, MIDI (Noten in den gewählten Generator, Regler lernen)
 // =====================================================================================================
 const KEYMAP = { KeyA: 0, KeyW: 1, KeyS: 2, KeyE: 3, KeyD: 4, KeyF: 5, KeyT: 6, KeyG: 7, KeyY: 8, KeyH: 9, KeyU: 10, KeyJ: 11, KeyK: 12, KeyO: 13, KeyL: 14, KeyP: 15, Semicolon: 16, Quote: 17 };
-const PADGM = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0, 1];
 function playTarget() {
+  if (S.take) { const t = genById(S.take.id); if (t) return t; }            // 3.20: beim Einspielen spielt die Tastatur immer den, der aufnimmt
   const g = genById(S.sel);
-  if (g && g.kind !== "osc" && g.kind !== "audio") return g;
+  if (g && g.kind !== "audio") return g;                                    // 3.20: auch der Oszillator lässt sich spielen
   return S.set.gens.find(x => x.kind === "seed") || S.set.gens.find(x => KIND[x.kind].ins) || null;
 }
 async function noteOn(n, v) {
   if (!(await ensureAudio())) return;
   const g = playTarget(); if (!g) { status(T("Zum Spielen eine „Vorgabe“ oder einen Klang-Generator hinzufügen.", "Add “Your bars” or a sound generator to play.")); return; }
-  const nn = g.kind === "beat" ? PADGM[((n - 60) % 18 + 18) % 18] : n;
+  const nn = g.kind === "beat" ? drumPad(n) : n;
   post({ t: "note", id: g.id, n: nn, v, on: true }); paintKey(n, true); return nn;
 }
 function noteOff(n, nn) { const g = playTarget(); if (g) post({ t: "note", id: g.id, n: nn != null ? nn : n, on: false }); paintKey(n, false); }
@@ -989,6 +1121,7 @@ function onKeyDown(e) {
   if (!tabVisible() || typing(e) || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.code === "Space") { e.preventDefault(); e.stopImmediatePropagation(); if (S.set.gens.some(genOn)) stopAll(false); else startAll(); return; }
   if (e.repeat) { if (KEYMAP[e.code] != null) e.preventDefault(); return; }
+  if (e.code === "KeyR") { e.preventDefault(); const g = playTarget(); if (g && TAKE_K.has(g.kind)) toggleTake(g); else if (g && g.kind === "seed") recSeed(g); return; }
   if (e.code === "KeyZ") { S.octave = clamp(S.octave - 1, -3, 3); renderKeys(); e.preventDefault(); return; }
   if (e.code === "KeyX") { S.octave = clamp(S.octave + 1, -3, 3); renderKeys(); e.preventDefault(); return; }
   const k = KEYMAP[e.code]; if (k == null) return;
@@ -1162,6 +1295,8 @@ function loopIdle(g, pk) {
     if ((k === "etime" || k === "efb") && !(f.echo > 0)) return R("wirkt, sobald Echo über 0 ist", "works once echo is above 0", { echo: 0.25 });
     return null;
   }
+  if (w === "p" && p.src === "own" && (MACHINE_P[g.kind] || []).includes(k))
+    return g.kind === "osc" ? R("die Tonhöhe kommt aus deinem Eingespielten", "the pitch comes from what you played") : R("spielt dein Eingespieltes — dieser Regler formt nur das Muster der Maschine (🤖)", "plays what you recorded — this control only shapes the machine's pattern (🤖)");
   if (k === "lock" && p.lock && p.lock !== "off") { const src = p.lock.replace("~", ""), has = S.set.gens.some(x => x !== g && (src === "kick" ? x.kind === "beat" : x.kind === src));
     if (!has) return R(`folgt, sobald es ${{ kick: "einen Beat", bass: "einen Bass", chords: "Akkorde", melody: "eine Melodie" }[src]} gibt — bis dahin eigener Rhythmus`, `follows once there is ${{ kick: "a beat", bass: "a bass", chords: "chords", melody: "a melody" }[src]} — own rhythm until then`); }
   if (g.kind === "audio" && /^(gsize|gdens|gspray|gpitch|gfreeze)$/.test(k) && !(num(p.gran, 0) > 0)) return R("wirkt, sobald „Granular“ über 0 ist", "works once “Granular” is above 0", { gran: 0.6 });
@@ -1594,14 +1729,15 @@ function shell() {
       h("button", { id: "lpSurprise", type: "button", class: "ghost btn-s", title: T("Eine zufällige Richtung, Tonart und Generatoren — sofort", "A random style, key and generators — right away"), text: T("🎲 Überrasch mich", "🎲 Surprise me"), onclick: surprise })),
     h("div", { id: "lpCards", class: "lp-cards" }),
     h("p", { id: "lpMsg", class: "status sb-msg", role: "status" }),
-    h("p", { class: "sub small lp-help", text: T("Start: ▶︎ auf einer Karte — der Generator setzt am nächsten Takt ein und läuft, bis du ■ drückst. Leertaste startet/stoppt alle. Die Computertastatur (A W S E D … K) spielt den gewählten Generator, Y/X (deutsch: Z/X) wechselt die Oktave. Jeder Regler lässt sich per „MIDI lernen“ auf einen Drehregler deines Controllers legen.",
-      "Start: ▶︎ on a card — the generator comes in on the next bar and runs until you press ■. Space starts/stops all. The computer keyboard (A W S E D … K) plays the selected generator, Z/X changes octave. Every knob can be put on a controller knob via “MIDI learn”.") }),
+    h("p", { class: "sub small lp-help", text: T("Start: ▶︎ auf einer Karte — der Generator setzt am nächsten Takt ein und läuft, bis du ■ drückst. Leertaste startet/stoppt alle. Die Computertastatur (A W S E D … K) spielt den gewählten Generator, Y/X (deutsch: Z/X) wechselt die Oktave, R spielt in ihn ein (✋: im Takt, ins Raster, weiterspielen legt dazu). Jeder Regler lässt sich per „MIDI lernen“ auf einen Drehregler deines Controllers legen.",
+      "Start: ▶︎ on a card — the generator comes in on the next bar and runs until you press ■. Space starts/stops all. The computer keyboard (A W S E D … K) plays the selected generator, Z/X changes octave, R records into it (✋: in time, on the grid, keep playing to add more). Every knob can be put on a controller knob via “MIDI learn”.") }),
     // 3.17.1: die Tastatur immer unten (klebt am unteren Rand, einklappbar)
     h("div", { id: "lpKeys", class: "lp-keys" }),
   );
   q("#lpName").addEventListener("input", (e) => { S.set.name = e.target.value.slice(0, 80) || "Set"; changed(); renderSets(); });
   q("#lpSets").addEventListener("change", (e) => openSet(e.target.value));
-  q("#lpNew").onclick = async () => { await save(); stopAll(true); for (const g of S.set.gens) { post({ t: "del", id: g.id }); dropChain(g.id); } demoSet(); S.set.name = T("Neues Set", "New set"); await afterLoad(); status(T("Neues Set angelegt.", "New set created.")); };
+  q("#lpNew").onclick = async () => { await save(); stopAll(true); for (const g of S.set.gens) { post({ t: "del", id: g.id }); dropChain(g.id); } blankSet(); await afterLoad();
+    status(T("Neues, leeres Set — ＋ einen Generator wählen, einstellen, auf der Tastatur spielen und ● einspielen. 🎲 stellt alles selbst zusammen.", "New, empty set — ＋ pick a generator, set it up, play on the keyboard and ● record. 🎲 puts everything together by itself.")); };
   q("#lpDel").onclick = async () => {
     if (!confirm(T(`Set „${S.set.name}“ löschen? Aufgenommene Tracks in der Bibliothek bleiben.`, `Delete set “${S.set.name}”? Tracks you recorded stay in the library.`))) return;
     stopAll(true); for (const g of S.set.gens) { post({ t: "del", id: g.id }); dropChain(g.id); if (g.kind === "audio") await saveLayers(g, []); }
@@ -1664,11 +1800,13 @@ function renderTransport() {
       h("span", { class: "sb-cap", text: T("Tonart", "Key") }),
       sel("lpRoot", ROOTS.map((r, i) => [i, r]), S.set.root, (v) => { S.set.root = +v; syncHarmony(); changed(); }, T("Grundton", "Root")),
       sel("lpScale", SCALES.map(([k, de, en]) => [k, T(de, en)]), S.set.scale, (v) => { S.set.scale = v; syncHarmony(); changed(); }, T("Tonleiter", "Scale")),
-      sel("lpProg", PROGS.map(([k, n]) => [k, n]), S.set.prog, (v) => { S.set.prog = v; syncHarmony(); changed(); }, T("Akkordfolge", "Chord progression")),
+      sel("lpProg", PROGS.map(([k, n]) => [k, n]).concat(S.set.progOwn ? [["own", T("✋ aus deinem Spiel", "✋ from your playing") + " (" + S.set.progOwn.map(d => ["i", "ii", "iii", "iv", "v", "vi", "vii"][d] || "?").join(" – ") + ")"]] : []), S.set.prog, (v) => { S.set.prog = v; syncHarmony(); changed(); }, T("Akkordfolge", "Chord progression")),
       sel("lpPer", [[1, T("1 Takt je Akkord", "1 bar per chord")], [2, T("2 Takte je Akkord", "2 bars per chord")], [4, T("4 Takte je Akkord", "4 bars per chord")]], S.set.per, (v) => { S.set.per = +v; syncHarmony(); changed(); }, T("Takte je Akkord", "Bars per chord"))),
     h("div", { class: "sb-tgroup lp-master" },
       knob(K("dj", "DJ-Filter", "DJ filter", -1, 1, 0, { u: "%" }), S.set.master.dj, (v) => { S.set.master.dj = v; applyMaster(); changed(); }, { lk: "master:dj" }),
       knob(K("revDecay", "Hall-Länge", "Reverb length", 0.4, 8, 2.6, { c: "exp", u: "s" }), S.set.master.revDecay, (v) => { S.set.master.revDecay = Math.round(v * 10) / 10; applyMaster(); changed(); }),
+      ...[["lo", "Tiefen", "Lows"], ["mid", "Mitten", "Mids"], ["hi", "Höhen", "Highs"]].map(([k, de, en]) => knob(K("m" + k, de, en, -12, 12, 0, { u: "dB", tip: ["Klang der Summe — wirkt auf alles, auch auf die Aufnahme", "Tone of the master — works on everything, the recording too"] }),
+        S.set.master[k] || 0, (v) => { S.set.master[k] = Math.round(v * 2) / 2; applyMaster(); changed(); }, { lk: "master:" + k })),
       knob(K("mvol", "Summe", "Master", -24, 6, 0, { u: "dB" }), S.set.master.vol, (v) => { S.set.master.vol = v; applyMaster(); changed(); }),
       h("canvas", { id: "lpMeter", class: "lp-meter", width: 14, height: 54, "aria-hidden": "true" }), scopeCv("master:out", { cls: "big", title: T("Oszillogramm der Summe (nach dem Begrenzer)", "Oscilloscope of the master (after the limiter)") })),
     h("div", { class: "sb-tgroup lp-auto" },
@@ -1744,7 +1882,8 @@ function soundSelect(g) {
 function renderCards() {
   const el = q("#lpCards"); if (!el) return;
   el.innerHTML = "";
-  if (!S.set.gens.length) el.append(h("p", { class: "sub lp-empty", text: T("Noch kein Generator — oben einen hinzufügen, 🎲 drücken oder 🎤 einsingen.", "No generator yet — add one above, press 🎲, or sing into 🎤.") }));
+  if (!S.set.gens.length) el.append(h("p", { class: "sub lp-empty", text: T("Leer. ＋ wähle oben einen Generator (Beat, Bass, Oszillator …), stell ihn ein und spiel auf der Tastatur — ● (oder R) nimmt auf, die Maschine bringt es in den Takt und spielt es als Schleife. Oder 🎲: die Maschine wählt und stellt alles selbst ein.",
+    "Empty. ＋ pick a generator above (beat, bass, oscillator …), set it up and play on the keyboard — ● (or R) records, the machine puts it in time and loops it. Or 🎲: the machine picks and sets up everything by itself.") }));
   for (const g of S.set.gens) el.append(card(g));
   paintCards();
 }
@@ -1776,6 +1915,7 @@ function card(g) {
     if (g.extOpen || (g.ext && g.ext.on)) c.append(extRow(g));
   }
   if (g.kind === "beat" || k.ins || g.kind === "osc") c.append(mutRow(g));
+  if (TAKE_K.has(g.kind)) c.append(takeRow(g));
   // eigene Knöpfe je Art
   if (g.kind === "seed") {
     const info = h("span", { class: "sub small lp-seedinfo" });
@@ -1797,7 +1937,7 @@ function card(g) {
       h("span", { class: "sub small lp-layers" })));
   }
   // Auswahlfelder zuerst in einer Zeile, darunter die Regler
-  const sels = k.p.filter(p => p.t !== "knob"), kn = k.p.filter(p => p.t === "knob");
+  const sels = k.p.filter(p => p.t !== "knob" && !p.take), kn = k.p.filter(p => p.t === "knob");
   const gp = h("div", { class: "lp-gen" });
   if (sels.length) { const r = h("div", { class: "lp-sels" }); for (const p of sels) { const el = control(g, p, false); if (/^z[abcd]$/.test(p.k)) el.classList.add("lp-zsel"); r.append(el); } gp.append(r); }
   const kr = h("div", { class: "lp-knobs" }); for (const p of kn) kr.append(control(g, p, false)); gp.append(kr);
@@ -1822,6 +1962,20 @@ function card(g) {
   if (g.openSynth) renderSynth(g, c);
   markIdle(c, (pk) => loopIdle(g, pk), EN); c.classList.toggle("zon", !!g.p.zones);
   return c;
+}
+// 3.20 ✋ Einspielen: ● nimmt auf (im Takt, ins Raster, weiterspielen = Overdub), ↶ letzte Runde, 🗑 leeren, 📌 Muster der Maschine übernehmen
+function takeRow(g) {
+  const k = KIND[g.kind], spec = (key) => k.p.find(p => p.k === key);
+  const row = h("div", { class: "lp-row lp-take" },
+    h("button", { type: "button", class: "primary btn-s lp-takebtn", "data-take": g.id, text: T("● Einspielen", "● Record"),
+      title: T("Spiel auf der Tastatur (Bildschirm, Computer, MIDI) — die Maschine rückt es ins Raster, bringt es in den Takt und spielt es als Schleife. Weiterspielen legt dazu, noch einmal ● (oder R) beendet.",
+        "Play on the keyboard (screen, computer, MIDI) — the machine snaps it to the grid, puts it in time and loops it. Keep playing to add more, ● again (or R) finishes."), onclick: () => toggleTake(g) }),
+    h("button", { type: "button", class: "ghost btn-s lp-ownundo", text: "↶", title: T("Letzte Runde zurücknehmen", "Take back the last pass"), onclick: () => undoOwn(g) }),
+    h("button", { type: "button", class: "ghost btn-s lp-ownclear", text: "🗑", title: T("Eingespieltes löschen", "Delete what you played"), onclick: () => clearOwn(g) }),
+    g.kind !== "osc" ? h("button", { type: "button", class: "ghost btn-s lp-freeze", text: T("📌 Übernehmen", "📌 Keep pattern"), title: T("Das Muster, das die Maschine gerade spielt, als dein Eingespieltes übernehmen — dann darüber weiterspielen", "Keep the pattern the machine is playing as yours — then play on top of it"), onclick: () => freezeGen(g) }) : null);
+  for (const key of ["src", "q", "bars"]) { const sp = spec(key); if (sp && sp.take) row.append(control(g, sp, false)); }
+  row.append(h("span", { class: "sub small lp-takeinfo" }));
+  return row;
 }
 // Alle Regler des gewählten Instruments (wie in "Selber machen")
 function renderSynth(g, c) {
@@ -1852,6 +2006,19 @@ function paintCard(g) {
   b.setAttribute("aria-label", (on ? T("Stoppen", "Stop") : T("Starten", "Start")) + " " + g.name);
   const arm = S.recArm && S.recArm.id === g.id;
   const rb = q(".lp-recbtn", c); if (rb) { rb.classList.toggle("armed", !!arm); rb.classList.toggle("going", !!(arm && arm.go)); }
+  if (TAKE_K.has(g.kind)) {
+    const tk = S.take && S.take.id === g.id, going = tk && S.bar >= S.take.at, own = g.p.src === "own", n = (g.own || []).length;
+    const tb = q(".lp-takebtn", c); if (tb) { tb.classList.toggle("armed", !!tk); tb.classList.toggle("going", !!going); tb.textContent = tk ? T("■ Fertig", "■ Done") : T("● Einspielen", "● Record"); }
+    const fz = q(".lp-freeze", c); if (fz) fz.hidden = own;
+    const un = q(".lp-ownundo", c); if (un) un.disabled = !(S.ownHist.get(g.id) || []).length;
+    const cl = q(".lp-ownclear", c); if (cl) cl.disabled = !n;
+    const ss = q('[data-pk="p:src"] select', c); if (ss && ss.value !== (g.p.src || "auto")) ss.value = g.p.src || "auto";
+    const i = q(".lp-takeinfo", c);
+    if (i) i.textContent = tk ? (going ? T(`● nimmt auf · Runde ${S.take.pass + 1} · ${n} Töne`, `● recording · pass ${S.take.pass + 1} · ${n} notes`) : T(`Einzählen … ab Takt ${S.take.at + 1}`, `Count-in … from bar ${S.take.at + 1}`))
+      : own ? (n ? T(`✋ ${n} Töne · ${g.p.bars} Takt${+g.p.bars > 1 ? "e" : ""}`, `✋ ${n} notes · ${g.p.bars} bar${+g.p.bars > 1 ? "s" : ""}`) : T("✋ noch leer — ● (oder R), dann spielen", "✋ empty — ● (or R), then play"))
+      : T("🤖 die Maschine spielt", "🤖 the machine plays");
+    c.classList.toggle("own", own); c.classList.toggle("taking", !!tk);
+  }
   if (g.kind === "seed") { const i = q(".lp-seedinfo", c); if (i) i.textContent = arm ? T("Einzählen …", "Count-in …") : g.seed ? T(`${g.seed.length} Noten · ${g.seedKey ? g.seedKey.bars : g.p.bars} Takte`, `${g.seed.length} notes · ${g.seedKey ? g.seedKey.bars : g.p.bars} bars`) : T("noch leer", "empty"); }
   if (g.kind === "audio") {
     const i = q(".lp-layers", c); if (i) i.textContent = arm ? (arm.go ? T("nimmt auf …", "recording …") : T("Einzählen …", "count-in …")) : g.nLayers ? T(`${g.nLayers} Schicht${g.nLayers > 1 ? "en" : ""} · ${g.loopBars} Takte`, `${g.nLayers} layer${g.nLayers > 1 ? "s" : ""} · ${g.loopBars} bars`) : T("noch leer", "empty");
@@ -1873,7 +2040,9 @@ function renderKeys() {
   const whites = octs * 7 + 1, kb = h("div", { class: "lp-kb", style: `--bw:${(58 / whites).toFixed(3)}%` });   // schwarze Taste ≈ 0,58 × weiße
   for (let n = lo; n < lo + octs * 12 + 1; n++) {
     const blk = [1, 3, 6, 8, 10].includes(n % 12);
-    const k = h("button", { type: "button", class: "lp-key" + (blk ? " blk" : ""), "data-n": n, "aria-label": ROOTS[n % 12] + (Math.floor(n / 12) - 1) });
+    const pad = g && g.kind === "beat" ? T(...PAD_SHORT[drumPad(n)]) : null;
+    const k = h("button", { type: "button", class: "lp-key" + (blk ? " blk" : ""), "data-n": n, "aria-label": ROOTS[n % 12] + (Math.floor(n / 12) - 1) + (pad ? " " + pad : ""), title: pad || undefined },
+      pad ? h("span", { class: "lp-pad", text: pad }) : null);
     let held = null;
     k.addEventListener("pointerdown", async (e) => { e.preventDefault(); try { k.setPointerCapture(e.pointerId); } catch (x) { /* kein aktiver Zeiger */ } held = await noteOn(n, S.vel); });
     const up = () => { if (held !== null) { noteOff(n, held); held = null; } };
@@ -1881,7 +2050,10 @@ function renderKeys() {
     kb.append(k);
   }
   el.append(h("div", { class: "lp-kbhead" }, h("span", { class: "sb-cap", text: T("Spielen", "Play") }),
-    h("span", { class: "sub small", text: g ? T("→ ", "→ ") + g.name + (g.kind === "seed" ? T(" (● nimmt auf)", " (● records)") : "") : T("kein spielbarer Generator", "no playable generator") }),
+    g && (TAKE_K.has(g.kind) || g.kind === "seed") ? h("button", { id: "lpKbRec", type: "button", class: "sb-tbtn rec lp-kbrec" + (S.take && S.take.id === g.id ? " on" : ""),
+      title: T(`In „${g.name}“ einspielen (R) — die Maschine bringt es in den Takt und spielt es als Schleife`, `Record into “${g.name}” (R) — the machine puts it in time and loops it`), text: "●",
+      onclick: () => (g.kind === "seed" ? recSeed(g) : toggleTake(g)) }) : null,
+    h("span", { class: "sub small", text: g ? T("→ ", "→ ") + g.name + (S.take && S.take.id === g.id ? T(" · ● nimmt auf", " · ● recording") : TAKE_K.has(g.kind) || g.kind === "seed" ? T(" · ● oder R spielt ein", " · ● or R records") : "") : T("kein spielbarer Generator", "no playable generator") }),
     h("span", { class: "sub small", text: T(`Oktave ${S.octave >= 0 ? "+" : ""}${S.octave} (Y/X)`, `Octave ${S.octave >= 0 ? "+" : ""}${S.octave} (Z/X)`) }),
     h("button", { id: "lpKbFold", type: "button", class: "ghost btn-s lp-kbfold", "aria-expanded": String(!S.kbSmall), title: T("Tastatur ein-/ausklappen (sie bleibt unten)", "Fold/unfold the keyboard (it stays at the bottom)"),
       text: S.kbSmall ? "▴" : "▾", onclick: () => { S.kbSmall = !S.kbSmall; lsSet(LS_KB, S.kbSmall); renderKeys(); } })), kb);
@@ -2087,5 +2259,5 @@ export function showLoops(on) {
   else for (const [code, x] of [...S.kbDown]) { S.kbDown.delete(code); noteOff(x.n, x.nn); }
 }
 if (tabVisible()) showLoops(true);
-window.mwsLoops = { show: showLoops, state: S, startAll, stopAll, addGen: (k, o) => addGen(k, o), takeOver, surprise, yinNotes, detectKey, autoMix, mixTarget, running: () => S.set && S.set.gens.some(genOn),
+window.mwsLoops = { show: showLoops, state: S, startAll, stopAll, addGen: (k, o, x) => addGen(k, o, x), toggleTake, undoOwn, clearOwn, freezeGen, drumPad, blankSet, ownSet: (id, own, okey) => { const g = genById(id); g.own = own; g.p.src = "own"; if (okey !== undefined) g.p.okey = okey; post({ t: "gen", g: engineGen(g) }); changed(); paintCard(g); }, takeOver, surprise, yinNotes, detectKey, autoMix, mixTarget, running: () => S.set && S.set.gens.some(genOn),
   mutate, mutGoto, orbRoll, modDeltas, effFx, flowSave, flowWindow, smf, globTargets, extRow, removeGen, restoreGen, fitNew };

@@ -5,13 +5,14 @@
 .lp-transport .sb-tbtn.on{color:#0a0b12;background:var(--neon);border-color:var(--neon)}
 .lp-transport .sb-tbtn.rec{color:var(--pink)}
 .lp-transport .sb-tbtn.rec.on{color:#fff;background:var(--pink);border-color:var(--pink);animation:lpPulse 1s infinite}
-.lp-rectime{font-variant-numeric:tabular-nums;font-size:12px;color:var(--pink);min-width:0}
-.lp-bar{font-variant-numeric:tabular-nums;font-size:12px;color:var(--sub);min-width:88px}
+.lp-rectime{font-variant-numeric:tabular-nums;font-size:12px;color:var(--pink);flex:0 0 38px;width:38px;white-space:nowrap}
+.lp-bar{font-variant-numeric:tabular-nums;font-size:12px;color:var(--sub);flex:0 0 96px;width:96px;white-space:nowrap;overflow:hidden}
 .lbl-in{gap:5px}
 .lp-ki .lbl-in{display:inline-flex;align-items:center}
 .lp-master .sb-knob,.lp-auto .sb-knob{width:56px}
 .lp-meter{border-radius:3px;background:#0b0d16;border:1px solid var(--line)}
-.lp-autolog{max-width:280px;line-height:1.25}
+/* 3.20: feste Größe (zwei Zeilen) — vorher wuchs das Feld mit jeder Meldung, die ganze Leiste und alles darunter sprang */
+.lp-autolog{flex:0 0 280px;width:280px;height:2.5em;line-height:1.25;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .lp-addbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .lp-addbar .spacer{flex:1}
 .lp-add{white-space:nowrap}
@@ -54,6 +55,19 @@
 .lp-synth{border-top:1px dashed var(--line);padding-top:4px}
 .lp-recbtn.armed{animation:lpPulse .5s infinite alternate}
 .lp-recbtn.going{background:var(--pink)}
+/* 3.20 ✋ Selbst einspielen */
+.lp-take{flex-wrap:wrap;gap:6px;align-items:center;padding:6px 8px;border:1px dashed var(--line);border-radius:10px}
+.lp-card.own .lp-take{border-style:solid;border-color:color-mix(in srgb,var(--gc) 55%,var(--line))}
+.lp-takebtn.armed{animation:lpPulse .5s infinite alternate}
+.lp-takebtn.going{background:var(--pink);animation:none}
+.lp-card.taking{box-shadow:0 0 0 2px var(--pink)}
+.lp-take .sb-sel{min-width:0}
+.lp-takeinfo{flex:1 1 140px;min-width:0}
+.lp-kbrec{padding:2px 10px}
+.lp-kbrec.on{background:var(--pink);color:#fff}
+.lp-key{position:relative;overflow:hidden}
+.lp-pad{position:absolute;left:0;right:0;bottom:3px;font-size:9px;line-height:1;text-align:center;color:#3a4160;pointer-events:none;white-space:nowrap;overflow:hidden}
+.lp-key.blk .lp-pad{color:#c9cfe8;bottom:2px;font-size:8px}
 .lp-mon{font-size:12px;color:var(--sub);display:inline-flex;align-items:center;gap:3px}
 .lp-mon input{width:auto}
 .lp-micmeter{border-radius:3px;background:#0b0d16;border:1px solid var(--line)}
@@ -121,10 +135,12 @@
 @media (max-width:640px){
   .lp-cards{grid-template-columns:1fr}
   .lp-transport{position:static}
-  .lp-autolog{max-width:100%}
+  .lp-autolog{flex:1 1 100%;width:auto;max-width:100%}
   #lpTitle{width:100%!important}
   .lp-kb{height:62px}
   .lp-scope.big{width:84px;height:36px}
   .lp-orbbox{flex-wrap:wrap}
   .lp-ext select{max-width:100%}
 }
+/* 3.20: Meldungszeile hält ihre Höhe (zwei Zeilen) — eine kommende/gehende Meldung schob sonst alles darunter */
+#lpMsg{min-height:2.7em}

@@ -3,6 +3,41 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.20.0 — 2026-10-20 (bridge 3.17.0)
+
+### Added
+- **✋ Record into any generator.** Beat, bass, chords, arpeggio, melody and the oscillator can now play what you
+  played instead of making up their own pattern. Press ● on the card, ● on the keyboard bar or **R**, then play on the
+  on-screen keys, the computer keyboard or a MIDI keyboard. With nothing playing there is a one-bar count-in (with a
+  click while nothing else keeps time); otherwise recording starts at the generator's next loop start. Each pass is
+  snapped to the grid (1/4 to 1/32, triplets, or free) and loops from the next pass on; keep playing to add more
+  (overdub — the same note on the same step replaces instead of doubling), press ● again to finish. Timing counts as you
+  heard it: the audio output latency is subtracted.
+- On every such card: **Plays: 🤖 machine / ✋ what you played**, ↶ take back the last pass, 🗑 clear, 📌 keep the
+  machine's current pattern as yours (then play on top of it). Changing the loop length repeats or trims what you played;
+  changing the key transposes it; the octave knob works. Knobs that only shape the machine's pattern are dimmed.
+- **Drums on a piano keyboard:** low notes follow General MIDI (pad controllers work as expected), above that every
+  octave has the same layout — C kick, C♯ rim, D snare, D♯ clap, F♯ closed hat, A♯ open hat, toms on F/G/A … The keys
+  are labelled while a beat is selected.
+- **The oscillator is playable** (monophonic, last note wins): in drone mode a held key sets the pitch, in *what you
+  played* mode it only sounds where notes are.
+- **Master tone:** lows (110 Hz shelf), mids (1 kHz bell) and highs (7 kHz shelf), ±12 dB each — in the loop machine
+  (recordings included) and in *Make your own* (the generated track included).
+
+### Changed
+- **+ New starts an empty set.** A generator added to an empty set — or to a set where everything is played in — waits
+  for your playing instead of making up a pattern.
+- **🎲 Surprise me builds around what you played:** recorded parts stay, your tempo stays, and the key and chord
+  progression are read from your notes (new progression entry *✋ from your playing*).
+- **🎲 starts the whole new set together, right away.** Before, only the first generator came in at once; the others
+  — locked ones included — waited for the next bar, almost 3 s at slow tempos.
+
+### Fixed
+- **The layout no longer jumps while playing.** The autopilot's message changed its size with every text, which made
+  the transport bar wrap (measured at 1512 px in Safari: the bar grew by 36 px and pushed everything below down). The
+  message now has a fixed two-line box, the bar counter a fixed width, toggles no longer turn bold (3 px wider) when
+  switched on, and the status line keeps its height.
+
 ## 3.19.0 — 2026-10-20 (bridge 3.17.0)
 
 ### Added
