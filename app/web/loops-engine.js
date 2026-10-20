@@ -115,7 +115,10 @@ class Post {
 // 3.19: Muster-Generatoren setzen phrasengenau ein — ihre Schleife beginnt auf einem Vielfachen ihrer Länge (Takt 0, 4, 8 …),
 // wie die der anderen; vorher lief ein später gestarteter 4-Takt-Generator gegen die übrigen verschoben
 const PHRASE = new Set(["beat", "bass", "chords", "arp", "melody"]);
-const phraseStart = (g, B) => PHRASE.has(g.kind) ? B - mod(B, g.bars()) : B;
+const phraseStart = (g, B) => PHRASE.has(g.kind) ? B - mod(B - g.eng.zero, g.bars()) : B;
+const TAKE = new Set(["beat", "bass", "chords", "arp", "melody", "osc"]);
+const QG = { off: 0, "1/32": 0.5, "1/16": 1, "1/16T": 2 / 3, "1/8": 2, "1/8T": 4 / 3, "1/4": 4 };
+const r3 = (x) => Math.round(x * 1000) / 1000;
 class Gen {
   constructor(eng, g) {
     this.eng = eng; this.id = g.id; this.kind = g.kind; this.slot = g.slot;
@@ -126,16 +129,18 @@ class Gen {
     this.seed = Array.isArray(g.seed) ? g.seed : null; this.seedKey = g.seedKey || null;
     this.layers = []; this.mute = false;
     this.post = null; this.ext = false; this.local = true;   // 3.18: Nachbearbeitung, MIDI-Ausgang (ext), interner Klang dabei (local)
+    this.own = Array.isArray(g.own) ? g.own : []; this.liveAt = new Map();   // 3.20: Eingespieltes (Schritte ab Schleifenanfang), letzte Live-Anschläge
   }
   bars() { return clamp(Math.round(num(this.p.bars, 2)), 1, 8); }
   // Noten für den globalen Takt B — einmal je Takt aufgelöst (Tonart/Akkord gelten ab dem nächsten Takt)
   notesFor(B) {
+    if (this.p.src === "own") return this.ownFor(B);
     if (this.cache && this.cache.B === B) return this.cache.n;
     const L = this.bars(), inLoop = mod(B - this.startBar, L);
     if (inLoop === 0 || !this.pat || this.pat.length !== L) {
       if (this.dirty || !this.pat || this.pat.length !== L) { this.pat = this.make(L); this.dirty = false; this.loops = 0; }
-      else if (this.loops > 0) this.vary();
-      this.loops++;
+      else if (this.loops > 0 && !this._noVary) this.vary();
+      if (!this._noVary) this.loops++;
     }
     const raw = this.pat[inLoop] || [];
     let n = [];
@@ -166,6 +171,20 @@ class Gen {
     });
     return out;
   }
+  // 3.20: das Eingespielte — genau so, wie es gespielt (und ins Raster gerückt) wurde; Tonhöhen ziehen bei einem Tonartwechsel mit
+  ownFor(B) {
+    if (this.cache && this.cache.B === B) return this.cache.n;
+    const L = this.bars(), inLoop = mod(B - this.startBar, L), beat = this.kind === "beat";
+    const sh = beat ? 0 : this.ownShift() + 12 * Math.round(num(this.p.oct, 0)), n = [];
+    for (const e of this.own) {
+      const b = Math.floor(e.s / SPB + 1e-9); if (b !== inLoop) continue;
+      const m = e.n + sh; if (m >= 0 && m <= 127) n.push({ s: e.s - b * SPB, l: e.l, v: e.v, n: m });
+    }
+    this.cache = { B, n, lived: true };
+    return n;
+  }
+  // Grundton beim Einspielen (okey) → jetziger Grundton: kürzester Weg (−5 … +6 Halbtöne)
+  ownShift() { return this.p.okey == null ? 0 : mod(this.eng.harm.root - this.p.okey + 5, 12) - 5; }
   make() { return []; }
   vary() {}
   resolve(e) { return e.n; }
@@ -439,8 +458,11 @@ class OscGen extends Gen {
     this.ph = new Float64Array(7); for (let i = 0; i < 7; i++) this.ph[i] = R();
     this.sph = 0; this.mph = 0; this.lph = 0; this.lsh = 0; this.f = num(this.p.freq, 110); this.amp = 0; this.gEnv = 0; this.gNext = 0; this.gOff = 0;
     this.pink = new Float64Array(7); this.brown = 0; this.drift = 0; this.driftT = 0; this.tri = 0; this.dc = 0; this.lvl = 0;
+    this.held = []; this.kEnv = 0;                    // 3.20: gespielte Töne (Tastatur oder Eingespieltes), Hüllkurve dazu
   }
-  notesFor() { return []; }
+  notesFor(B) { return this.p.src === "own" ? this.ownFor(B) : []; }
+  // 3.20: einstimmig — der zuletzt gedrückte Ton klingt, beim Loslassen der davor (wie ein Monosynth)
+  key(on, n) { const i = this.held.indexOf(n); if (i >= 0) this.held.splice(i, 1); if (on) this.held.push(n); }
   target() {
     let f = num(this.p.freq, 110);
     const snap = this.p.snap || "off";
@@ -460,9 +482,12 @@ class OscGen extends Gen {
   render(L, R2, a, b) {
     const p = this.p, sr = this.eng.sr, wave = p.wave || "saw";
     const glide = num(p.glide, 0.05), gc = glide > 0 ? Math.exp(-1 / (glide * sr)) : 0;
-    const tgt = this.target();
     const uni = wave === "supersaw" ? 7 : clamp(Math.round(num(p.uni, 1)), 1, 7), det = num(p.det, 0.15), sub = num(p.sub, 0), pwB = num(p.pw, 0.5);
-    const fmR = num(p.fmr, 2), fmA = num(p.fma, 0), lvlT = this.on && !this.mute ? num(p.level, 0.7) : 0;
+    // der Dauerton spielt beim Drücken den Ton und kehrt beim Loslassen zurück; ungestartet klingt er nur beim Spielen
+    const kn = this.held.length ? this.held[this.held.length - 1] : null, own = p.src === "own", playing = this.on && !this.mute;
+    const keyed = own || (kn != null && !playing);
+    const tgt = kn != null ? 440 * Math.pow(2, (kn - 69) / 12 + num(p.fine, 0) / 1200) : this.target();
+    const fmR = num(p.fmr, 2), fmA = num(p.fma, 0), lvlT = (playing || (kn != null && !this.mute)) ? num(p.level, 0.7) : 0;
     const lr = OSC_SYNC[p.lsync] ? (this.eng.bpm / 60) / OSC_SYNC[p.lsync] : num(p.lrate, 0.5), ldest = p.ldest || "off", lamt = num(p.lamt, 0), lsh = p.lshape || "sine";
     const drift = num(p.drift, 0), gate = GATE[p.gate] ? GATE[p.gate] * this.eng.sps : 0, gl = num(p.gatelen, 0.5);
     const norm = 0.22 / Math.pow(uni, 0.55);
@@ -529,6 +554,7 @@ class OscGen extends Gen {
         const want = pos < this.gOff && this.gOpen !== false ? 1 : 0;
         this.gEnv += (want - this.gEnv) * (want ? 0.02 : 0.004); gEnv = this.gEnv;
       }
+      if (keyed) { const want = kn != null ? 1 : 0; this.kEnv += (want - this.kEnv) * (want ? 0.004 : 0.0012); gEnv *= this.kEnv; }
       let amp = this.lvl * gEnv * (ldest === "amp" ? 1 - lamt * (0.5 - 0.5 * lv) : 1);
       // Gleichanteil weg (Braun-Rauschen, Sub)
       const y = s * amp; this.dc += (y - this.dc) * 0.0005; const o = tanh((y - this.dc) * 1.2) * 0.85;
@@ -627,6 +653,7 @@ class Loops extends AudioWorkletProcessor {
     this.bufL = []; this.bufR = []; for (let i = 0; i < MAX_GEN; i++) { this.bufL.push(new Float32Array(128)); this.bufR.push(new Float32Array(128)); }
     this.rec = null; this.seedRec = null; this.liveHeld = new Map();
     this.nev = []; this.cap = false;                 // 3.18: Noten nach außen (MIDI-Ausgang, Flow Capture)
+    this.zero = 0; this.take = null;                 // 3.20: Phrasenanfang, laufendes Einspielen
     this.port.onmessage = (e) => this.msg(e.data);
   }
   gen(id) { return this.gens.find(g => g.id === id); }
@@ -641,7 +668,8 @@ class Loops extends AudioWorkletProcessor {
         const old = this.gen(d.g.id);
         const C = KINDS[d.g.kind]; if (!C) break;
         if (old && old.kind === d.g.kind) {           // gleicher Generator: Einstellungen übernehmen, weiterlaufen
-          old.p = Object.assign({}, d.g.p || {}); old.slot = d.g.slot; old.dirty = !!d.regen || old.dirty;
+          old.p = Object.assign({}, d.g.p || {}); old.slot = d.g.slot; old.dirty = !!d.regen || old.dirty; old.cache = null;
+          if (Array.isArray(d.g.own)) old.own = d.g.own;
           if (d.g.patch && old.ins) { if (old.ins.p.engine !== d.g.patch.engine) { old.ins.panic(); old.ins = makeInstrument(this, d.g.patch); } else old.ins.setPatch(d.g.patch); }
           break;
         }
@@ -651,6 +679,13 @@ class Loops extends AudioWorkletProcessor {
         break;
       }
       case "seed": { const g = this.gen(d.id); if (g && g.setSeed) { g.setSeed(d.notes, d.key); g.cache = null; } break; }
+      // 3.20: Eingespieltes setzen (Rückgängig, Leeren, Länge geändert)
+      case "own": { const g = this.gen(d.id); if (!g) break; g.own = Array.isArray(d.own) ? d.own : []; if (d.okey !== undefined) g.p.okey = d.okey; g.cache = null; break; }
+      case "take": { const g = this.gen(d.id); if (!g) break;
+        if (!d.on) { if (this.take && this.take.id === g.id) this.takeEnd(); break; }
+        if (TAKE.has(g.kind)) this.takeBegin(g, d);
+        break; }
+      case "freeze": { const g = this.gen(d.id); if (g && TAKE.has(g.kind) && g.p.src !== "own") this.freeze(g); break; }
       case "gp": { const g = this.gen(d.id); if (!g) break; g.p[d.k] = d.v; if (d.regen) g.dirty = true; g.cache = null; break; }
       case "patch": { const g = this.gen(d.id); if (!g || !g.ins) break; if (g.ins.p.engine !== d.patch.engine) { g.ins.panic(); g.ins = makeInstrument(this, d.patch); } else g.ins.setPatch(d.patch); break; }
       case "param": { const g = this.gen(d.id); if (g && g.ins) g.ins.set(d.k, d.v); break; }
@@ -670,24 +705,28 @@ class Loops extends AudioWorkletProcessor {
         if (d.now || !this.playingAny()) { g.startAt = null; g.on = true; g.startBar = phraseStart(g, this.barNow()); g.dirty = g.dirty || !g.pat; g.cache = null; }
         else g.startAt = this.barNow() + 1;
         this.state(g); break; }
-      case "stop": { const g = this.gen(d.id); if (!g) break; g.startAt = null; if (d.now) { this.halt(g); } else g.stopAt = this.barNow() + 1; this.state(g); if (d.now) this.idleEnd(); break; }
+      case "stop": { const g = this.gen(d.id); if (!g) break; g.startAt = null; if (this.take && this.take.id === g.id && !g.on) this.takeEnd(); if (d.now) { this.halt(g); } else g.stopAt = this.barNow() + 1; this.state(g); if (d.now) this.idleEnd(); break; }
       case "mute": { const g = this.gen(d.id); if (g) g.mute = !!d.on; break; }
       case "run": if (d.on) this.begin(); else this.end(); break;
       case "metro": this.metro = !!d.on; break;
-      case "note": { const g = this.gen(d.id); if (!g || !g.ins) break;
+      case "note": { const g = this.gen(d.id); if (!g) break;
+        if (d.on) g.liveAt.set(d.n, this.pos);
+        this.takeNote(g, d.n, d.v, !!d.on);
+        if (g.kind === "osc") { g.key(!!d.on, d.n); break; }
+        if (!g.ins) break;
         if (g.ext || this.cap) this.nev.push([g.id, d.on ? 1 : 0, d.n, d.on ? clamp(num(d.v, 0.8), 0.02, 1) : 0, currentTime]);
         if (d.on) { if (g.local) g.ins.input(true, d.n, clamp(num(d.v, 0.8), 0.02, 1), -1 - d.n); this.seedNote(g, d.n, d.v, true); }
         else { if (g.local) g.ins.input(false, d.n, 0, -1 - d.n); this.seedNote(g, d.n, 0, false); }
         break; }
       case "seedrec": { const g = this.gen(d.id); if (!g || g.kind !== "seed") break;
         if (!d.on) { this.seedRec = null; break; }
-        const fresh = !this.run; if (fresh) this.begin();
+        const fresh = !this.run; if (fresh) { this.begin(); this.zero = 1; }
         const bars = clamp(Math.round(num(d.bars, 2)), 1, 8), at = fresh ? 1 : this.barNow() + 2;   // ein ganzer Takt Einzählen
         this.seedRec = { id: g.id, bars, from: at * SPB, to: (at + bars) * SPB, notes: [], open: new Map(), bar0: at };
         this.halt(g); this.port.postMessage({ t: "seedarm", id: g.id, at }); break; }
       case "audiorec": { const g = this.gen(d.id); if (!g || g.kind !== "audio") break;
         if (!d.on) { this.rec = null; break; }
-        const fresh = !this.run; if (fresh) this.begin();
+        const fresh = !this.run; if (fresh) { this.begin(); this.zero = 1; }
         let bars = clamp(Math.round(num(d.bars, 2)), 1, 8);
         if (d.overdub && g.layers.length) bars = g.layers[0].bars;
         // ein ganzer Takt Einzählen; Overdub setzt am Schleifenanfang ein (sonst läge die neue Schicht verschoben)
@@ -703,16 +742,18 @@ class Loops extends AudioWorkletProcessor {
   }
   playingAny() { return this.gens.some(g => g.on); }
   // 3.19: der letzte Generator ist gestoppt → Takt anhalten (lief vorher leer weiter; der Autopilot holte dann wieder jemanden herein)
-  idleEnd() { if (this.run && !this.gens.some(g => g.on || g.startAt != null) && !this.rec && !this.seedRec) this.end(); }
+  idleEnd() { if (this.run && !this.gens.some(g => g.on || g.startAt != null) && !this.rec && !this.seedRec && !this.take) this.end(); }
   barNow() { return Math.floor(this.pos / SPB + 1e-9); }
-  begin() { if (this.run) return; this.run = true; this.pos = 0; this.lastBar = -1; this.lastStep = -1; this.port.postMessage({ t: "run", on: true }); }
+  begin() { if (this.run) return; this.run = true; this.pos = 0; this.zero = 0; this.lastBar = -1; this.lastStep = -1; this.port.postMessage({ t: "run", on: true }); }
   end() {
+    if (this.take) this.takeEnd();
     this.run = false; for (const g of this.gens) this.halt(g);
     this.rec = null; this.seedRec = null; this.port.postMessage({ t: "run", on: false });
   }
   halt(g) {
+    if (this.take && this.take.id === g.id) this.takeEnd();
     g.on = false; g.stopAt = null; g.cache = null;
-    for (const o of this.offs) if (o.g === g) { if (g.ins) g.ins.input(false, o.n, 0, o.id); if (g.ext || this.cap) this.nev.push([g.id, 0, o.n, 0, currentTime]); }
+    for (const o of this.offs) if (o.g === g) { if (g.ins) g.ins.input(false, o.n, 0, o.id); else if (g.key) g.key(false, o.n); if (g.ext || this.cap) this.nev.push([g.id, 0, o.n, 0, currentTime]); }
     this.offs = this.offs.filter(o => o.g !== g);
     if (g.ins && g.ins.allOff) g.ins.allOff();
   }
@@ -737,15 +778,78 @@ class Loops extends AudioWorkletProcessor {
     if (g && notes.length) { g.setSeed(notes, key); g.on = true; g.startBar = sr.bar0 + sr.bars; g.startAt = null; g.cache = null; g.loops = 0; this.state(g); }
     this.port.postMessage({ t: "seed", id: sr.id, notes, key });
   }
+  // ---------- 3.20 ✋ Selbst einspielen ----------
+  // Läuft nichts: ein Takt Einzählen, dann ab Takt 1. Läuft die Musik: ab dem nächsten Schleifenanfang des Generators (höchstens
+  // 4 Takte warten). Jede Runde wird ins Raster gerückt und ab der nächsten mitgespielt — weiterspielen legt neue Töne dazu
+  // (Overdub), bis ● noch einmal gedrückt wird. Der Zeitpunkt zählt so, wie man ihn gehört hat (Ausgabeverzögerung abgezogen).
+  takeBegin(g, d) {
+    if (this.take) this.takeEnd();
+    const L = clamp(Math.round(num(d.bars, g.bars())), 1, 8), over = g.p.src === "own" && g.own.length > 0, prevSrc = g.p.src || "auto";
+    g.p.bars = L; g.p.src = "own"; g.cache = null;
+    if (!over) { g.own = []; g.p.okey = g.kind === "beat" ? null : this.harm.root; }
+    else if (g.p.okey == null && g.kind !== "beat") g.p.okey = this.harm.root;
+    const fresh = !this.run; let at;
+    if (fresh) { this.begin(); this.zero = 1; at = 1; }
+    else { at = this.barNow() + 1; const st = Math.min(L, 4), ref = g.on ? g.startBar : this.zero; while (mod(at - ref, st) !== 0) at++; }
+    g.stopAt = null; if (!g.on) g.startAt = at;
+    this.take = { id: g.id, at, lat: clamp(num(d.lat, 0), 0, 0.5), notes: [], open: new Map(), pass: 0, over, prevSrc, click: false };
+    this.state(g);
+    this.port.postMessage({ t: "takearm", id: g.id, at, over, bars: L, okey: g.p.okey, fresh });
+  }
+  takeNote(g, n, v, on) {
+    const tk = this.take; if (!tk || tk.id !== g.id) return;
+    const p = this.pos - tk.lat * this.sr / this.sps;
+    if (on) { if (p >= tk.at * SPB - 0.5) tk.open.set(n, { p, v: clamp(num(v, 0.8), 0.05, 1) }); return; }
+    const o = tk.open.get(n); if (!o) return; tk.open.delete(n); tk.notes.push({ p: o.p, l: p - o.p, n, v: o.v });
+  }
+  takeMerge(final) {
+    const tk = this.take, g = tk && this.gen(tk.id); if (!g) return;
+    if (final) { const now = this.pos - tk.lat * this.sr / this.sps; for (const [n, o] of tk.open) tk.notes.push({ p: o.p, l: Math.max(0.25, now - o.p), n, v: o.v }); tk.open.clear(); }
+    const L = g.bars(), total = L * SPB, q = QG[g.p.q] ?? 1, beat = g.kind === "beat";
+    const sh = beat ? 0 : g.ownShift() + 12 * Math.round(num(g.p.oct, 0));
+    let added = 0;
+    for (const x of tk.notes) {
+      const rel = mod(x.p - g.startBar * SPB, total);
+      let s = q ? Math.round(rel / q) * q : rel; if (s >= total - 1e-6) s -= total;
+      const l = beat ? 1 : Math.min(total, q ? Math.max(q, Math.round(x.l / q) * q) : Math.max(0.25, x.l)), nn = beat ? x.n : x.n - sh;
+      // derselbe Ton an derselben Stelle (Overdub über das schon Eingespielte): ersetzen statt verdoppeln
+      const same = g.own.find(e => e.n === nn && Math.abs(e.s - s) < (q ? q / 2 : 0.25));
+      if (same) { same.v = Math.round(x.v * 100) / 100; if (!beat) same.l = r3(l); }
+      else { g.own.push({ s: r3(s), l: r3(l), n: nn, v: Math.round(x.v * 100) / 100 }); added++; }
+    }
+    tk.notes = []; g.own.sort((a, b) => a.s - b.s || a.n - b.n); g.cache = null;
+    if (!final) tk.pass++;
+    this.port.postMessage({ t: "own", id: g.id, own: g.own.map(e => ({ ...e })), pass: tk.pass, added, okey: g.p.okey, src: g.p.src, final: !!final });
+  }
+  takeEnd() {
+    const tk = this.take; if (!tk) return;
+    this.takeMerge(true); this.take = null;
+    const g = this.gen(tk.id);
+    if (g && !tk.over && !g.own.length) { g.p.src = tk.prevSrc; g.cache = null; }   // nichts gespielt: wie vorher
+    this.port.postMessage({ t: "takeend", id: tk.id, src: g ? g.p.src : null, n: g ? g.own.length : 0 });
+  }
+  // 📌 Das Muster, das die Maschine gerade spielt, als Eingespieltes übernehmen — dann lässt sich darüber weiterspielen
+  freeze(g) {
+    const L = g.bars(), Bn = this.barNow(), B0 = g.on ? Bn - mod(Bn - g.startBar, L) : Bn, out = [], beat = g.kind === "beat";
+    const o12 = beat ? 0 : 12 * Math.round(num(g.p.oct, 0));
+    g._noVary = true;
+    try { for (let b = 0; b < L; b++) { g.cache = null; for (const e of g.notesFor(B0 + b)) out.push({ s: r3(b * SPB + e.s), l: r3(beat ? 1 : e.l), n: e.n - o12, v: Math.round(num(e.v, 0.8) * 100) / 100 }); } }
+    finally { g._noVary = false; }
+    if (!g.on) g.startBar = B0;
+    g.own = out.sort((a, b) => a.s - b.s || a.n - b.n); g.p.src = "own"; g.p.okey = beat ? null : this.harm.root; g.cache = null;
+    this.port.postMessage({ t: "own", id: g.id, own: g.own.map(e => ({ ...e })), pass: 0, added: out.length, okey: g.p.okey, src: "own", final: true, frozen: true });
+  }
   // Ereignisse eines Abschnitts [p0, p1) des aktuellen Takts B
   gather(B, p0, p1, frame0, ev) {
     for (let gi = 0; gi < this.gens.length; gi++) {
       const g = this.gens[gi];
-      if (!g.on || g.mute || !g.ins) continue;
-      const list = g.notesFor(B);
+      if (!g.on || g.mute || (!g.ins && g.kind !== "osc")) continue;
+      const list = g.notesFor(B), own = g.p.src === "own";
       for (const nt of list) {
         const at = nt.s + (g.kind === "beat" || g.kind === "bass" ? this.swingOff(nt.s) : 0);
         if (at >= p0 && at < p1) {
+          // 3.20: eben live denselben Ton angeschlagen (kurz vor dieser Stelle) → nicht doppelt
+          if (own) { const la = g.liveAt.get(nt.n), ab = B * SPB + at; if (la != null && la <= ab + 0.05 && la > ab - 1) continue; }
           const f = frame0 + Math.floor((at - p0) * this.sps), id = this.nid++;
           ev.push({ f, g, n: nt.n, v: num(nt.v, 0.8), on: true, id });
           if (g.kind !== "beat") this.offs.push({ at: this.clock + f + Math.max(16, Math.round(num(nt.l, 1) * this.sps) - 8), g, n: nt.n, id });
@@ -761,6 +865,13 @@ class Loops extends AudioWorkletProcessor {
       if (g.stopAt != null && B >= g.stopAt) { this.halt(g); this.state(g); stopped = true; }
     }
     if (stopped) this.idleEnd();
+    const tk = this.take;
+    if (tk) {
+      const g = this.gen(tk.id);
+      if (g && g.on && B > tk.at && mod(B - g.startBar, g.bars()) === 0) this.takeMerge(false);
+      // Einzählen und Klick beim Einspielen, solange sonst nichts den Takt vorgibt (noch nichts eingespielt, kein anderer spielt)
+      tk.click = !!g && !g.own.length && !this.gens.some(x => x !== g && x.on && !x.mute);
+    }
     const sr = this.seedRec; if (sr && B === sr.bar0 + sr.bars) this.finishSeed();
     const rc = this.rec;
     if (rc && rc.startClock == null && B === rc.at) {
@@ -784,7 +895,8 @@ class Loops extends AudioWorkletProcessor {
         const p1 = local + chunk / this.sps;
         this.gather(B, local, Math.min(p1, SPB), frame, ev);
         // Metronom (an) oder Einzählen vor einer Aufnahme
-        const counting = (this.rec && this.rec.startClock == null && B === this.rec.at - 1) || (this.seedRec && B === this.seedRec.bar0 - 1);
+        const tk = this.take;
+        const counting = (this.rec && this.rec.startClock == null && B === this.rec.at - 1) || (this.seedRec && B === this.seedRec.bar0 - 1) || (tk && tk.click && B >= tk.at - 1);
         if (this.metro || counting) {
           let k = Math.ceil(local / 4 - 1e-9) * 4;
           for (; k < p1 && k < SPB; k += 4) this.click.push({ f: k === 0 ? 1760 : 1320, t: 0, n: Math.floor(this.sr * 0.05), d: frame + Math.floor((k - local) * this.sps) });
@@ -819,7 +931,7 @@ class Loops extends AudioWorkletProcessor {
     };
     for (const e of ev) {
       runTo(Math.min(N, e.f));
-      const ins = e.g.ins; if (!ins) continue;
+      const ins = e.g.ins; if (!ins) { if (e.g.key && !e.arp) e.g.key(e.on, e.n); continue; }
       if (!e.arp && (e.g.ext || this.cap)) this.nev.push([e.g.id, e.on ? 1 : 0, e.n, e.on ? e.v : 0, currentTime + e.f / this.sr]);
       if (!e.arp && !e.g.local) continue;            // MIDI-Ausgang ohne eigenen Klang: das externe Gerät spielt
       this.evAt = this.clock + e.f;                  // genauer Zeitpunkt (für den Prüfstand)

@@ -35,7 +35,8 @@
 @keyframes sbPulse{50%{box-shadow:0 0 0 6px rgba(255,77,148,.25)}}
 .sb-bpm{width:64px;text-align:center;font-variant-numeric:tabular-nums;font-weight:700}
 .sb-tog{font-size:12px;padding:6px 10px;border-radius:8px;background:transparent;color:var(--sub)}
-.sb-tog.on{color:#0a0b12;background:var(--neon);border-color:var(--neon);font-weight:600}
+/* 3.20: kein Fettdruck beim Einschalten — der machte den Knopf 3 px breiter, alles daneben rückte */
+.sb-tog.on{color:#0a0b12;background:var(--neon);border-color:var(--neon);text-shadow:0 0 .6px currentColor}
 .sb-pats{gap:4px}
 .sb-pat{width:28px;height:28px;padding:0;font-weight:700;font-size:13px;border-radius:7px}
 .sb-pat.empty{opacity:.45;border-style:dashed}
