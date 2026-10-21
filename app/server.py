@@ -62,10 +62,13 @@ import math
 import os
 import re
 import secrets
+import socket
 import socketserver
+import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 import uuid
 
 PORT = int(os.environ.get("PORT", "8080"))
@@ -73,7 +76,7 @@ HOST = os.environ.get("HOST", "0.0.0.0")      # 3.11: lokale Installation → 12
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, "web")
 
-APP_VERSION = "3.22.1"
+APP_VERSION = "3.23.0"
 BRIDGE_FILE = next((p for p in (os.path.join(ROOT, "bridge", n) for n in ("neonforge_bridge.py", "manuwave_bridge.py"))
                     if os.path.isfile(p)), os.path.join(ROOT, "bridge", "manuwave_bridge.py"))
 BUILD_INFO_FILE = os.path.join(WEB, "build-info.json")
@@ -508,6 +511,11 @@ class Broker:
                         j[k] = None
                         j["expired"] = True
 
+    def busy(self) -> bool:
+        """3.23: läuft oder wartet irgendein Auftrag? Dann kein Update — die Warteschlange liegt nur im Speicher."""
+        with self.cv:
+            return any(j["status"] in ("queued", "running") for j in self.jobs.values())
+
     def bytes_held(self, ns: str = None) -> int:
         return sum(len(j.get("audio") or b"") + len(j.get("cover") or b"") + len(j.get("upload") or b"")
                    for j in self.jobs.values() if ns is None or j["ns"] == ns)
@@ -730,6 +738,274 @@ class Broker:
 BROKER = Broker()
 
 
+# ---- 3.23: Ein-Klick-Update (nur lokale Installation) ----------------------
+# Die lokale Installation (Starter setzt MWS_HOME, daneben bridge.json, die App liegt in MWS_HOME/app) fragt — nur wenn
+# der Browser es will — GitHub nach dem neuesten Release. Ein Klick lädt das Release-ZIP, prüft es (übersetzt, Probestart
+# auf einem freien Port meldet die neue Version), sichert die alte App nach app.prev, tauscht die Dateien und startet
+# den Server neu (POSIX: execv, dieselbe Prozessnummer — der Starter merkt nichts; Windows: Ende mit 75, der Starter
+# startet neu). Die Brücke merkt ihren geänderten Code selbst und startet neu, sobald sie nichts zu tun hat.
+# Braucht eine Fassung neue Bausteine (INSTALL_REV höher als der installierte Stand), geht es nur über den Installer.
+UPDATE_REPO = "robeertm/manuwave-studio"
+UPDATE_API = (os.environ.get("MWS_UPDATE_API") or "https://api.github.com").rstrip("/")             # Prüfstand: nachgestellt
+UPDATE_RAW = (os.environ.get("MWS_UPDATE_RAW") or "https://raw.githubusercontent.com").rstrip("/")
+UPDATE_HOSTS = {"api.github.com", "codeload.github.com", "github.com", "raw.githubusercontent.com",
+                urllib.parse.urlparse(UPDATE_API).hostname, urllib.parse.urlparse(UPDATE_RAW).hostname}
+INSTALL_REV = 1                 # Installer-Stand, den diese Fassung braucht (der Installer schreibt MWS_HOME/install_rev)
+UPDATE_CACHE_S = 6 * 3600       # GitHub höchstens alle 6 Stunden fragen
+UPDATE_MAX_BYTES = 300 * 1024 * 1024
+TAG_RE = re.compile(r"^v(\d{1,4})\.(\d{1,4})\.(\d{1,4})$")
+
+
+def _vtuple(v: str):
+    m = TAG_RE.match("v" + (v or "").lstrip("v"))
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def mws_home() -> str:
+    """Die lokale Installation, zu der DIESER Server gehört — sonst "" (Container, Entwicklung, git-Klon)."""
+    home = os.environ.get("MWS_HOME") or ""
+    if not home or not os.path.isfile(os.path.join(home, "bridge.json")):
+        return ""
+    try:
+        if os.path.realpath(os.path.join(home, "app")) != os.path.realpath(ROOT):
+            return ""
+    except OSError:
+        return ""
+    return home
+
+
+def restart_self(code: int = 75) -> None:
+    """Neu starten mit dem Code auf der Platte. POSIX: execv (dieselbe Prozessnummer, der Starter behält sie);
+    Windows: beenden mit 75 — der Starter startet dann neu."""
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    if os.name == "nt":
+        os._exit(code)
+    os.chdir(ROOT)
+    os.execv(sys.executable, [sys.executable, os.path.join(ROOT, "server.py")])
+
+
+def _fetch(url: str, limit: int, timeout: float = 20.0) -> bytes:
+    host = urllib.parse.urlparse(url).hostname or ""
+    if urllib.parse.urlparse(url).scheme not in ("https", "http") or host not in UPDATE_HOSTS:
+        raise ValueError("Adresse nicht erlaubt: %s" % host)
+    req = urllib.request.Request(url, headers={"User-Agent": "Manuwave-Studio/" + APP_VERSION,
+                                               "Accept": "application/vnd.github+json, */*"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = r.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError("Datei zu groß")
+    return data
+
+
+def _free_port() -> int:
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    p = s.getsockname()[1]
+    s.close()
+    return p
+
+
+class Updater:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.cache = None              # (zeit, angaben)
+        self.state = {"phase": "idle", "message": "", "tag": ""}
+
+    def installed_rev(self, home: str) -> int:
+        try:
+            with open(os.path.join(home, "install_rev"), encoding="utf-8") as f:
+                return int(f.read().strip() or "0")
+        except (OSError, ValueError):
+            return 0
+
+    def info(self, net: bool = True, force: bool = False) -> dict:
+        home = mws_home()
+        out = {"enabled": bool(home), "current": APP_VERSION, "state": dict(self.state)}
+        if not home:
+            return out
+        now = time.time()
+        if net and (force or not self.cache or now - self.cache[0] > UPDATE_CACHE_S):
+            try:
+                rel = json.loads(_fetch(UPDATE_API + "/repos/%s/releases/latest" % UPDATE_REPO, 2 * 1024 * 1024, 15))
+                tag = str(rel.get("tag_name") or "")
+                if not TAG_RE.match(tag):
+                    raise ValueError("unbekannte Fassung %r" % tag[:20])
+                rev = INSTALL_REV
+                try:            # braucht die neue Fassung den Installer? Steht in ihrer server.py
+                    src = _fetch("%s/%s/%s/app/server.py" % (UPDATE_RAW, UPDATE_REPO, tag), 4 * 1024 * 1024, 15).decode("utf-8", "replace")
+                    m = re.search(r"^INSTALL_REV = (\d+)", src, re.M)
+                    rev = int(m.group(1)) if m else rev
+                except Exception:  # noqa: BLE001
+                    pass
+                data = {"latest": tag[1:], "tag": tag, "notes": str(rel.get("body") or "")[:20000],
+                        "url": str(rel.get("html_url") or ""), "zip": str(rel.get("zipball_url") or ""),
+                        "published": str(rel.get("published_at") or "")[:10], "install_rev": rev, "error": ""}
+                self.cache = (now, data)
+            except Exception as e:  # noqa: BLE001
+                data = dict(self.cache[1]) if self.cache else {}
+                data["error"] = "GitHub nicht erreichbar (%s)" % type(e).__name__
+                self.cache = (now - UPDATE_CACHE_S + 600, data)        # in 10 Minuten wieder versuchen
+        if self.cache:
+            out.update(self.cache[1])
+        newer = bool(out.get("latest")) and (_vtuple(out["latest"]) or (0,)) > (_vtuple(APP_VERSION) or (0,))
+        out["newer"] = newer
+        out["needs_installer"] = newer and int(out.get("install_rev") or 0) > self.installed_rev(home)
+        out["busy"] = BROKER.busy()
+        return out
+
+    def start(self, tag: str) -> tuple:
+        home = mws_home()
+        if not home:
+            return 404, {"error": "off", "message": "Update gibt es nur in der lokalen Installation."}
+        with self.lock:
+            if self.state["phase"] not in ("idle", "error"):
+                return 409, {"error": "running", "message": "Das Update läuft schon."}
+            cur = self.info(net=False)
+            if not cur.get("tag") or cur["tag"] != tag:
+                return 409, {"error": "stale", "message": "Erst nach Updates suchen."}
+            if (_vtuple(tag) or (0,)) <= (_vtuple(APP_VERSION) or (0,)):
+                return 409, {"error": "not_newer", "message": "Diese Fassung ist schon da."}
+            if int(cur.get("install_rev") or 0) > self.installed_rev(home):
+                return 409, {"error": "needs_installer",
+                             "message": "Diese Fassung braucht den Installer (neue Bausteine)."}
+            if BROKER.busy():
+                return 409, {"error": "busy", "message": "Gerade läuft ein Auftrag — das Update geht danach."}
+            self.state = {"phase": "download", "message": "Lädt …", "tag": tag}
+        threading.Thread(target=self._run, args=(home, tag, cur.get("zip") or ""), name="update", daemon=True).start()
+        return 202, {"ok": True, "state": dict(self.state)}
+
+    def _set(self, phase: str, message: str) -> None:
+        self.state = dict(self.state, phase=phase, message=message)
+        print("Update %s: %s" % (self.state.get("tag"), message), flush=True)
+
+    def _run(self, home: str, tag: str, zip_url: str) -> None:
+        import shutil
+        import subprocess
+        import zipfile
+        work = os.path.join(home, "update")
+        stage = os.path.join(work, "neu")
+        try:
+            shutil.rmtree(work, ignore_errors=True)
+            os.makedirs(stage)
+            data = _fetch(zip_url or "%s/repos/%s/zipball/%s" % (UPDATE_API, UPDATE_REPO, tag), UPDATE_MAX_BYTES, 300)
+            self._set("check", "Prüft die neue Fassung …")
+            zpath = os.path.join(work, tag + ".zip")
+            with open(zpath, "wb") as f:
+                f.write(data)
+            with zipfile.ZipFile(zpath) as z:
+                names = z.namelist()
+                top = names[0].split("/")[0] if names else ""
+                for n in names:
+                    if n.startswith("/") or ".." in n.split("/") or "\\" in n or not n.startswith(top + "/"):
+                        raise ValueError("ungültiger Pfad im ZIP")
+                z.extractall(stage)
+            src = os.path.join(stage, top)
+            new_app = os.path.join(src, "app")
+            with open(os.path.join(new_app, "server.py"), encoding="utf-8") as f:
+                code = f.read()
+            m = re.search(r'^APP_VERSION = "([^"]+)"', code, re.M)
+            if not m or "v" + m.group(1) != tag:
+                raise ValueError("Das ZIP enthält nicht die Fassung %s" % tag)
+            m = re.search(r"^INSTALL_REV = (\d+)", code, re.M)
+            if m and int(m.group(1)) > self.installed_rev(home):
+                raise ValueError("Diese Fassung braucht den Installer (neue Bausteine)")
+            import py_compile
+            for d, _, fs in os.walk(new_app):
+                for fn in fs:
+                    if fn.endswith(".py"):
+                        try:
+                            py_compile.compile(os.path.join(d, fn), doraise=True)
+                        except py_compile.PyCompileError:
+                            raise ValueError("Die neue Fassung lässt sich nicht übersetzen (%s)" % fn)
+            # Probestart: die neue Fassung muss auf einem freien Port antworten, bevor sie die alte ersetzt
+            port = _free_port()
+            env = {k: v for k, v in os.environ.items() if k != "MWS_HOME"}
+            env.update(HOST="127.0.0.1", PORT=str(port))
+            probe = subprocess.Popen([sys.executable, "server.py"], cwd=new_app, env=env,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                seen = ""
+                for _ in range(120):
+                    time.sleep(0.25)
+                    if probe.poll() is not None:
+                        break
+                    try:
+                        with urllib.request.urlopen("http://127.0.0.1:%d/version" % port, timeout=2) as r:
+                            seen = json.loads(r.read()).get("version", "")
+                        break
+                    except Exception:  # noqa: BLE001
+                        continue
+            finally:
+                probe.terminate()
+                try:
+                    probe.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    probe.kill()
+            if "v" + seen != tag:
+                raise ValueError("Die neue Fassung startet nicht")
+            self._set("install", "Installiert …")
+            prev = os.path.join(home, "app.prev")
+            shutil.rmtree(prev, ignore_errors=True)
+            shutil.copytree(ROOT, prev, ignore=shutil.ignore_patterns("__pycache__"))
+            try:
+                _sync_tree(new_app, ROOT)
+            except Exception:
+                _sync_tree(prev, ROOT)        # halb getauscht: die alte App zurück
+                raise
+            _copy_launchers(src, home)
+            shutil.rmtree(work, ignore_errors=True)
+            self._set("restart", "Startet neu …")
+            threading.Timer(0.8, restart_self).start()
+        except Exception as e:  # noqa: BLE001
+            shutil.rmtree(work, ignore_errors=True)
+            self._set("error", "Update nicht möglich: %s" % ((str(e) or type(e).__name__)[:200]))
+
+
+def _sync_tree(src: str, dst: str) -> None:
+    """dst wird zu src: neue und geänderte Dateien kopieren, verschwundene löschen (Zwischenspeicher und der
+    Build-Stempel bleiben). Kopiert in die bestehenden Ordner — unter Windows lässt sich der Ordner des
+    laufenden Servers nicht umbenennen."""
+    import shutil
+    keep = {"build-info.json"}
+    for d, dirs, fs in os.walk(src):
+        dirs[:] = [x for x in dirs if x != "__pycache__"]
+        rel = os.path.relpath(d, src)
+        os.makedirs(os.path.join(dst, rel), exist_ok=True)
+        for fn in fs:
+            shutil.copy2(os.path.join(d, fn), os.path.join(dst, rel, fn))
+    for d, dirs, fs in os.walk(dst, topdown=False):
+        if "__pycache__" in d.split(os.sep):
+            continue
+        rel = os.path.relpath(d, dst)
+        for fn in fs:
+            if fn not in keep and not os.path.exists(os.path.join(src, rel, fn)):
+                os.remove(os.path.join(d, fn))
+        if rel != "." and not os.path.exists(os.path.join(src, rel)) and not os.listdir(d):
+            os.rmdir(d)
+
+
+def _copy_launchers(src: str, home: str) -> None:
+    """Die Starter liegen neben der App (der Installer legte sie dort ab) — gelten ab dem nächsten Start."""
+    import shutil
+    pairs = {"darwin": [("install/macos/Manuwave Studio.command", "Manuwave Studio.command")],
+             "linux": [("install/linux/manuwave-studio.sh", "manuwave-studio.sh")],
+             "win32": [("install/windows/Manuwave Studio.ps1", "Manuwave Studio.ps1"),
+                       ("install/windows/Manuwave Studio.bat", "Manuwave Studio.bat")]}.get(sys.platform, [])
+    for a, b in pairs:
+        s, d = os.path.join(src, *a.split("/")), os.path.join(home, b)
+        if os.path.isfile(s) and os.path.isfile(d):
+            shutil.copy2(s, d)
+            if not b.endswith((".ps1", ".bat")):
+                os.chmod(d, 0o755)
+
+
+UPDATER = Updater()
+
+
 # ---- Kopplung per Code ------------------------------------------------------
 #    unter dem man sie selbst geöffnet hat — ein Kopplungslink für die eine Adresse
 #    ist unter einer anderen unsichtbar, und auf dem Handy ist sie ohnehin anders.
@@ -850,6 +1126,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                              "message": "Kein gültiger Kopplungsschlüssel — Mac-Brücke in den Einstellungen koppeln."})
         return ns
 
+    def _update_apply(self):
+        """3.23: nur aus der eigenen Seite (Host und Origin = 127.0.0.1/localhost) und nur mit dem Schlüssel aus
+        bridge.json — eine fremde Webseite kann weder den Schlüssel noch den Kopf x-nf-bridge mitschicken."""
+        home = mws_home()
+        host = (self.headers.get("Host") or "").rsplit(":", 1)[0].lower()
+        origin = (self.headers.get("Origin") or "").lower()
+        allowed = {"http://127.0.0.1:%d" % PORT, "http://localhost:%d" % PORT}
+        try:
+            with open(os.path.join(home, "bridge.json"), encoding="utf-8") as f:
+                token = str(json.load(f).get("token") or "")
+        except (OSError, ValueError, TypeError):
+            token = ""
+        given = self.headers.get("x-nf-bridge", "").strip()
+        if (not home or host not in ("127.0.0.1", "localhost") or (origin and origin not in allowed)
+                or not token or not secrets.compare_digest(given.encode(), token.encode())):
+            self._json(403, {"error": "forbidden", "message": "Update nur aus Manuwave Studio auf diesem Rechner."})
+            return
+        code, out = UPDATER.start(str(self._read_body().get("tag") or ""))
+        self._json(code, out)
+
     # ---- GET --------------------------------------------------------------
     def do_GET(self):
         path = self.path.split("?")[0]
@@ -860,6 +1156,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         if path in ("/version", "/api/version"):
             self._json(200, _build_info())
+            return
+        if path == "/api/update":
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            self._json(200, UPDATER.info(net=q.get("net") != ["0"], force=q.get("force") == ["1"]))
             return
         if path in ("/bridge/neonforge_bridge.py", "/bridge/manuwave_bridge.py"):
             # Die Mac-Brücke gehört zur App und hat dieselbe Version — so holt der Mac
@@ -970,6 +1270,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     # ---- POST -------------------------------------------------------------
     def do_POST(self):
         path = self.path.split("?")[0]
+        if path == "/api/update/apply":
+            return self._update_apply()
         if path == "/api/pair/claim":
             # Ohne Schlüssel — genau dafür ist der Code da.
             try:

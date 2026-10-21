@@ -38,6 +38,7 @@ h1{font-size:26px;margin:0;letter-spacing:.5px;
 .lang-btn{font-size:12.5px;padding:6px 12px;border-radius:999px;color:var(--sub)}
 .pill{font-size:12.5px;color:var(--sub);padding:6px 12px;border:1px solid var(--line);border-radius:999px;background:transparent}
 .pill.ok{color:#0a0b12;background:var(--neon);border-color:var(--neon);font-weight:600}
+.upd-pill{color:#0a0b12;background:var(--neon);border-color:var(--neon);font-weight:600;cursor:pointer}
 .pill.warn{color:#0a0b12;background:var(--amber);border-color:var(--amber);font-weight:600}
 .pair-note{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
   padding:12px 14px;border:1px solid var(--amber);border-radius:12px;font-size:13.5px;
@@ -383,3 +384,8 @@ body.has-now #app{padding-bottom:110px}
   background:var(--panel);border:1px solid var(--line);box-shadow:0 12px 30px rgba(0,0,0,.45)}
 .web-pop button{text-align:left;border:0;background:none;color:var(--ink);padding:9px 12px;border-radius:8px;font-size:13px}
 .web-pop button:hover,.web-pop button:focus-visible{background:var(--panel2)}
+/* 3.23 Ein-Klick-Update */
+.upd-inner{max-width:640px}
+.upd-notes{max-height:min(44dvh,420px);overflow:auto;white-space:pre-wrap;word-break:break-word;font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
+  background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0;color:var(--sub)}
+.upd-notes:empty{display:none}

@@ -167,6 +167,9 @@ if (-not $SkipLoopAi) {
 
 Step "10/10 App and launcher"
 Copy-Item -Recurse -Force (Join-Path $Repo "app\*") (New-Item -ItemType Directory -Force -Path (Join-Path $Home_ "app"))
+# Installer state this app needs - the one-click update only takes versions that need nothing newer
+$rev = (Select-String -Path (Join-Path $Home_ "app\server.py") -Pattern '^INSTALL_REV = (\d+)' | Select-Object -First 1).Matches[0].Groups[1].Value
+Set-Content -Path (Join-Path $Home_ "install_rev") -Value $rev -Encoding ascii
 & $py (Join-Path $Repo "install\common\write_config.py") $Home_ $AppPort $WriterPort $wmodel
 Copy-Item -Force (Join-Path $Repo "install\windows\Manuwave Studio.ps1"), (Join-Path $Repo "install\windows\Manuwave Studio.bat") $Home_
 $lnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "Manuwave Studio.lnk"

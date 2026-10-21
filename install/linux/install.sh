@@ -156,6 +156,8 @@ else warn "skipped (--skip-loopai): the loop machine continues jams, a band for 
 
 bold "10/10 App and launcher"
 mkdir -p "$MWS_HOME/app" && cp -a "$REPO_DIR/app/." "$MWS_HOME/app/" || die "copy failed"
+# Installer state this app needs — the one-click update only takes versions that need nothing newer
+sed -n 's/^INSTALL_REV = \([0-9]*\).*/\1/p' "$MWS_HOME/app/server.py" > "$MWS_HOME/install_rev"
 python3 "$REPO_DIR/install/common/write_config.py" "$MWS_HOME" "$APP_PORT" "$WRITER_PORT" "$WMODEL" || die "config failed"
 install -m 755 "$REPO_DIR/install/linux/manuwave-studio.sh" "$MWS_HOME/manuwave-studio.sh"
 mkdir -p "$HOME/.local/share/applications"

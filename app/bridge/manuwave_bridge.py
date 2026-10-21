@@ -58,7 +58,7 @@ try:
 except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.17.0"
+BRIDGE_VERSION = "3.18.0"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
@@ -4423,6 +4423,50 @@ def _on_term(signum, frame):
     sys.exit(0)
 
 
+# 3.18 (App 3.23): neuer Code auf der Platte (Ein-Klick-Update, Installer, neue Fassung vom Server) → die Brücke startet
+# sich selbst neu, sobald sie nichts zu tun hat. POSIX: execv (dieselbe Prozessnummer — Starter und launchd behalten sie),
+# Windows: Ende mit 75, der Starter startet neu. Eigene Modellserver und die MIDI-Rechnung werden vorher beendet.
+_CODE_FILE = os.path.abspath(__file__)
+_brief_active = threading.Event()   # die Brief-Spur arbeitet gerade
+
+
+def _code_sha() -> str:
+    try:
+        with open(_CODE_FILE, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except OSError:
+        return ""
+
+
+_CODE_SHA = _code_sha()
+_code_seen = [0.0]
+
+
+def code_changed() -> bool:
+    now = time.time()
+    if now - _code_seen[0] < 20:
+        return False
+    _code_seen[0] = now
+    cur = _code_sha()
+    return bool(cur) and cur != _CODE_SHA
+
+
+def restart_bridge(eng) -> None:
+    log("Neuer Code auf der Platte — die Brücke startet neu")
+    try:
+        eng.stop_own("Brücke startet neu")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    if IS_WIN:
+        os._exit(75)
+    os.execv(sys.executable, [sys.executable, _CODE_FILE] + sys.argv[1:])
+
+
 def brief_lane(cfg: dict) -> None:
     """Zweite Spur: Briefe schreiben, während die erste vielleicht minutenlang rechnet.
     Sie fasst den Modellserver nicht an — nur das lokale Sprachmodell."""
@@ -4438,31 +4482,39 @@ def brief_lane(cfg: dict) -> None:
             continue
         if st == 204 or not job:
             continue
-        jid = job["id"]
-        if job.get("kind") not in (None, "brief"):
-            Awake.hold(cfg)
-            try:
-                tool_job(cfg, srv, job)
-            except NeedUpload:
-                srv.error(jid, ARCHIV_FEHLT)
-            except Exception as e:  # noqa: BLE001
-                srv.error(jid, str(e) or type(e).__name__)
-                log("Fehler bei %s (%s): %s" % (jid, job.get("kind"), e))
-            finally:
-                Awake.release(cfg)
-            continue
-        log("Brief %s wird geschrieben (%s)" % (jid, find_writer(cfg) or "kein Modell"))
+        _brief_active.set()
         try:
-            srv.progress(jid, "Dein Mac schreibt den Brief …", job)
-            brief = write_brief(cfg, (job.get("request") or {}).get("user") or "", (job.get("request") or {}).get("ui_lang") or "de")
-            srv.result_json(jid, brief)
-            log("Brief fertig in %.0f s: %s" % (brief.get("write_s", 0), brief.get("title", "")))
+            _brief_job(cfg, srv, job)
+        finally:
+            _brief_active.clear()
+
+
+def _brief_job(cfg: dict, srv, job: dict) -> None:
+    jid = job["id"]
+    if job.get("kind") not in (None, "brief"):
+        Awake.hold(cfg)
+        try:
+            tool_job(cfg, srv, job)
+        except NeedUpload:
+            srv.error(jid, ARCHIV_FEHLT)
         except Exception as e:  # noqa: BLE001
-            msg = str(e) or type(e).__name__
-            if isinstance(e, urllib.error.URLError) and "127.0.0.1" in str(getattr(e, "reason", "")):
-                msg = "Sprachmodell auf dem Mac nicht erreichbar"
-            srv.error(jid, msg)
-            log("Brief-Fehler bei %s: %s" % (jid, msg))
+            srv.error(jid, str(e) or type(e).__name__)
+            log("Fehler bei %s (%s): %s" % (jid, job.get("kind"), e))
+        finally:
+            Awake.release(cfg)
+        return
+    log("Brief %s wird geschrieben (%s)" % (jid, find_writer(cfg) or "kein Modell"))
+    try:
+        srv.progress(jid, "Dein Mac schreibt den Brief …", job)
+        brief = write_brief(cfg, (job.get("request") or {}).get("user") or "", (job.get("request") or {}).get("ui_lang") or "de")
+        srv.result_json(jid, brief)
+        log("Brief fertig in %.0f s: %s" % (brief.get("write_s", 0), brief.get("title", "")))
+    except Exception as e:  # noqa: BLE001
+        msg = str(e) or type(e).__name__
+        if isinstance(e, urllib.error.URLError) and "127.0.0.1" in str(getattr(e, "reason", "")):
+            msg = "Sprachmodell auf dem Mac nicht erreichbar"
+        srv.error(jid, msg)
+        log("Brief-Fehler bei %s: %s" % (jid, msg))
 
 
 def run(cfg: dict) -> None:
@@ -4497,6 +4549,8 @@ def run(cfg: dict) -> None:
             eng.maybe_stop_idle()
             continue
         if st == 204 or not job:
+            if code_changed() and not _brief_active.is_set() and not _job_active.is_set() and _midi_proc is None:
+                restart_bridge(eng)
             eng.maybe_stop_idle()
             continue
         jid = job["id"]

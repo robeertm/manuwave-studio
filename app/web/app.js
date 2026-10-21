@@ -2980,6 +2980,91 @@ function download(blob, name) {
 // =============================================================================
 // Start
 // =============================================================================
+// =============================================================================
+// 3.23: Ein-Klick-Update — nur in der lokalen Installation (der Server sagt enabled). Der Browser fragt den eigenen
+// Ein Klick: Server lädt, prüft (Probestart), tauscht, startet neu — die Seite wartet auf die neue Version und lädt neu.
+// Kein confirm(): ein Dialog des Browsers setzt in Safari den Ton aus (3.19).
+// =============================================================================
+const LS_UPD = "mws_upd_check";
+const upd = { info: null, running: false, timer: 0 };
+function updWanted() { try { return localStorage.getItem(LS_UPD) !== "0"; } catch (e) { return true; } }
+async function updCheck({ net = updWanted(), force = false } = {}) {
+  const r = await api(`/api/update?net=${net ? 1 : 0}${force ? "&force=1" : ""}`).catch(() => null);
+  if (!r || !r.ok || !r.data) return null;
+  upd.info = r.data;
+  updPaint();
+  return r.data;
+}
+function updPaint() {
+  const i = upd.info || {};
+  $("#updBox").classList.toggle("hidden", !i.enabled);
+  const pill = $("#updPill");
+  pill.classList.toggle("hidden", !(i.enabled && i.newer));
+  if (i.enabled && i.newer) pill.textContent = `⬆ Update ${i.latest}`;
+  if (!$("#updDlg").classList.contains("hidden") && !upd.running) updFill();
+}
+function updFill() {
+  const i = upd.info || {};
+  $("#updTitle").textContent = `⬆ Update auf ${i.latest}`;
+  $("#updWhat").textContent = i.published ? `Installiert: ${i.current} · neu: ${i.latest} vom ${i.published}` : `Installiert: ${i.current} · neu: ${i.latest}`;
+  $("#updNotes").textContent = String(i.notes || "").replace(/\r/g, "").trim();
+  const link = $("#updLink"); link.href = i.url || "#"; link.classList.toggle("hidden", !i.url);
+  const go = $("#updGo");
+  go.classList.toggle("hidden", !!i.needs_installer);
+  go.disabled = !!i.busy;
+  $("#updHint").textContent = i.needs_installer
+    ? "Diese Fassung braucht den Installer (neue Bausteine): Manuwave Studio schließen, das neue ZIP laden und den Installer starten — Musik, Bibliothek und Einstellungen bleiben."
+    : i.busy ? "Gerade läuft ein Auftrag — das Update geht danach."
+    : "Ein Klick: lädt die neue Fassung, prüft sie, sichert die alte und startet neu. Musik, Bibliothek und Einstellungen bleiben.";
+}
+function updOpen() {
+  if (!upd.info || !upd.info.newer) return;
+  updFill();
+  setMsg($("#updMsg"), "", "");
+  $("#updDlg").classList.remove("hidden");
+  clearInterval(upd.timer);
+  upd.timer = setInterval(() => { if (!upd.running && upd.info && upd.info.busy) updCheck({ net: false }); }, 5000);
+}
+function updClose() {
+  if (upd.running) return;
+  $("#updDlg").classList.add("hidden");
+  clearInterval(upd.timer);
+}
+async function updGo() {
+  const i = upd.info; if (!i || upd.running) return;
+  upd.running = true;
+  $("#updGo").disabled = true; $("#updLater").disabled = true;
+  const msg = $("#updMsg");
+  setMsg(msg, "Lädt …", "");
+  const r = await api("/api/update/apply", { method: "POST", body: { tag: i.tag } }).catch(() => null);
+  if (!r || !r.ok) {
+    setMsg(msg, "✗ " + ((r && r.data && r.data.message) || "Update nicht möglich"), "err");
+    upd.running = false; $("#updGo").disabled = false; $("#updLater").disabled = false;
+    return;
+  }
+  const t0 = Date.now();
+  while (Date.now() - t0 < 10 * 60 * 1000) {
+    await new Promise(res => setTimeout(res, 1000));
+    let v = null;
+    try { v = await (await fetch("/version", { cache: "no-store" })).json(); } catch (e) { /* startet gerade neu */ }
+    if (v && v.version === i.latest) {
+      setMsg(msg, `✓ Fertig — Manuwave Studio ${i.latest} lädt neu …`, "ok");
+      setTimeout(() => location.reload(), 700);
+      return;
+    }
+    const s = await api("/api/update?net=0").catch(() => null);
+    const st = s && s.ok && s.data && s.data.state;
+    if (st && st.phase === "error") {
+      setMsg(msg, "✗ " + st.message, "err");
+      upd.running = false; $("#updGo").disabled = false; $("#updLater").disabled = false;
+      return;
+    }
+    if (st && st.message) setMsg(msg, st.message, "");
+  }
+  setMsg(msg, "✗ Der Neustart dauert ungewöhnlich lange — Manuwave Studio schließen und neu öffnen.", "err");
+  upd.running = false; $("#updLater").disabled = false;
+}
+
 function init() {
   //      ist kein Programmfehler — Safari meldete ihn trotzdem als unbehandelt. Nur genau diese werden still;
   //      alles andere bleibt sichtbar.
@@ -3092,8 +3177,25 @@ function init() {
   $("#settingsBtn").onclick = openSettings;
   $("#pairNoteBtn").onclick = openSettings;
   $("#closeSettings").onclick = closeSettings;
+  // 3.23 Update
+  $("#updPill").onclick = updOpen;
+  $("#updLater").onclick = updClose;
+  $("#updGo").onclick = updGo;
+  $("#updDlg").addEventListener("click", (e) => { if (e.target.id === "updDlg") updClose(); });
+  $("#updAuto").checked = updWanted();
+  $("#updAuto").onchange = () => { try { localStorage.setItem(LS_UPD, $("#updAuto").checked ? "1" : "0"); } catch (e) {} if ($("#updAuto").checked) updCheck(); else updPaint(); };
+  $("#updNow").onclick = async () => {
+    setMsg($("#updNowMsg"), "Sucht …", "");
+    const i = await updCheck({ net: true, force: true });
+    if (!i) setMsg($("#updNowMsg"), "✗ Keine Antwort vom Server", "err");
+    else if (i.error) setMsg($("#updNowMsg"), "✗ " + i.error, "err");
+    else if (i.newer) setMsg($("#updNowMsg"), `Neue Fassung ${i.latest} — oben rechts „Update“`, "ok");
+    else setMsg($("#updNowMsg"), `✓ Du hast die neueste Fassung (${i.current})`, "ok");
+  };
+  updCheck();
+  setInterval(() => { if (updWanted()) updCheck(); }, 6 * 3600 * 1000);
   $("#settings").addEventListener("click", (e) => { if (e.target.id === "settings") closeSettings(); });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeSettings(); closeExport(); closeCover(); } });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeSettings(); closeExport(); closeCover(); updClose(); } });
   $("#pairBtn").onclick = claimCode;
   $("#pairCode").addEventListener("keydown", (e) => { if (e.key === "Enter") claimCode(); });
   $("#unpairBtn").onclick = () => { if (confirm("Kopplung mit dem Mac in DIESEM Browser lösen?")) setBridgeToken(""); };

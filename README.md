@@ -157,14 +157,20 @@ Windows: `-Lm`, `-Xl`, `-SkipWriter`, `-SkipImage`, `-SkipQa`, `-SkipMidi`, `-Sk
 
 ## Update
 
-The app does not check for updates by itself — see the [releases](../../releases) and the [changelog](CHANGELOG.md).
+From 3.23 on, Manuwave Studio updates itself with one click:
 
-1. **Close the Manuwave Studio window first.** If the old version is still running, the launcher keeps using it.
-2. Download the latest release ZIP (or `git pull`) and run the installer again, with the same options as the
-   first time. Finished steps are skipped — the models are not downloaded again — and the app is replaced.
-3. Start Manuwave Studio as usual.
+- When a new release is out, **⬆ Update x.y.z** appears at the top right. It opens the release notes and an
+  **Update now** button.
+- One click downloads the release from GitHub, checks it (it must compile and start on a spare port first),
+  keeps the previous version in `app.prev` and restarts — the page reloads by itself. Your music, library, settings
+  and pairing stay as they are. While a job is running, the update waits.
+- The app asks GitHub for the latest release at most every six hours. You can switch that off under ⚙️ → *Updates*,
+  and check by hand there.
+- If a release needs new components (models, tools), the notice says so and you run the installer again instead:
+  close the Manuwave Studio window first, then download the new release ZIP and run the installer with the same options.
+  Finished steps are skipped, so models are not downloaded again.
 
-Your music (`renders/` and the library in your browser), your settings and the pairing with the bridge stay as they are.
+**Versions before 3.23** don't have the updater yet. Update them once with the installer as described above.
 
 ## How it works
 
