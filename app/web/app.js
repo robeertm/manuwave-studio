@@ -186,7 +186,18 @@ async function fetchBlob(url) {
   return res.blob();
 }
 
+//    (kein Neuladen: das unterbräche Spielen in Instrumente/Loops nach jedem Neustart des Servers).
+async function serverAlive() {
+  try { return (await fetch("/version", { cache: "no-store" })).ok; } catch (e) { return false; }
+}
 async function refreshBridge() {
+  const alive = await serverAlive();
+  if (!alive) {
+    state.serverDown = true; state.bridge = { connected: false, info: {} };
+    renderBridge();
+    return;
+  }
+  state.serverDown = false;
   if (bridgeToken()) {
     try {
       const r = await api("/api/bridge/status");
@@ -208,8 +219,13 @@ function renderBridge() {
   const pill = $("#macPill");
   const i = state.bridge.info || {};
   const paired = !!bridgeToken();
-  $("#pairNote").classList.toggle("hidden", paired);
-  if (!paired) { pill.textContent = "🔌 Mac koppeln"; pill.className = "pill warn"; pill.title = "Einstellungen › Mac"; }
+  $("#pairNote").classList.toggle("hidden", paired || !!state.serverDown);
+  $("#downNote").classList.toggle("hidden", !state.serverDown);
+  if (state.serverDown) {
+    pill.textContent = "🔴 App antwortet nicht"; pill.className = "pill down";
+    pill.title = "Manuwave Studio läuft gerade nicht — das Startfenster wieder öffnen.";
+  }
+  else if (!paired) { pill.textContent = "🔌 Mac koppeln"; pill.className = "pill warn"; pill.title = "Einstellungen › Mac"; }
   else if (state.bridge.connected) {
     const chip = (i.chip || "Mac").replace(/^Apple /, "");
     pill.textContent = `🟢 ${chip} bereit`;

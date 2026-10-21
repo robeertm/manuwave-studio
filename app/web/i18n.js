@@ -682,7 +682,11 @@
 "mit Gesang": "with vocals",
 "Der neue Song bekommt": "The new song gets",
 "— ändern unter „Feinheiten“.": "— change it under “Details”.",
-"🧬 Aus deinen Songs · ✓ Brief steht — {0} {1} auf dem Weg zum Mac.": "🧬 From your songs · ✓ Brief ready — {0} {1} on the way to your computer."
+"🧬 Aus deinen Songs · ✓ Brief steht — {0} {1} auf dem Weg zum Mac.": "🧬 From your songs · ✓ Brief ready — {0} {1} on the way to your computer.",
+"🔴 App antwortet nicht": "🔴 App not responding",
+"Manuwave Studio läuft gerade nicht — das Startfenster wieder öffnen.": "Manuwave Studio is not running right now — open the start window again.",
+"Manuwave Studio antwortet gerade nicht.": "Manuwave Studio is not responding right now.",
+"Läuft es auf diesem Rechner, das Startfenster „Manuwave Studio“ wieder öffnen (Doppelklick). Sobald es wieder läuft, geht es hier von selbst weiter.": "If it runs on this computer, open the “Manuwave Studio” start window again (double-click). As soon as it runs again, this page carries on by itself."
 };
 
   var norm = function (s) { return s.replace(/\s+/g, " ").trim(); };

@@ -58,7 +58,7 @@ try:
 except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.19.0"
+BRIDGE_VERSION = "3.19.1"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
@@ -4851,6 +4851,18 @@ def restart_bridge(eng) -> None:
         sys.stderr.flush()
     except Exception:  # noqa: BLE001
         pass
+    # 🔴 3.19.1: Windows-Starter bis 3.24.0 erkannten Code 75 nie (ExitCode leer ohne gemerkten Handle) — die Brücke
+    #    unter einem älteren startet sie ihren Nachfolger selbst.
+    if os.environ.get("MWS_TEST_RESPAWN") == "1" or (IS_WIN and os.environ.get("MWS_SUPERVISED") != "1"):
+        try:
+            err = open(os.path.join(DIR, "bridge.restart.log"), "ab")
+        except OSError:
+            err = subprocess.DEVNULL
+        kw = ({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP} if IS_WIN
+              else {"start_new_session": True})
+        subprocess.Popen([sys.executable, _CODE_FILE] + sys.argv[1:], cwd=os.path.dirname(_CODE_FILE),
+                         stdin=subprocess.DEVNULL, stdout=err, stderr=err, close_fds=True, **kw)
+        os._exit(0)
     if IS_WIN:
         os._exit(75)
     os.execv(sys.executable, [sys.executable, _CODE_FILE] + sys.argv[1:])
