@@ -155,6 +155,17 @@ under `renders/` and in your browser's library.
 Windows: `-Lm`, `-Xl`, `-SkipWriter`, `-SkipImage`, `-SkipQa`, `-SkipMidi`, `-SkipLoopAi`, `-NoStart`.
 </details>
 
+## Update
+
+The app does not check for updates by itself — see the [releases](../../releases) and the [changelog](CHANGELOG.md).
+
+1. **Close the Manuwave Studio window first.** If the old version is still running, the launcher keeps using it.
+2. Download the latest release ZIP (or `git pull`) and run the installer again, with the same options as the
+   first time. Finished steps are skipped — the models are not downloaded again — and the app is replaced.
+3. Start Manuwave Studio as usual.
+
+Your music (`renders/` and the library in your browser), your settings and the pairing with the bridge stay as they are.
+
 ## How it works
 
 ```
