@@ -16,15 +16,22 @@ try {
     Remove-Item Env:OLLAMA_HOST
   }
   $env:HOST = "127.0.0.1"; $env:PORT = "$AppPort"
-  $procs += Start-Process -FilePath $py -ArgumentList "server.py" -WorkingDirectory (Join-Path $Home_ "app") -WindowStyle Hidden -PassThru `
-    -RedirectStandardError (Join-Path $Home_ "app.log")
+  function StartApp { Start-Process -FilePath $py -ArgumentList "server.py" -WorkingDirectory (Join-Path $Home_ "app") -WindowStyle Hidden -PassThru `
+    -RedirectStandardError (Join-Path $Home_ "app.log") }
+  function StartBridge { Start-Process -FilePath $py -ArgumentList "`"$(Join-Path $Home_ 'app\bridge\manuwave_bridge.py')`"" -WindowStyle Hidden -PassThru `
+    -RedirectStandardError (Join-Path $Home_ "bridge.log") }
+  $app = StartApp; $procs += $app
   if (-not (Up "http://127.0.0.1:$AppPort/version")) { throw "The app did not start — see app.log" }
-  $procs += Start-Process -FilePath $py -ArgumentList "`"$(Join-Path $Home_ 'app\bridge\manuwave_bridge.py')`"" -WindowStyle Hidden -PassThru `
-    -RedirectStandardError (Join-Path $Home_ "bridge.log")
+  $bridge = StartBridge; $procs += $bridge
   $token = (Get-Content (Join-Path $Home_ "bridge.json") | ConvertFrom-Json).token
   Start-Process "http://127.0.0.1:$AppPort/#bridge=$token"
   Write-Host "Running at http://127.0.0.1:$AppPort — close this window to stop."
-  while ($true) { Start-Sleep -Seconds 2 }
+  # Exit code 75 = restart with the new code (one-click update, or the bridge noticed new code on disk)
+  while ($true) {
+    Start-Sleep -Seconds 2
+    if ($app.HasExited -and $app.ExitCode -eq 75) { $app = StartApp; $procs += $app }
+    if ($bridge.HasExited -and $bridge.ExitCode -eq 75) { $bridge = StartBridge; $procs += $bridge }
+  }
 } finally {
   Write-Host "Stopping …"
   foreach ($p in $procs) { if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }

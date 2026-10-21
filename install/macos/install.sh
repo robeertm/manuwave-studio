@@ -234,6 +234,8 @@ else warn "skipped (--skip-loopai): the loop machine continues jams, a band for 
 # ---- 12. App + launcher -------------------------------------------------------------
 bold "12/12 App and launcher"
 rsync -a --delete --exclude "__pycache__" "$REPO_DIR/app/" "$MWS_HOME/app/" || die "copy failed"
+# Installer state this app needs — the one-click update only takes versions that need nothing newer
+sed -n 's/^INSTALL_REV = \([0-9]*\).*/\1/p' "$MWS_HOME/app/server.py" > "$MWS_HOME/install_rev"
 /usr/bin/python3 "$REPO_DIR/install/common/write_config.py" "$MWS_HOME" "$APP_PORT" "$WRITER_PORT" "$WMODEL" "$IMAGE_PORT" || die "config failed"
 cp "$REPO_DIR/install/macos/Manuwave Studio.command" "$MWS_HOME/Manuwave Studio.command" && chmod +x "$MWS_HOME/Manuwave Studio.command"
 ln -sf "$MWS_HOME/Manuwave Studio.command" "$HOME/Desktop/Manuwave Studio.command" 2>/dev/null || true

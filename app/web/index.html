@@ -23,6 +23,7 @@
     </div>
     <div class="top-actions">
       <button id="macPill" class="pill" type="button">🔌 Mac …</button>
+      <button id="updPill" class="pill upd-pill hidden" type="button" title="Eine neue Fassung von Manuwave Studio ist da">⬆ Update</button>
       <button id="langBtn" class="ghost lang-btn" type="button" translate="no">English</button>
       <button id="settingsBtn" class="ghost" type="button" title="Einstellungen">⚙️</button>
     </div>
@@ -404,6 +405,14 @@
         <span id="verifyMsg" class="status"></span>
       </div>
     </section>
+    <section id="updBox" class="rights hidden">
+      <h3>⬆ Updates</h3>
+      <label class="check"><input id="updAuto" type="checkbox" checked> Nach neuen Fassungen suchen (fragt GitHub höchstens alle 6 Stunden)</label>
+      <div class="row wrap">
+        <button id="updNow" class="ghost btn-s" type="button">Jetzt suchen</button>
+        <span id="updNowMsg" class="status"></span>
+      </div>
+    </section>
     <div id="oldKeyBox" class="old-key hidden">
       <p class="sub">🧹 In diesem Browser liegt noch ein <b>Claude-API-Key</b> aus einer früheren Fassung. Manuwave Studio
         benutzt ihn nicht mehr — alles läuft lokal.</p>
@@ -412,6 +421,23 @@
     <div class="modal-actions">
       <div class="spacer"></div>
       <button id="closeSettings" class="ghost" type="button">Schließen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ UPDATE (3.23) ============ -->
+<div id="updDlg" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="updTitle">
+  <div class="modal-inner card upd-inner">
+    <h2 id="updTitle">⬆ Update</h2>
+    <p id="updWhat" class="sub"></p>
+    <pre id="updNotes" class="upd-notes" translate="no"></pre>
+    <p id="updHint" class="sub small"></p>
+    <p id="updMsg" class="status" role="status"></p>
+    <div class="modal-actions">
+      <a id="updLink" class="ghost btn-s" target="_blank" rel="noopener">Auf GitHub ansehen</a>
+      <div class="spacer"></div>
+      <button id="updLater" class="ghost" type="button">Später</button>
+      <button id="updGo" class="primary" type="button">Jetzt aktualisieren</button>
     </div>
   </div>
 </div>

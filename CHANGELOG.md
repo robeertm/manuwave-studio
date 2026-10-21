@@ -3,6 +3,24 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.23.0 — 2026-10-21 (bridge 3.18.0)
+
+### Added
+- **One-click update.** When a new release is out, *⬆ Update x.y.z* appears at the top right with the release notes.
+  One click downloads it, checks it (it must compile and start on a spare port), keeps the previous version in
+  `app.prev`, replaces the app and restarts; the page reloads by itself. Music, library, settings and pairing stay.
+  It waits while a job is running.
+- Under ⚙️ → *Updates*: switch the check off (it asks GitHub at most every six hours) or check by hand.
+- Releases that need new components say so and point to the installer instead of updating in place.
+- The bridge restarts by itself when its code on disk changes (after an update or a new install), as soon as it is idle.
+
+### Changed
+- The installers record which installer state the app needs (`install_rev`). The Windows launcher restarts the app
+  and the bridge when they ask for it.
+
+### Note
+- Versions before 3.23 don't have the updater: update them once with the installer (close the window first).
+
 ## 3.22.1 — 2026-10-21 (bridge 3.17.0)
 
 ### Changed
