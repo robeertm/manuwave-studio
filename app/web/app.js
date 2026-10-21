@@ -72,7 +72,7 @@ const LS_FINISH_OFF = "nf_finish_off";    // Nachrüsten angehalten
 
 const state = {
   brief: null,          // aktueller Produktions-Brief
-  reference: null,      // Analyse eines hochgeladenen Referenz-Tracks
+  refs: [],
   pending: [],          // [{id, title, variant, group, created, status, message}]
   bridge: { connected: false, info: {} },
   view: "all",          // Bibliothek: "all" | "fav" | "none" | Ordner-id
@@ -363,14 +363,49 @@ function optionLines(o) {
   ].filter(Boolean);
 }
 
-function referenceLines() {
-  const r = state.reference;
-  if (!r) return [];
-  const { bpm, ...rest } = r;
-  return [`Referenz-Track (Analyse der Musik-KI): ${JSON.stringify(rest)}`,
-    bpm ? `Tempo-Schätzung der Analyse: ${bpm} BPM — UNSICHER (oft halbes Tempo), nur Anhaltspunkt; wähle das Tempo passend zum Genre.` : ""]
-    .filter(Boolean);
+// 3.24: Aus deinen Songs — was der Mac gemessen hat, geht als Vorbild in den Auftrag an das Sprachmodell.
+// 🔑 Kein Dateiname (Künstler/Titel), kein Liedtext, keine Melodie: ein NEUER Song im Charakter der Vorbilder.
+const KEY_DE = { major: "Dur", minor: "Moll" };
+function refsDone() { return state.refs.filter(r => r.status === "done" && r.result); }
+function refTempos() { return refsDone().map(r => (r.result.measure || {}).bpm).filter(x => x > 0); }
+// gemessene Tempi liegen nah beieinander (±6 %) → eines davon wird bestellt; sonst plant das Sprachmodell
+function refTempo() {
+  const t = refTempos().sort((a, b) => a - b), n = t.length;
+  if (!n || t[n - 1] / t[0] > 1.12) return 0;
+  return Math.round(n % 2 ? t[(n - 1) / 2] : (t[n / 2 - 1] + t[n / 2]) / 2);      // Median (bei zwei: Mitte)
 }
+function refMeter(a) { return a && (a.timesignature === "3" || a.timesignature === "6") ? `${a.timesignature}/${a.timesignature === "6" ? 8 : 4}` : ""; }
+function refLang(a, m) { return a && a.vocal_language && m && m.vocals === "viel" ? a.vocal_language : ""; }
+function refKey() {
+  const ks = refsDone().map(r => (r.result.measure || {}).key).filter(k => k && !k.alt);
+  if (!ks.length || ks.length !== refsDone().length) return "";
+  const k0 = ks[0];
+  return ks.every(k => k.root === k0.root && k.mode === k0.mode) ? `${k0.name} ${k0.mode}` : "";
+}
+function vorbildLines() {
+  const done = refsDone();
+  if (!done.length) return [];
+  const out = [`Vorbilder (${done.length} Song${done.length > 1 ? "s" : ""}, vom Mac analysiert) — triff ihren gemeinsamen Charakter, aber schreibe einen NEUEN, eigenständigen Song: keine Melodie, keinen Text, keinen markanten Riff und keinen Titel übernehmen, keine Künstlernamen in den Brief.`];
+  done.forEach((r, i) => {
+    const a = r.result.ace || {}, m = r.result.measure || {};
+    const p = [];
+    if (a.caption) p.push(`Stil: ${a.caption}`);
+    if (m.bpm) p.push(`gemessen ${m.bpm} BPM`);
+    if (m.key) p.push(`Tonart ${m.key.name} ${m.key.mode}${m.key.alt ? ` (oder ${m.key.alt.name} ${m.key.alt.mode})` : ""}`);
+    if (refMeter(a)) p.push(`Takt ${refMeter(a)}`);
+    if (m.vocals) p.push(`Gesang ${m.vocals === "kaum" ? "kaum oder keiner" : m.vocals}${refLang(a, m) ? ` (${refLang(a, m)})` : ""}`);
+    if (m.stems) p.push(`Anteile Drums ${m.stems.drums} %, Bass ${m.stems.bass} %, Gesang ${m.stems.vocals} %, Rest ${m.stems.other} %`);
+    if (m.groove) p.push(m.groove.four_on_floor ? "Kick auf jedem Schlag (four-on-the-floor)" : m.groove.backbeat > 0.5 ? "Kick und Snare im Wechsel (Backbeat)" : "gebrochener Rhythmus");
+    if (m.colour) p.push(`Klang ${m.colour}, Dynamik ${m.dynamics_db} dB`);
+    if (m.chords && m.chords.names) p.push(`Akkordfolge ${m.chords.names.join("–")} (${m.chords.roman.join("–")}), je etwa ${m.chords.bars_per_chord} Takt(e)`);
+    if (m.sections && m.sections.length) p.push(`Aufbau ${m.sections.map(x => `${x.label} ${x.energy} ${fmtMin(x.start)}–${fmtMin(x.end)}`).join(" · ")}`);
+    out.push(`Vorbild ${i + 1}: ${p.join("; ")}`);
+  });
+  const bpm = refTempo();
+  out.push(bpm ? `Tempo: ${bpm} BPM (gemessen, die Vorbilder liegen beieinander).` : `Tempo: im Bereich der Vorbilder (${refTempos().map(Math.round).join(", ")} BPM) passend wählen.`);
+  return out;
+}
+function fmtMin(s) { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
 
 function createTask(o) {
   const lines = [];
@@ -381,8 +416,8 @@ function createTask(o) {
   else if (o.genres.length) { const t = tempoOf(o.genres); if (t) lines.push(`Üblicher Tempobereich der Richtung: ${t[0]}–${t[1]} BPM`); }
   if (o.key) lines.push(`Tonart: ${o.key}`);
   if (roughOf(o.genres)) lines.push("Klangcharakter: rau und verzerrt ist bei dieser Richtung gewollt (verzerrte Gitarren bzw. Bässe).");
-  if (!o.idea && !o.genres.length) lines.unshift("Produziere einen mitreißenden elektronischen Track.");
-  return [...lines, ...optionLines(o), ...referenceLines(), `Gerüst (genau diese Abschnitte): ${skeletonText(o)}`].join("\n");
+  if (!o.idea && !o.genres.length) lines.unshift(refsDone().length ? "Ein neuer Song aus den Vorbildern unten." : "Produziere einen mitreißenden elektronischen Track.");
+  return [...lines, ...optionLines(o), ...vorbildLines(), `Gerüst (genau diese Abschnitte): ${skeletonText(o)}`].join("\n");
 }
 
 function refineTask(b, wish) {
@@ -421,7 +456,7 @@ function templateBrief(o, why) {
       "Starte Ollama auf dem Mac oder wähle Instrumental bzw. Vocal-Chops.");
   }
   const tags = [...o.genres.map(g => g.toLowerCase()), ...(o.mood ? o.mood.split(", ") : [])];
-  if (state.reference && state.reference.caption) tags.push(state.reference.caption);
+  refsDone().forEach(r => { if ((r.result.ace || {}).caption) tags.push(r.result.ace.caption); });
   tags.push(VOCAL_TAG[o.vocals] || "instrumental");
   if (o.idea) tags.push(o.idea);
   const words = (o.idea || o.genres[0] || "Neuer Track").split(/\s+/).slice(0, 4).join(" ");
@@ -512,6 +547,9 @@ function createTrack(opts = {}) {
     const o = form();
     saveForm();
     if (opts.genres) o.genres = opts.genres;     // 3.8: vom Würfel gezogen, ohne die Auswahl zu verändern
+    // 3.24: gemessenes Tempo der Vorbilder bestellen (die Messung des Macs, nicht die Schätzung der Musik-KI) —
+    //       nur wenn nichts gewählt ist und die Vorbilder beieinander liegen; die Tonart nur, wenn alle dieselbe haben
+    if (refsDone().length) { if (!o.bpm && refTempo()) o.bpm = refTempo(); if (!o.key && refKey()) o.key = refKey(); }
     let b;
     if (macWriter()) {
       say(`✍️ Dein Mac schreibt den Brief (${macWriter()}) …`);
@@ -637,31 +675,153 @@ async function render(b, { n, keep, source }) {
   return seeds.length;
 }
 
-async function analyzeReference(file) {
-  if (!file) return;
+// ---- 3.24: Aus deinen Songs: hochladen, analysieren lassen, Karten zeigen ----
+const LS_REFS = "nf_refs";                   // fertige Analysen (ohne Audio) — überleben ein Neuladen
+const REF_MAX = 3;
+function saveRefs() {
+  try { localStorage.setItem(LS_REFS, JSON.stringify(state.refs.filter(r => r.status === "done").map(({ key, name, result }) => ({ key, name, result, status: "done" })))); } catch (e) {}
+}
+function loadRefs() {
+  try { state.refs = (JSON.parse(localStorage.getItem(LS_REFS) || "[]") || []).filter(r => r && r.result).slice(0, REF_MAX); } catch (e) { state.refs = []; }
+}
+async function analyzeFiles(files) {
+  files = [...(files || [])];
+  if (!files.length) return;
   if (needPairing($("#goMsg"))) return;
-  const chip = $("#refChip");
-  chip.classList.remove("hidden");
-  chip.textContent = `🎧 ${file.name} — wird hochgeladen …`;
-  const r = await api("/api/analyze", { method: "POST", raw: await file.arrayBuffer(), ctype: file.type || "audio/mpeg",
+  const room = REF_MAX - state.refs.length;
+  if (room <= 0) { setMsg($("#goMsg"), "Höchstens 3 Songs — zuerst einen entfernen.", "err"); return; }
+  if (files.length > room) setMsg($("#goMsg"), `Nur die ersten ${room} — höchstens 3 Songs.`, "");
+  await Promise.all(files.slice(0, room).map(analyzeOne));
+}
+async function analyzeOne(file) {
+  const r = { key: "r" + Math.random().toString(36).slice(2, 9), name: file.name, status: "run", msg: "wird hochgeladen …", result: null };
+  state.refs.push(r); renderRefs();
+  const upd = (patch) => { Object.assign(r, patch); renderRefs(); };
+  // Brücke ab 3.19 vermisst selbst; eine ältere lässt nur die Musik-KI zuhören
+  const deep = macCan("analyse") || !state.bridge.connected;
+  // als ArrayBuffer wie seit 2.x — ein File-Körper kam in WebKit beim Abfangen leer an (Prüfstand 3.24)
+  const body = await file.arrayBuffer();
+  const send = (kind) => api(`/api/analyze?kind=${kind}`, { method: "POST", raw: body, ctype: file.type || "audio/mpeg",
     headers: { "x-nf-filename": encodeURIComponent(file.name) } });
-  if (!r.ok) { chip.textContent = "✗ " + ((r.data && r.data.message) || r.status); return; }
-  const id = r.data.id;
-  for (let i = 0; i < 400; i++) {
+  let kind = deep ? "analyse" : "understand";
+  let res = await send(kind).catch(() => null);
+  if (!res || !res.ok) return upd({ status: "error", msg: "✗ " + ((res && res.data && res.data.message) || "Hochladen fehlgeschlagen") });
+  let id = res.data.id;
+  for (let i = 0; i < 600; i++) {
     await sleep(1500);
-    const j = (await api("/api/render/" + id)).data || {};
+    if (!state.refs.includes(r)) { api(`/api/render/${id}/cancel`, { method: "POST" }).catch(() => {}); return; }
+    const j = (await api("/api/render/" + id).catch(() => ({ data: {} }))).data || {};
     if (j.status === "done") {
-      state.reference = j.result || {};
-      const x = state.reference;
-      chip.innerHTML = `🎧 <b>Referenz:</b> ${esc((x.caption || "").slice(0, 90))}${(x.caption || "").length > 90 ? "…" : ""}` +
-        ` · Tempo-Schätzung ${esc(String(x.bpm || "?"))} BPM · ${esc(x.keyscale || "?")} <button type="button" title="Referenz entfernen">✕</button>`;
-      chip.querySelector("button").onclick = () => { state.reference = null; chip.classList.add("hidden"); };
+      const out = kind === "analyse" ? (j.result || {}) : { v: 1, ace: j.result || {}, measure: { unavailable: "Brücke älter als 3.19" } };
+      upd({ status: "done", msg: "", result: out }); saveRefs();
       return;
     }
-    if (j.status === "error" || j.status === "cancelled") { chip.textContent = "✗ Analyse: " + (j.message || j.status); return; }
-    chip.textContent = `🎧 ${file.name} — ${j.message || "wartet auf den Mac …"}`;
+    if (j.status === "error" && kind === "analyse" && /älter als/.test(j.message || "")) {     // alte Brücke: nur zuhören lassen
+      kind = "understand"; res = await send(kind).catch(() => null);
+      if (!res || !res.ok) return upd({ status: "error", msg: "✗ " + ((res && res.data && res.data.message) || "Hochladen fehlgeschlagen") });
+      id = res.data.id; continue;
+    }
+    if (j.status === "error" || j.status === "cancelled") return upd({ status: "error", msg: "✗ Analyse: " + (j.message || j.status) });
+    upd({ msg: j.message || (j.status === "queued" ? "wartet auf den Mac …" : "läuft …") });
   }
-  chip.textContent = "✗ Analyse: der Mac hat nicht geantwortet.";
+  upd({ status: "error", msg: "✗ Analyse: der Mac hat nicht geantwortet." });
+}
+function removeRef(key) { state.refs = state.refs.filter(r => r.key !== key); saveRefs(); renderRefs(); }
+
+const STEM_COL = { drums: "#ff5fa2", bass: "#7c5cff", vocals: "#2be4c6", other: "#ffb347" };
+const STEM_DE = { drums: "Drums", bass: "Bass", vocals: "Gesang", other: "Rest" };
+function chip(label, value, title) {
+  const c = el("span", "vb-chip"); if (title) c.title = title;
+  if (label) c.append(el("span", "vb-cl", label));
+  const v = el("b", "", ""); v.append(...[].concat(value)); c.append(v);
+  return c;
+}
+function txt(s, no) { const x = el("span", "", s); if (no) x.setAttribute("translate", "no"); return x; }
+function keyNodes(k) { return [txt(k.name, true), txt(" "), txt(KEY_DE[k.mode] || k.mode)]; }
+function energySvg(m) {
+  const e = m.energy || [], n = e.length;
+  if (n < 4) return null;
+  const ns = "http://www.w3.org/2000/svg", svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", `0 0 ${n} 34`); svg.setAttribute("preserveAspectRatio", "none"); svg.setAttribute("class", "vb-energy");
+  svg.setAttribute("role", "img"); svg.setAttribute("aria-label", "Energieverlauf");
+  const pts = e.map((v, i) => `${i},${32 - v * 0.3}`).join(" ");
+  const area = document.createElementNS(ns, "polygon"); area.setAttribute("points", `0,33 ${pts} ${n - 1},33`); area.setAttribute("class", "vb-area"); svg.append(area);
+  (m.sections || []).forEach((sg, i) => {
+    if (i > 0) { const l = document.createElementNS(ns, "line"); l.setAttribute("x1", sg.start); l.setAttribute("x2", sg.start); l.setAttribute("y1", 0); l.setAttribute("y2", 34); l.setAttribute("class", "vb-cut"); svg.append(l); }
+  });
+  return svg;
+}
+function refCard(r) {
+  const c = el("div", "vb-card" + (r.status === "error" ? " err" : ""));
+  c.dataset.key = r.key;
+  const head = el("div", "vb-chead");
+  head.append(txt("🎵 "), txt(r.name, true));
+  const x = el("button", "ghost btn-s vb-x", "✕"); x.type = "button"; x.title = "Entfernen"; x.setAttribute("aria-label", "Entfernen"); x.onclick = () => removeRef(r.key);
+  head.append(x); c.append(head);
+  if (r.status !== "done") { c.append(el("p", "status" + (r.status === "error" ? " err" : " busy"), r.msg || "")); return c; }
+  const a = r.result.ace || {}, m = r.result.measure || {};
+  if (a.caption) { const p = el("p", "vb-style"); p.append(txt("Stil", false), txt(": "), txt(a.caption, true)); p.title = a.caption; c.append(p); }
+  const chips = el("div", "vb-chips");
+  if (m.bpm) chips.append(chip("", [txt(String(Math.round(m.bpm)), true), txt(" BPM", true)]));
+  if (m.key) chips.append(chip("", m.key.alt ? [...keyNodes(m.key), txt(" "), txt("oder"), txt(" "), ...keyNodes(m.key.alt)] : keyNodes(m.key)));
+  if (refMeter(a)) chips.append(chip("Takt", txt(refMeter(a), true)));
+  if (m.vocals) chips.append(chip("Gesang", m.vocals === "kaum" ? txt("kaum") : [txt(m.vocals), ...(refLang(a, m) ? [txt(" · "), txt(refLang(a, m), true)] : [])]));
+  if (m.colour) chips.append(chip("Klang", txt(m.colour)));
+  if (m.groove) chips.append(chip("", txt(m.groove.four_on_floor ? "Kick auf jedem Schlag" : m.groove.backbeat > 0.5 ? "Kick und Snare im Wechsel" : "gebrochener Rhythmus")));
+  c.append(chips);
+  if (m.chords && m.chords.names) {
+    const p = el("p", "vb-line"); p.append(txt("Akkorde"), txt(": "), txt(`${m.chords.names.join(" – ")}  (${m.chords.roman.join("–")})`, true)); c.append(p);
+  }
+  if (m.stems) {
+    const bar = el("div", "vb-stems"), leg = el("div", "vb-legend");
+    ["drums", "bass", "vocals", "other"].forEach(k => {
+      const v = m.stems[k] || 0; const seg = el("span"); seg.style.width = v + "%"; seg.style.background = STEM_COL[k]; seg.title = `${STEM_DE[k]} ${v} %`; bar.append(seg);
+      const l = el("span", "vb-leg"); const d = el("i"); d.style.background = STEM_COL[k]; l.append(d, txt(STEM_DE[k]), txt(` ${v} %`, true)); leg.append(l);
+    });
+    c.append(bar, leg);
+  }
+  const svg = energySvg(m);
+  if (svg) c.append(svg);
+  if (m.sections && m.sections.length) {
+    const p = el("p", "vb-line vb-secs"); p.append(txt("Aufbau"), txt(": "));
+    m.sections.forEach((sg, i) => { if (i) p.append(txt(" · ")); p.append(txt(`${sg.label} `, true), txt(sg.energy), txt(` ${fmtMin(sg.start)}`, true)); });
+    c.append(p);
+  }
+  if (m.unavailable) c.append(el("p", "sub small", "Nur der Stil der Musik-KI — " + m.unavailable));
+  return c;
+}
+function renderRefs() {
+  const box = $("#refCards"); if (!box) return;
+  box.innerHTML = "";
+  state.refs.forEach(r => box.append(refCard(r)));
+  $("#refBtn").disabled = state.refs.length >= REF_MAX;
+  const done = refsDone(), mix = $("#refMix");
+  mix.classList.toggle("hidden", !done.length);
+  if (!done.length) return;
+  const t = $("#refMixText"); t.innerHTML = "";
+  t.append(el("b", "", "Gemeinsam"), txt(": "));
+  const parts = [];
+  const tp = refTempos();
+  if (tp.length) parts.push([txt(tp.length > 1 && Math.max(...tp) - Math.min(...tp) >= 1 ? `${Math.round(Math.min(...tp))}–${Math.round(Math.max(...tp))} BPM` : `${Math.round(tp[0])} BPM`, true)]);
+  const modes = new Set(done.map(r => ((r.result.measure || {}).key || {}).mode).filter(Boolean));
+  if (modes.size === 1) parts.push([txt([...modes][0] === "minor" ? "Moll" : "Dur")]); else if (modes.size > 1) parts.push([txt("Dur und Moll gemischt")]);
+  const g = done.map(r => (r.result.measure || {}).groove).filter(Boolean);
+  if (g.length && g.every(x => x.four_on_floor)) parts.push([txt("Kick auf jedem Schlag")]);
+  const v = done.map(r => (r.result.measure || {}).vocals).filter(Boolean);
+  if (v.length && v.every(x => x === "kaum")) parts.push([txt("instrumental")]); else if (v.length && v.every(x => x !== "kaum")) parts.push([txt("mit Gesang")]);
+  const col = new Set(done.map(r => (r.result.measure || {}).colour).filter(Boolean));
+  if (col.size === 1) parts.push([txt("Klang"), txt(" "), txt([...col][0])]);
+  parts.forEach((p, i) => { if (i) t.append(txt(" · ")); t.append(...p); });
+  const bpm = refTempo(), key = refKey();
+  if (bpm || key) {
+    const n = el("div", "sub small vb-take");
+    n.append(txt("Der neue Song bekommt"), txt(" "));
+    if (bpm) n.append(txt(`${bpm} BPM`, true));
+    if (bpm && key) n.append(txt(" · "));
+    if (key) { const [nm, md] = key.split(" "); n.append(txt(nm, true), txt(" "), txt(KEY_DE[md])); }
+    n.append(txt(" "), txt("— ändern unter „Feinheiten“."));
+    t.append(n);
+  }
 }
 
 // =============================================================================
@@ -3093,7 +3253,9 @@ function init() {
   $("#goBtn").onclick = () => createTrack();
   $("#idea").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) createTrack(); });
   $("#refBtn").onclick = () => $("#refFile").click();
-  $("#refFile").onchange = (e) => { analyzeReference(e.target.files[0]); e.target.value = ""; };
+  $("#refFile").onchange = (e) => { analyzeFiles(e.target.files); e.target.value = ""; };
+  $("#refGo").onclick = () => createTrack({ label: "🧬 Aus deinen Songs" });
+  loadRefs(); renderRefs();
 
   $("#refineBtn").onclick = () => refineTrack();
   $("#refineIn").addEventListener("keydown", (e) => { if (e.key === "Enter") refineTrack(); });

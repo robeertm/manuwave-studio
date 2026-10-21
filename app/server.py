@@ -76,7 +76,7 @@ HOST = os.environ.get("HOST", "0.0.0.0")      # 3.11: lokale Installation → 12
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, "web")
 
-APP_VERSION = "3.23.0"
+APP_VERSION = "3.24.0"
 BRIDGE_FILE = next((p for p in (os.path.join(ROOT, "bridge", n) for n in ("neonforge_bridge.py", "manuwave_bridge.py"))
                     if os.path.isfile(p)), os.path.join(ROOT, "bridge", "manuwave_bridge.py"))
 BUILD_INFO_FILE = os.path.join(WEB, "build-info.json")
@@ -263,8 +263,8 @@ def clean_brief_request(raw: dict) -> dict:
 
 
 BRIEF_LANE = {"brief", "settings", "export", "verify", "archiv", "loeschen", "web", "web_weg", "master_merken", "midi"}
-NEW_KINDS = {"settings", "export", "verify", "cover", "nachruesten", "archiv", "loeschen", "web", "web_weg", "master_merken", "midi", "weiter"}
-KIND_SINCE = {"loeschen": "3.6", "web": "3.10", "web_weg": "3.10", "master_merken": "3.12.3", "midi": "3.16", "weiter": "3.17"}     # ab welcher Brücke eine Art geht (für die Meldung)
+NEW_KINDS = {"settings", "export", "verify", "cover", "nachruesten", "archiv", "loeschen", "web", "web_weg", "master_merken", "midi", "weiter", "analyse"}
+KIND_SINCE = {"loeschen": "3.6", "web": "3.10", "web_weg": "3.10", "master_merken": "3.12.3", "midi": "3.16", "weiter": "3.17", "analyse": "3.19"}     # ab welcher Brücke eine Art geht (für die Meldung)
 
 
 def lane_of(kind: str) -> str:
@@ -1347,7 +1347,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     self._json(413, {"error": "too_big", "message": "Datei fehlt oder ist größer als %d MB." % (MAX_AUDIO_BYTES // (1024 * 1024))})
                     return
             kind = data.get("kind") if isinstance(data, dict) else None
-            if kind not in NEW_KINDS or (kind in ("verify", "weiter") and upload is None) \
+            if kind not in NEW_KINDS or kind == "analyse" or (kind in ("verify", "weiter") and upload is None) \
                     or (upload is not None and kind not in ("verify", "export", "nachruesten", "web", "weiter")):
                 self._json(400, {"error": "bad_request", "message": "Unbekannte Auftragsart."})
                 return
@@ -1374,8 +1374,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return
             name = urllib.parse.unquote(self.headers.get("x-nf-filename", "upload"))[:120]
             name = re.sub(r"[^\w.\- ]+", "_", name) or "upload"
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            kind = "analyse" if q.get("kind") == ["analyse"] else "understand"
             try:
-                job = BROKER.submit(ns, "understand", {}, {"filename": name, "title": name}, upload=audio)
+                job = BROKER.submit(ns, kind, {}, {"filename": name, "title": name}, upload=audio)
             except OverflowError as e:
                 self._json(429, {"error": "busy", "message": str(e)})
                 return
@@ -1395,7 +1397,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     req = clean_render_request(data.get("request"))
                 elif kind == "brief":
                     req = clean_brief_request(data.get("request"))
-                elif kind in NEW_KINDS and kind not in ("verify",):
+                elif kind in NEW_KINDS and kind not in ("verify", "analyse"):
                     req = clean_job(kind, data.get("request"))
                 else:
                     raise ValueError("Unbekannte Auftragsart.")
