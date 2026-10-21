@@ -58,7 +58,7 @@ try:
 except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.19.1"
+BRIDGE_VERSION = "3.19.2"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
@@ -2430,7 +2430,7 @@ MASTER_RANGES = {"bass": (-12.0, 12.0), "tone": (-6.0, 6.0), "treble": (-12.0, 1
                  "gain": (-24.0, 12.0), "fade_in": (0.0, 10.0), "fade_out": (0.0, 15.0)}
 MASTER_DEFAULT = {"bass": 0.0, "tone": 0.0, "treble": 0.0, "soft": 2.0, "fade_in": 0.0}
 MASTER_LIMIT_DB = -1.5      # Spitzen-Grenze: auch ein MP3 bleibt beim Abspielen unter 0 dBFS
-MASTER_TARGET_LUFS = -14.0  # Lautheit wie bei Spotify/Apple Music — lauter wird dort ohnehin leiser gedreht
+MASTER_TARGET_LUFS = -14.0  # Lautheit wie bei den großen Streamingdiensten — lauter wird dort ohnehin leiser gedreht
 
 
 def clean_master(raw):
@@ -2702,7 +2702,7 @@ def _audio_seconds(cfg: dict, data: bytes, ext: str, fallback: float) -> float:
 
 
 def _cover_3000(cfg: dict, cpath: str):
-    """Vertriebe (Spotify über DistroKid & Co.) verlangen mind. 3000 × 3000 px. Das Cover entsteht mit 1000 px
+    """Vertriebe verlangen mind. 3000 × 3000 px. Das Cover entsteht mit 1000 px
     und wird hier hochgerechnet (sips, Lanczos) — steht so im Lies-mich."""
     if not os.path.isfile(cpath):
         return None
@@ -2788,7 +2788,7 @@ def release_package(cfg: dict, path: str, res: dict, info: dict, opts: dict, fin
         ("[ ] Liedtext — von %s selbst geschrieben" % owner) if text_eigen else
         ("[ ] Liedtext — entfällt (instrumental)" if instrumental else "[x] Liedtext — mit KI erzeugt"),
         "[x] Cover — mit KI erzeugt (%s)" % (cov_lic[0] if cov_lic else cover_model or "Bildmodell"),
-        "Nicht als KI anzugeben (KI-gestütztes Mixing/Mastering zählt laut DistroKid nicht): Mastering in Manuwave Studio",
+        "Nicht als KI anzugeben (KI-gestütztes Mixing/Mastering zählt bei Vertrieben in der Regel nicht): Mastering in Manuwave Studio",
     ]
     meta_txt = "\n".join([
         "VERÖFFENTLICHUNG — METADATEN FÜRS HOCHLADEN",
@@ -2811,14 +2811,14 @@ def release_package(cfg: dict, path: str, res: dict, info: dict, opts: dict, fin
         "Cover:                             %s — 3000 × 3000 px, JPG, RGB" % ("Cover_3000x3000.jpg"),
         "Datei:                             %s (%s, %s, %d Hz)" % (res["filename"], res["format"].upper(), qual, res["rate"]),
         "",
-        "KI-ANGABEN (z. B. DistroKid „AI credits“ — Stand Oktober 2026, beim Hochladen prüfen):",
+        "KI-ANGABEN (wie Vertriebe sie abfragen — Stand Oktober 2026, beim Hochladen prüfen):",
         *("  " + x for x in ki),
         "",
         "WICHTIG",
         "  • Keine Nachahmung anderer Künstler, keine Massen-Uploads — sonst sperren Vertriebe und Plattformen.",
-        *(["  • Selbst eingespielte Musik: bei der GEMA anmeldbar, Bandcamp & Co. nehmen sie."] if eigen else [
-        "  • Bandcamp, AudioJungle und Pond5 nehmen (Stand Oktober 2026) keine KI-erzeugte Musik.",
-        "  • GEMA: rein KI-erzeugte Teile sind nicht anmeldbar%s." % (" — dein eigener Text kann es sein" if text_eigen else "")]),
+        *(["  • Selbst eingespielte Musik: bei einer Verwertungsgesellschaft anmeldbar, auch Plattformen ohne KI-Musik nehmen sie."] if eigen else [
+        "  • Manche Plattformen und Musikbibliotheken nehmen (Stand Oktober 2026) keine KI-erzeugte Musik — vorher deren Regeln lesen.",
+        "  • Verwertungsgesellschaften: rein KI-erzeugte Teile sind nicht anmeldbar%s." % (" — dein eigener Text kann es sein" if text_eigen else "")]),
         "  • Wasserzeichen-Kennung (unhörbar im Audio): %s" % (wm or "—"),
         "  • SHA-256 der Audiodatei: %s" % sha,
     ]) + "\n"
@@ -2915,7 +2915,7 @@ def release_package(cfg: dict, path: str, res: dict, info: dict, opts: dict, fin
                 "Musik; Anmeldung bei einer Verwertungsgesellschaft oder bei Content-ID-Systemen; Verwendung zum Training von KI-Modellen.</p>"
               + "<h2>§ 4 Vergütung</h2><p>Einmalig " + blank + " €, fällig bei Unterzeichnung — zzgl. gesetzlicher Umsatzsteuer, "
                 "bei Kleinunternehmerregelung stattdessen: „Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.“</p>"
-              + "<h2>§ 5 Verwertungsgesellschaften</h2><p>Der Titel ist bei keiner Verwertungsgesellschaft (z. B. GEMA) angemeldet. "
+              + "<h2>§ 5 Verwertungsgesellschaften</h2><p>Der Titel ist bei keiner Verwertungsgesellschaft angemeldet. "
                 "Für die vereinbarte Nutzung fallen nach Kenntnis des Lizenzgebers keine Vergütungen an Verwertungsgesellschaften an. "
                 "Bei Rückfragen einer Verwertungsgesellschaft stellt der Lizenzgeber diese Lizenz und den Herkunftsnachweis zur Verfügung.</p>"
               + ("<h2>§ 6 Entstehung</h2><p>Der Titel wurde vom Lizenzgeber selbst komponiert und eingespielt (Synthesizer und "
