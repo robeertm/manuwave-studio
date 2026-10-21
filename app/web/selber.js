@@ -7,7 +7,8 @@
 // Die Oberfläche ist zweisprachig aus sich heraus (T(de, en)) und steht unter translate="no" — der Laufzeit-Übersetzer
 // fasst sie nicht an (Regel aus 3.12: eine Übersetzung ändert, was der Code zurückliest).
 import { openSoundBrowser } from "./klangwahl.js";
-import { SCHEMA, PAD_PARAMS, DRUM_MODELS, GM_TO_PAD, KITS, normIR, reverbReturn, monoBass, fullness, MODELS, MODEL_GROUPS, PRESETS, defaults, demoProject, CATS, TAG_NAMES, catOf, tagsOf, knobIdle, markIdle, showValue, fixText, knobWheel, keepAudioAlive } from "./selber-presets.js";
+import { pickBox } from "./auswahl.js";
+import { SCHEMA, PAD_PARAMS, DRUM_MODELS, DRUM_GROUPS, GM_TO_PAD, KITS, KIT_GROUPS, normIR, reverbReturn, monoBass, fullness, MODELS, MODEL_GROUPS, PRESETS, defaults, demoProject, CATS, TAG_NAMES, catOf, tagsOf, knobIdle, markIdle, showValue, fixText, knobWheel, keepAudioAlive } from "./selber-presets.js";
 
 const EN = window.MWS_LANG === "en";
 const T = (de, en) => (EN ? en : de);
@@ -37,9 +38,16 @@ const NOTE_EN = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "
 const noteName = (n) => (EN ? NOTE_EN : NOTE_NAMES)[n % 12] + (Math.floor(n / 12) - 1);
 const model = (id) => MODELS.find(m => m.id === id) || MODELS[0];
 // 3.16: Instrument-Menü in Gruppen (Grundmodelle, Klassiker, Drums); disabled(m) sperrt Einträge
-const modelOptions = (sel, disabled = () => false) => MODEL_GROUPS.map(([g, de, en]) => h("optgroup", { label: EN ? en : de },
-  MODELS.filter(m => m.g === g).map(m => h("option", { value: m.id, selected: m.id === sel, disabled: disabled(m) }, EN ? m.en : m.de))));
-const KIT_ORDER = ["808", "909", "606", "cr78", "80s", "trap", "techno", "lofi"];
+const modelOptions = (sel, disabled = () => false) => MODEL_GROUPS.map(([g, de, en, icon]) => h("optgroup", { label: EN ? en : de, "data-icon": icon },
+  MODELS.filter(m => m.g === g).map(m => h("option", { value: m.id, selected: m.id === sel, disabled: disabled(m), "data-desc": EN ? m.he : m.hd }, EN ? m.en : m.de))));
+// 3.22: Liste mit Überschriften — groups [[icon, de, en, [werte]]], opts [[wert, de, en]]; was in keiner Gruppe steht, kommt ans Ende
+function groupedOptions(opts, groups, isSel, desc = () => null) {
+  const opt = ([v, de, en]) => h("option", { value: String(v), selected: isSel(v), "data-desc": desc(v) }, EN ? en : de);
+  if (!groups) return opts.map(opt);
+  const used = new Set(groups.flatMap(g => g[3])), rest = opts.filter(o => !used.has(o[0]));
+  return [...groups.map(([icon, de, en, vs]) => h("optgroup", { label: EN ? en : de, "data-icon": icon || null }, vs.map(v => opts.find(o => o[0] === v)).filter(Boolean).map(opt))), ...rest.map(opt)];
+}
+const kitOpts = () => Object.keys(KITS).map(k => { const [a, b] = (EN ? KITS[k].en : KITS[k].de).split(" — "); return [k, a, a, b]; });
 // Werks-Preset auf eine Spur legen (Klang + Chorus des Vorbilds, z. B. Juno)
 function presetChorus(t, pr) { if (pr && pr.ch != null) { t.chorus = pr.ch; applyAllTracks(); } }
 const dbGain = (db) => (db <= -60 ? 0 : Math.pow(10, db / 20));
@@ -550,10 +558,10 @@ function knob(p, value, onChange, opts = {}) {
   return wrap;
 }
 function selectBox(p, value, onChange) {
-  const id = "sbS" + uid();
-  const s = h("select", { id, class: "sb-sel" }, p.opts.map(([v, de, en]) => h("option", { value: String(v), selected: String(v) === String(value) }, EN ? en : de)));
+  const id = "sbS" + uid(), big = p.opts.length >= 12;
+  const s = h("select", { id, class: "sb-sel" }, groupedOptions(p.opts, p.groups, (v) => String(v) === String(value)));
   s.addEventListener("change", () => { const raw = s.value; const o = p.opts.find(x => String(x[0]) === raw); onChange(o ? o[0] : raw); });
-  return h("div", { class: "sb-field" }, h("label", { for: id, text: EN ? p.en : p.de }), s);
+  return h("div", { class: "sb-field" }, h("label", { for: big ? id + "Pick" : id, text: EN ? p.en : p.de }), big ? pickBox(s, { en: EN, title: EN ? p.en : p.de }) : s);
 }
 function toggle(p, value, onChange) {
   const b = h("button", { type: "button", class: "sb-tog" + (value ? " on" : ""), "aria-pressed": String(!!value), text: EN ? p.en : p.de });
@@ -596,22 +604,23 @@ function shell() {
       h("div", { class: "sb-proj" },
         h("label", { class: "sb-cap", for: "sbName", text: T("Projekt", "Project") }),
         h("input", { id: "sbName", type: "text", maxlength: "80", class: "sb-name" }),
-        h("select", { id: "sbProjects", "aria-label": T("Projekt öffnen", "Open project") }),
+        pickBox(h("select", { id: "sbProjects", "aria-label": T("Projekt öffnen", "Open project") }), { en: EN, title: T("Projekt öffnen", "Open project") }),
         h("button", { id: "sbNew", type: "button", class: "ghost btn-s", text: T("＋ Neu", "＋ New") }),
         h("button", { id: "sbDup", type: "button", class: "ghost btn-s", text: T("⧉ Kopie", "⧉ Copy") }),
         h("button", { id: "sbExport", type: "button", class: "ghost btn-s", title: T("Projekt als Datei sichern", "Back up the project as a file"), text: T("⬇︎ Datei", "⬇︎ File") }),
         h("button", { id: "sbImport", type: "button", class: "ghost btn-s", title: T("Projekt aus Datei laden", "Load a project from a file"), text: T("⬆︎ Datei", "⬆︎ File") }),
         h("input", { id: "sbImportFile", type: "file", accept: ".json,application/json", hidden: true }),
         h("button", { id: "sbDel", type: "button", class: "ghost btn-s danger", text: T("🗑", "🗑"), title: T("Projekt löschen", "Delete project") }),
-        h("select", { id: "sbFromLib", class: "sb-fromlib", "aria-label": T("Song aus der Bibliothek auf die Instrumente legen", "Put a library song on the instruments"),
-          title: T("Jeder KI-Song bekommt auf dem Mac ein MIDI-Abbild — hier wird daraus ein Projekt mit Drums, Bass, Akkorden und Melodie", "Every AI song gets a MIDI image on your computer — this turns it into a project with drums, bass, chords and melody") })),
+        pickBox(h("select", { id: "sbFromLib", class: "sb-fromlib", "aria-label": T("Song aus der Bibliothek auf die Instrumente legen", "Put a library song on the instruments"),
+          title: T("Jeder KI-Song bekommt auf dem Mac ein MIDI-Abbild — hier wird daraus ein Projekt mit Drums, Bass, Akkorden und Melodie", "Every AI song gets a MIDI image on your computer — this turns it into a project with drums, bass, chords and melody") }),
+          { en: EN, title: T("Song aus der Bibliothek auf die Instrumente legen", "Put a library song on the instruments") })),
       h("span", { id: "sbSaved", class: "sub small", role: "status" })),
     h("div", { id: "sbTransport", class: "sb-transport" }),
     h("div", { class: "sb-main" },
       h("div", { class: "sb-tracks-wrap" },
         h("div", { class: "sb-head" }, h("h3", { text: T("Spuren", "Tracks") }),
-          h("select", { id: "sbAddModel", "aria-label": T("Instrument der neuen Spur", "Instrument for the new track") },
-            modelOptions("poly")),
+          pickBox(h("select", { id: "sbAddModel", "aria-label": T("Instrument der neuen Spur", "Instrument for the new track") },
+            modelOptions("poly")), { en: EN, title: T("Instrument der neuen Spur", "Instrument for the new track") }),
           h("button", { id: "sbAdd", type: "button", class: "ghost btn-s", text: T("＋ Spur", "＋ Track") })),
         h("div", { id: "sbTracks", class: "sb-tracks" })),
       h("div", { id: "sbEditor", class: "sb-editor" })),
@@ -674,7 +683,7 @@ async function renderFromLib() {
   const sel = q("#sbFromLib"); if (!sel) return;
   const list = window.mwsLibrary && window.mwsLibrary.midiTracks ? await window.mwsLibrary.midiTracks().catch(() => []) : [];
   sel.innerHTML = "";
-  sel.append(h("option", { value: "" }, list.length ? T(`🎼 Song aus der Bibliothek (${list.length}) …`, `🎼 Song from the library (${list.length}) …`)
+  sel.append(h("option", { value: "", "data-ph": "" }, list.length ? T(`🎼 Song aus der Bibliothek (${list.length}) …`, `🎼 Song from the library (${list.length}) …`)
     : T("🎼 Songs aus der Bibliothek: MIDI-Abbilder folgen vom Mac", "🎼 Library songs: MIDI images will come from your computer")));
   for (const r of list) sel.append(h("option", { value: r.id }, r.title + (r.variant ? " · " + r.variant : "") + (r.bpm ? ` · ${Math.round(r.bpm)} BPM` : "")));
   sel.disabled = !list.length;
@@ -928,7 +937,7 @@ function renderEditor() {
   const user = S.userPresets || [];
   const presets = PRESETS.filter(p => p.model === t.model);
   const psel = h("select", { id: "sbPreset", "aria-label": T("Klang (Preset)", "Sound (preset)") },
-    h("option", { value: "" }, t.presetName || T("— eigener Klang —", "— custom sound —")),
+    h("option", { value: "", "data-ph": "" }, t.presetName || T("— eigener Klang —", "— custom sound —")),
     h("optgroup", { label: T("Werksklänge", "Factory sounds") }, presets.map((p, i) => h("option", { value: "f" + i }, EN ? p.en : p.de))),
     user.filter(p => p.model === t.model).length ? h("optgroup", { label: T("Meine Klänge", "My sounds") }, user.filter(p => p.model === t.model).map(p => h("option", { value: "u" + p.id }, p.name))) : null);
   psel.onchange = () => {
@@ -957,7 +966,7 @@ function renderEditor() {
     ...[["notes", t.kind === "drums" ? T("🥁 Rhythmus", "🥁 Beat") : T("🎼 Noten", "🎼 Notes")], ["sound", T("🎛 Klang", "🎛 Sound")], ["fx", T("🎚 Effekte", "🎚 Effects")]]
       .map(([k, l]) => h("button", { type: "button", role: "tab", class: S.tab === k ? "on" : "", "aria-selected": String(S.tab === k), text: l, onclick: () => { S.tab = k; lsSet(LS_UI, { tab: k }); renderEditor(); } })));
   el.append(h("div", { class: "sb-ehead", style: `--c:${t.color}` },
-    h("span", { class: "sb-tdot" }), h("b", { class: "sb-etitle", text: t.name }), msel, psel, browse, savePre, tabs),
+    h("span", { class: "sb-tdot" }), h("b", { class: "sb-etitle", text: t.name }), pickBox(msel, { en: EN, title: T("Instrument", "Instrument") }), pickBox(psel, { en: EN, title: T("Klang (Preset)", "Sound (preset)") }), browse, savePre, tabs),
     h("p", { class: "sub small sb-ehint", text: (EN ? m.he : m.hd) + (m.g === "classic" ? T(" · Eigener Nachbau, der Name nennt das Vorbild.", " · Our own recreation; the name refers to the original.") : "") }));
   const body = h("div", { id: "sbEBody", class: "sb-ebody" });
   el.append(body);
@@ -1025,8 +1034,8 @@ function renderPadPanel(bodyIn) {
   let box = q("#sbPadPanel", body);
   if (!box) { box = h("section", { id: "sbPadPanel", class: "sb-panel sb-padpanel" }); body.append(box); }
   box.innerHTML = "";
-  const kitSel = h("select", { id: "sbKit", "aria-label": T("Kit", "Kit") }, [...KIT_ORDER, ...Object.keys(KITS).filter(k => !KIT_ORDER.includes(k))].filter(k => KITS[k])
-    .map(k => h("option", { value: k, selected: k === t.patch.kitName }, EN ? KITS[k].en : KITS[k].de)));
+  const ko = kitOpts();
+  const kitSel = h("select", { id: "sbKit", "aria-label": T("Kit", "Kit") }, groupedOptions(ko, KIT_GROUPS, (v) => v === t.patch.kitName, (v) => ko.find(o => o[0] === v)[3]));
   kitSel.onchange = () => { snap(); t.patch.kit = JSON.parse(JSON.stringify(KITS[kitSel.value].kit)); t.patch.kitName = kitSel.value; post({ t: "patch", tr: t.id, patch: t.patch }); changed("none"); renderEditor(); };
   const pads = h("div", { class: "sb-pads" });
   t.patch.kit.forEach((k, i) => {
@@ -1036,12 +1045,12 @@ function renderPadPanel(bodyIn) {
     pads.append(b);
   });
   const k = t.patch.kit[S.pad] || {};
-  const msel = h("select", { "aria-label": T("Klang des Pads", "Pad sound") }, DRUM_MODELS.map(([v, de, en]) => h("option", { value: v, selected: v === k.model }, EN ? en : de)));
+  const msel = h("select", { "aria-label": T("Klang des Pads", "Pad sound") }, groupedOptions(DRUM_MODELS, DRUM_GROUPS, (v) => v === k.model));
   msel.onchange = () => { setParam(t, "v" + S.pad + ".model", msel.value); renderPadPanel(); };
   const ctl = h("div", { class: "sb-ctl" });
   for (const p of PAD_PARAMS) { const kk = "v" + S.pad + "." + p.k; const w = knob(p, k[p.k] ?? p.def, (v) => setParam(t, kk, v), { learn: { kind: "param", tr: "*", k: kk } }); w.dataset.pk = kk; ctl.append(w); }
-  box.append(h("h4", { text: T("Kit & Pads", "Kit & pads") }), h("div", { class: "sb-row" }, h("label", { class: "sb-cap", for: "sbKit", text: "Kit" }), kitSel),
-    pads, h("div", { class: "sb-row" }, h("b", { text: T("Pad ", "Pad ") + (S.pad + 1) }), msel), ctl);
+  box.append(h("h4", { text: T("Kit & Pads", "Kit & pads") }), h("div", { class: "sb-row" }, h("label", { class: "sb-cap", for: "sbKitPick", text: "Kit" }), pickBox(kitSel, { en: EN, title: T("Kit", "Kit") })),
+    pads, h("div", { class: "sb-row" }, h("b", { text: T("Pad ", "Pad ") + (S.pad + 1) }), pickBox(msel, { en: EN, title: T("Klang des Pads", "Pad sound") })), ctl);
 }
 
 // ---------- Effekte der Spur + gemeinsame Effekte ----------

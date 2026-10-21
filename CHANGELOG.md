@@ -3,6 +3,25 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.22.0 — 2026-10-21 (bridge 3.17.0)
+
+### Changed
+- **No more long drop-down lists for instruments.** A button opens an overview instead: groups as headings, entries
+  as tiles in columns (not one long column), a short description under each instrument, and a **search field** from
+  ten entries on (it also searches the descriptions; accents don't matter). Typing jumps into the search, the arrow
+  keys move by position on screen, Enter picks, Esc or a click outside closes. On a phone it opens as a sheet from
+  the bottom.
+  - *Make your own*: instrument and new track (33 instruments in five groups), sound preset, kit (classic drum
+    machines / by style), pad sound (kicks, snares & claps, hi-hats & cymbals, toms, percussion, effects), projects
+    and library songs.
+  - Loop machine: beat kit and sets.
+  - Instrument settings: piano & mallet type (pianos / mallets / bells & metal) and orchestra instrument (strings /
+    brass / woodwinds).
+  - Mastering: the track list, grouped by folder once more than one folder is in use.
+- Short lists stay drop-downs but are now structured: echo time (straight / dotted / triplets / free) and tempo sync
+  (bars / notes / triplets).
+- While the overview is open, keys belong to it: Space no longer starts playback and letters don't play notes.
+
 ## 3.21.0 — 2026-10-20 (bridge 3.17.0)
 
 ### Added

@@ -97,6 +97,7 @@ when the tab is in the background, and the offline render is sample-identical to
 | 🎻 **New instruments** | Computed like the synths, no samples: piano & grand (felt soft pianos with long reverb, echo and shimmer, upright, honky-tonk, celesta), mallets & bells (marimba, vibraphone, glockenspiel, music box, kalimba, tubular and church bells, steel drum, singing bowl, gong), choir & voices (a/e/i/o/u/hum, up to eight singers per note, whisper, overtone singing, robot), orchestra (string sections and solos, pizzicato, tremolo, brass, woodwinds) and wild effects (risers, impacts, lasers, wind, rain, sea, thunder, aliens, glitch, drones). 232 sounds. |
 | 🌌 **Space per instrument** | Every instrument has its own reverb (up to 30 s, shimmer, freeze), echo in time or in ms, and body & width. |
 | 🎛 **Sound browser** | 17 categories, search, tags, ★ favourites, recent sounds and ▶︎ listen; a click selects right away, the arrow keys browse. |
+| 🗂 **Grouped pickers** | Instruments, kits, pad sounds, orchestra and piano types open as an overview — groups, tiles in columns, a description per instrument, search. On a phone: a sheet from the bottom. |
 | 🔊 **Fuller sound** | The shared reverb is level-matched (it used to be louder than the instruments), the reverb return starts at 180 Hz, the bass stays mono, and a *Body* control on the master adds gentle saturation, warmth and glue. |
 | 🔒 **Lock · ⏪ Flow capture** | Lock a generator so *Surprise me* and the autopilot leave it alone. The machine always listens: *Save what just played* puts the last 4/8/16 bars into the library after the fact, *⬇ MIDI* gives the same bars as a MIDI file. |
 | 🎹 **Harmony** | Key (ten scales incl. pentatonic and blues), chord progression and bars per chord apply to all generators; a change takes effect on the next bar. |
@@ -105,6 +106,8 @@ when the tab is in the background, and the offline render is sample-identical to
 | ⏺ **Record** | ● records what you hear (after the limiter) into the library as a 24-bit WAV — self-played, no music AI involved. Sets and loops are saved in the browser. |
 
 ![Sound browser: categories, search, tags, favourites](docs/screenshots/sounds.png)
+
+![Instrument picker: groups, columns, descriptions, search](docs/screenshots/instruments.png)
 
 ![Recording into a generator: the beat plays what was played in, overdub running](docs/screenshots/loops_take.png)
 
