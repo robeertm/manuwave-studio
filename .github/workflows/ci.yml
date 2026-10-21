@@ -5,6 +5,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }      # the secret scan reads the whole pushed range; a shallow clone lacks its first commit
       - uses: actions/setup-python@v5
         with: { python-version: "3.9" }        # the bridge must stay Python 3.9 compatible (macOS system Python)
       - name: Python compiles (3.9)
