@@ -172,6 +172,9 @@ From 3.23 on, Manuwave Studio updates itself with one click:
 
 **Versions before 3.23** don't have the updater yet. Update them once with the installer as described above.
 
+**Git clones made before 2026-10-21:** the repository history was rewritten on that day, so `git pull` refuses to
+merge. Clone the repository again (or `git fetch origin && git reset --hard origin/main` if you changed nothing).
+
 ## How it works
 
 ```
