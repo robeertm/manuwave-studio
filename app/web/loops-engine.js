@@ -130,6 +130,7 @@ class Gen {
     this.layers = []; this.mute = false;
     this.post = null; this.ext = false; this.local = true;   // 3.18: Nachbearbeitung, MIDI-Ausgang (ext), interner Klang dabei (local)
     this.own = Array.isArray(g.own) ? g.own : []; this.liveAt = new Map();   // 3.20: Eingespieltes (Schritte ab Schleifenanfang), letzte Live-Anschläge
+    this.fade = 1; this.fadeTo = 1; this.fadeD = 0; this.fadeIn = 0; this.fadeOut = 0;   // 3.25: Blende (Autopilot) — Pegel, Ziel, Schritt je Sample, Takte
   }
   bars() { return clamp(Math.round(num(this.p.bars, 2)), 1, 8); }
   // Noten für den globalen Takt B — einmal je Takt aufgelöst (Tonart/Akkord gelten ab dem nächsten Takt)
@@ -701,11 +702,12 @@ class Loops extends AudioWorkletProcessor {
         if (g.ext && !g.local && g.ins) g.ins.allOff();
         break; }
       case "cap": this.cap = !!d.on; break;
-      case "start": { const g = this.gen(d.id); if (!g) break; if (!this.run) this.begin(); g.stopAt = null;
-        if (d.now || !this.playingAny()) { g.startAt = null; g.on = true; g.startBar = phraseStart(g, this.barNow()); g.dirty = g.dirty || !g.pat; g.cache = null; }
+      case "start": { const g = this.gen(d.id); if (!g) break; if (!this.run) this.begin(); g.stopAt = null; g.fadeOut = 0; g.fadeIn = num(d.fade, 0);
+        if (g.on && g.fadeTo === 0) { this.fadeGo(g, 1, g.fadeIn || 1); this.state(g); break; }   // blendet gerade aus → wieder hoch
+        if (d.now || !this.playingAny()) { g.startAt = null; g.on = true; g.startBar = phraseStart(g, this.barNow()); g.dirty = g.dirty || !g.pat; g.cache = null; this.fadeStart(g); }
         else g.startAt = this.barNow() + 1;
         this.state(g); break; }
-      case "stop": { const g = this.gen(d.id); if (!g) break; g.startAt = null; if (this.take && this.take.id === g.id && !g.on) this.takeEnd(); if (d.now) { this.halt(g); } else g.stopAt = this.barNow() + 1; this.state(g); if (d.now) this.idleEnd(); break; }
+      case "stop": { const g = this.gen(d.id); if (!g) break; g.startAt = null; g.fadeOut = d.now ? 0 : num(d.fade, 0); if (this.take && this.take.id === g.id && !g.on) this.takeEnd(); if (d.now) { this.halt(g); } else g.stopAt = this.barNow() + 1; this.state(g); if (d.now) this.idleEnd(); break; }
       case "mute": { const g = this.gen(d.id); if (g) g.mute = !!d.on; break; }
       case "run": if (d.on) this.begin(); else this.end(); break;
       case "metro": this.metro = !!d.on; break;
@@ -758,7 +760,10 @@ class Loops extends AudioWorkletProcessor {
     if (g.ins && g.ins.allOff) g.ins.allOff();
   }
   del(id) { const g = this.gen(id); if (!g) return; this.halt(g); if (g.ins) g.ins.panic(); this.gens = this.gens.filter(x => x !== g); if (this.rec && this.rec.id === id) this.rec = null; }
-  state(g) { this.port.postMessage({ t: "state", id: g.id, on: g.on, startAt: g.startAt, stopAt: g.stopAt, startBar: g.startBar }); }
+  state(g) { this.port.postMessage({ t: "state", id: g.id, on: g.on, startAt: g.startAt, stopAt: g.stopAt, startBar: g.startBar, fading: g.on && g.fadeTo !== g.fade ? (g.fadeTo ? "in" : "out") : null }); }
+  // 3.25: Blende — der Autopilot nimmt Generatoren sanft heraus und herein (Takte), von Hand bleibt es sofort
+  fadeGo(g, to, bars) { g.fadeTo = to; g.fadeD = 1 / Math.max(1, bars * SPB * this.sps); }
+  fadeStart(g) { if (g.fadeIn > 0) { g.fade = Math.min(g.fade, 0.0001); this.fadeGo(g, 1, g.fadeIn); } else { g.fade = g.fadeTo = 1; g.fadeD = 0; } g.fadeIn = 0; }
   swingOff(s) { const r = Math.round(s); if (Math.abs(s - r) > 0.01 || (r & 1) === 0) return 0; return (this.swing - 0.5) * 2; }
   seedNote(g, n, v, on) {
     const sr = this.seedRec; if (!sr || sr.id !== g.id) return;
@@ -861,8 +866,11 @@ class Loops extends AudioWorkletProcessor {
     // Starts/Stopps am Taktanfang
     let stopped = false;
     for (const g of this.gens) {
-      if (g.startAt != null && B >= g.startAt) { g.on = true; g.startAt = null; g.startBar = phraseStart(g, B); g.cache = null; this.state(g); }
-      if (g.stopAt != null && B >= g.stopAt) { this.halt(g); this.state(g); stopped = true; }
+      if (g.startAt != null && B >= g.startAt) { g.on = true; g.startAt = null; g.startBar = phraseStart(g, B); g.cache = null; this.fadeStart(g); this.state(g); }
+      if (g.stopAt != null && B >= g.stopAt) {
+        if (g.fadeOut > 0) { g.stopAt = null; this.fadeGo(g, 0, g.fadeOut); g.fadeOut = 0; this.state(g); }   // spielt weiter, bis die Blende unten ist
+        else { this.halt(g); this.state(g); stopped = true; }
+      }
     }
     if (stopped) this.idleEnd();
     const tk = this.take;
@@ -943,6 +951,20 @@ class Loops extends AudioWorkletProcessor {
     }
     runTo(N);
     for (const g of this.gens) if (g.post && g.post.active()) { const L = this.bufL[g.slot], R2 = this.bufR[g.slot]; if (L) g.post.process(L, R2, N); }
+    // 3.25: Blende je Generator (quadratisch — klingt gleichmäßiger als linear); unten angekommen → aus. Ausgeblendet bleibt
+    // der Pegel bei 0, bis er wieder startet — sonst kämen Ausklang und Hall nach dem Aus noch einmal laut
+    let faded = false;
+    for (const g of this.gens) {
+      if (g.fade === 1 && g.fadeTo === 1) continue;
+      const L = this.bufL[g.slot], R2 = this.bufR[g.slot]; if (!L) continue;
+      const up = g.fadeTo > g.fade, moving = g.fade !== g.fadeTo;
+      for (let i = 0; i < N; i++) {
+        if (g.fade !== g.fadeTo) g.fade = up ? Math.min(g.fadeTo, g.fade + g.fadeD) : Math.max(g.fadeTo, g.fade - g.fadeD);
+        const k = g.fade * g.fade; L[i] *= k; R2[i] *= k;
+      }
+      if (moving && g.fade === g.fadeTo) { if (g.fadeTo === 0 && g.on) { this.halt(g); faded = true; } this.state(g); }
+    }
+    if (faded) this.idleEnd();
     if (this.nev.length) { this.port.postMessage({ t: "nev", ev: this.nev }); this.nev = []; }
     // Mikrofon aufnehmen (mit Laufzeitausgleich: der Ton kommt um "lat" später an, als er gespielt wurde)
     const rc = this.rec;

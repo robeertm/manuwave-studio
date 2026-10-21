@@ -401,9 +401,9 @@ function bindMidi() {
   S.midiState = S.inputs.length ? "ok" : "nodev";
   renderMidi();
 }
-// Mackie-Transport (Keystation im DAW-Modus): nur vom zweiten Port, damit echte hohe Tasten nicht stoppen
-const MACKIE = { 91: "back", 92: "fwd", 93: "stop", 94: "play", 95: "rec", 86: "loop" };
-const isDawPort = (inp) => /mackie|daw|midiin ?2|port ?2|midi ?2|\b2\)?$/i.test(inp.name || "");
+// Transporttasten (Tastatur im DAW-Modus): nur vom zweiten Port, damit echte hohe Tasten nicht stoppen
+const DAW_KEYS = { 91: "back", 92: "fwd", 93: "stop", 94: "play", 95: "rec", 86: "loop" };
+const isDawPort = (inp) => /mackie|daw|midiin ?2|port ?2|midi ?2|\b2\)?$/i.test(inp.name || "");  // Kennung: Portnamen, wie Geräte sie melden
 function onMidi(ev, inp) {
   if (window.mwsLoopsVisible && window.mwsLoopsVisible()) return;     // 3.17: in der Loop-Maschine spielt das Keyboard dort
   const [st, d1 = 0, d2 = 0] = ev.data; const type = st & 0xf0;
@@ -419,7 +419,7 @@ function onMidi(ev, inp) {
     const on = type === 0x90 && d2 > 0;
     const mk = "nt:" + (st & 15) + ":" + d1;
     if (S.map[mk]) { if (on) runMapped(S.map[mk], 127); return; }
-    if (MACKIE[d1] && isDawPort(inp)) { if (on) transportCmd(MACKIE[d1]); return; }
+    if (DAW_KEYS[d1] && isDawPort(inp)) { if (on) transportCmd(DAW_KEYS[d1]); return; }
     if (on) noteOn(d1, d2 / 127, "midi"); else noteOff(d1);
     return;
   }
@@ -1314,7 +1314,7 @@ function renderKeys() {
   renderKbInfo(); paintKeys();
   if (t && t.kind === "drums") el.classList.add("drums"); else el.classList.remove("drums");
 }
-// 3 Oktaven am Handy, 4 am Laptop, 5 (61 Tasten, C2–C7 wie ein Keystation 61) auf breiten Monitoren
+// 3 Oktaven am Handy, 4 am Laptop, 5 (61 Tasten, C2–C7 wie eine übliche 61er-Tastatur) auf breiten Monitoren
 function kbOctaves() { const w = (q("#sbKeys") || {}).clientWidth || innerWidth; return w >= 1250 ? 5 : w >= 860 ? 4 : 3; }
 function renderKbInfo() {
   const e = q("#sbKbInfo"); if (!e) return;

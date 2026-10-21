@@ -3,6 +3,21 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.25.0 — 2026-10-21 (bridge 3.19.2)
+
+### Changed
+- **Loop machine: *Sound* opens as a layer across the whole width.** Every knob of the instrument, its sections side
+  by side, over the other generators — instead of a long panel inside the card. The keyboard at the bottom stays free
+  to play and Space still starts and stops everything; Esc or ✕ closes it, and only one is open at a time. On a phone
+  it fills the screen.
+- **The autopilot fades.** A generator it takes out fades out over two bars, one it brings in fades in over two bars;
+  after a breakdown, beat and bass come back over one bar. Starting and stopping by hand stays immediate. The fade is
+  computed in the sound engine, so recordings have it too. The auto mix measures a generator only once it has faded
+  in, so it is not turned up too loud.
+- **No third-party product names.** The README, code comments and the texts in the release package
+  (`Metadaten.txt`, licence template) describe distribution services, platforms, collecting societies and keyboards
+  in general terms instead of naming them.
+
 ## 3.24.1 — 2026-10-21 (bridge 3.19.1)
 
 ### Fixed

@@ -54,9 +54,9 @@ hobby showcase, where you can also share your own tracks.
 | 🏛 **Classics** | 18 recreations, each with its own factory sounds (110 in all): TB-303 (accent; slide when notes overlap, like the original), Minimoog, Juno-60 (with its chorus), Jupiter-8, Prophet-5, OB-Xa, SH-101, MS-20, ARP Odyssey, CS-80, Taurus bass pedals, PPG Wave, DX7, M1 house organ, Rhodes, Wurlitzer, B3 and Clavinet. Save your own sounds. |
 | 🥁 **Drum machine** | 16 pads, all synthesized (no samples) — TR-808, TR-909, TR-606, CR-78, 80s, trap, techno and lo-fi kits, each pad with level, pan, tune, decay, tone and snap. Step grid with accents. |
 | 🎛 **Knobs** | Click anywhere on a knob's arc and the value jumps there — nothing follows the mouse afterwards. For fine moves hold Shift and drag vertically, or use the mouse wheel; Alt-click restores the default. Knobs grow under the mouse. |
-| 🖥 **Full width** | The tab uses the whole monitor: from 1800 px tracks, editor and song sit side by side, and the on-screen keyboard shows as many octaves as fit — five (61 keys, like a Keystation 61) on a wide screen. |
+| 🖥 **Full width** | The tab uses the whole monitor: from 1800 px tracks, editor and song sit side by side, and the on-screen keyboard shows as many octaves as fit — five (61 keys, like a common 61-key keyboard) on a wide screen. |
 | 🎼 **Patterns & song** | Eight patterns (1–16 bars) per project, piano roll and step grid, swing, quantize, undo. Chain patterns into a song. Up to 16 tracks with volume, pan, EQ, chorus and sends to a shared reverb and tempo-synced delay. |
-| 🎹 **MIDI** | Any class-compliant USB/MIDI keyboard (for example the M-Audio Keystation 61 MK3): velocity, pitch bend, mod wheel, sustain pedal, volume fader, transport buttons in DAW mode, and *MIDI learn* for every knob. Web MIDI needs Chrome or Edge; without it (Safari) the computer keyboard plays (A W S E D … = C … C, Z/X octave). |
+| 🎹 **MIDI** | Any class-compliant USB/MIDI keyboard: velocity, pitch bend, mod wheel, sustain pedal, volume fader, transport buttons in DAW mode, and *MIDI learn* for every knob. Web MIDI needs Chrome or Edge; without it (Safari) the computer keyboard plays (A W S E D … = C … C, Z/X octave). |
 | 🎼 **AI songs on the instruments** | *Play* in the library (or *Song from the library* here) opens a song's MIDI image as a project: drums on the matching kit, Minimoog bass, Prophet chords, Minimoog melody, in parts of 16 bars, at the song's **measured** tempo (the music AI rarely hits the requested BPM exactly). |
 | ⏺ **Recording** | One-bar count-in, metronome, quantize to 1/4…1/32, overdub in a loop — every take can be undone. |
 | 🎵 **Create track** | Renders the arrangement faster than real time into a 24-bit/48 kHz WAV with a −1.5 dBFS limiter and puts it in the library. Projects are saved in the browser; back them up as a file. |
@@ -83,7 +83,7 @@ when the tab is in the background, and the offline render is sample-identical to
 | 〰️ **Oscillator** | A free tone generator: sine, triangle, saw, pulse, supersaw, white/pink/brown noise; frequency 20 Hz–8 kHz (free, or snapping to the key), fine tune, unison, sub, FM, drift, glide, an LFO on pitch/volume/pulse width/pan/FM, and a gate in time for pulsing tones. |
 | 🎼 **Your bars** | Play a few bars after a one-bar count-in (computer keyboard, MIDI or the keys on screen). The machine plays them and spins them on — *life of its own* sets how far it strays; every fourth pass returns to your original. |
 | 🎤 **Mic loop** | Sing or play into the microphone, in time, with latency compensation; overdub up to eight layers, undo, stutter, reverse. *To notes* hears out your melody and gives it to a synth that carries it on. |
-| 🎛 **Live sound** | On every generator: filter frequency, resonance, high-pass, a tempo-synced wobble, lows/mids/highs, drive, ping-pong echo in time, feedback, reverb, pan, volume, mute/solo — and *Sound* opens every knob of the instrument. Master: DJ filter, reverb length, level, limiter at −1.5 dBFS. *MIDI learn* puts any knob on a controller knob. |
+| 🎛 **Live sound** | On every generator: filter frequency, resonance, high-pass, a tempo-synced wobble, lows/mids/highs, drive, ping-pong echo in time, feedback, reverb, pan, volume, mute/solo — and *Sound* opens every knob of the instrument as a layer across the whole width, its sections side by side over the other generators, the keyboard still free to play (Esc closes). Master: DJ filter, reverb length, level, limiter at −1.5 dBFS. *MIDI learn* puts any knob on a controller knob. |
 | 👁 **See what you hear** | When the machine changes something — the wobble sweeping the filter, the autopilot closing the filter for a breakdown, the oscillator snapping to the key, gliding, drifting, its LFO or gate — the knob turns with it, and the number shows the value that is sounding right now; your own setting stays as a small dot on the ring. Knobs that have no effect at the moment (oscillator 2 at level 0, pulse width on a saw wave, LFO without a destination …) are dimmed and say why; turning one switches the missing part on. |
 | 📈 **Oscilloscopes** | Every group of knobs has a small oscilloscope of the signal at exactly that point: the generator itself, after the filter, after the tone controls, the echo and reverb send, the channel (left and right after the fader, so pan and volume show), the instrument sound, the master after the limiter, the microphone, and the oscillator's LFO. |
 | 🎚 **Auto mix** | Listens for two bars, measures how loud each generator really is (before the fader, weighted like the ear) and sets its volume to a target for its role — beat and bass carry, chords and arpeggios sit below, a voice on top — adjusted per style. Runs by itself for *Surprise me*, *Take over the rest* and when the autopilot brings a generator in; volumes you set by hand stay. *Mix* sets all of them. |
@@ -104,7 +104,7 @@ when the tab is in the background, and the offline render is sample-identical to
 | 🔊 **Fuller sound** | The shared reverb is level-matched (it used to be louder than the instruments), the reverb return starts at 180 Hz, the bass stays mono, and a *Body* control on the master adds gentle saturation, warmth and glue. |
 | 🔒 **Lock · ⏪ Flow capture** | Lock a generator so *Surprise me* and the autopilot leave it alone. The machine always listens: *Save what just played* puts the last 4/8/16 bars into the library after the fact, *⬇ MIDI* gives the same bars as a MIDI file. |
 | 🎹 **Harmony** | Key (ten scales incl. pentatonic and blues), chord progression and bars per chord apply to all generators; a change takes effect on the next bar. |
-| 🪄 **Take over the rest** | From your bars or your voice the machine finds the key, then adds beat, bass and chords (plus an arpeggio for some styles) in the style you choose and switches on the **autopilot**, which arranges every eight bars: swaps generators, builds a breakdown with a closing filter, a build-up to the drop, fresh patterns. 🎲 *Surprise me* starts a random style. |
+| 🪄 **Take over the rest** | From your bars or your voice the machine finds the key, then adds beat, bass and chords (plus an arpeggio for some styles) in the style you choose and switches on the **autopilot**, which arranges every eight bars: swaps generators (the one leaving fades out over two bars, the one coming in fades in), builds a breakdown with a closing filter, a build-up to the drop, fresh patterns. 🎲 *Surprise me* starts a random style. |
 | 🤖 **AI takes over** | *Continue the jam*: the next 4, 8 or 16 bars are captured exactly from the downbeat and the music AI continues from there (ACE-Step repaint) to the song length you pick — matched in loudness. *Band for your voice*: your mic loop is repeated to song length and ACE-Step's *complete* task plays drums, bass, keys and more around it; Demucs then removes the AI's own re-sung voice and puts **your** voice back on top. Runs on your computer like any render; needs the base model for the full band (installer step *Loop machine AI*). |
 | ⏺ **Record** | ● records what you hear (after the limiter) into the library as a 24-bit WAV — self-played, no music AI involved. Sets and loops are saved in the browser. |
 
@@ -117,6 +117,8 @@ when the tab is in the background, and the offline render is sample-identical to
 ![AI takes over](docs/screenshots/loops_ki.png)
 
 ![Orb, Global and mutations on a generator](docs/screenshots/loops_orb.png)
+
+![Sound: every knob of the instrument as a layer across the whole width, the keyboard stays free](docs/screenshots/loops_sound.png)
 
 ## Requirements
 
@@ -211,8 +213,9 @@ Nothing listens on your network — everything binds to `127.0.0.1`.
   FLUX.2 [klein] 4B and Z-Image Turbo (Apache-2.0). See [THIRD_PARTY.md](THIRD_PARTY.md).
 - **Copyright:** in many countries purely AI-generated content is not protected by copyright. Your own
   contributions — lyrics you write, your selection and mastering — can be. The release package records them.
-- **Distribution:** services such as DistroKid accept AI-assisted music if you disclose it; the release package
-  contains ready-to-tick AI credits. Some platforms (e.g. Bandcamp) don't accept AI-generated music.
+- **Distribution:** many distribution services accept AI-assisted music if you disclose it; the release package
+  contains ready-to-tick AI credits. Some platforms and music libraries don't accept AI-generated music — check
+  their rules first.
 - **Self-played tracks** (*Make your own*, or recorded in the loop machine) are your own work: the tags, the release
   package and Fahrstuhlmusik say “self-played”, and only the cover is declared as AI.
 - **AI takes over** results are AI tracks — the note records which part is yours (your bars or your voice).

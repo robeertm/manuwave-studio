@@ -203,7 +203,7 @@ function changed() { clearTimeout(S.saveT); setSaved(T("ungespeichert …", "uns
 async function save() {
   clearTimeout(S.saveT); if (!S.set) return;
   S.set.changed = Date.now();
-  try { await dbPut("sets", JSON.parse(JSON.stringify(S.set))); lsSet(LS_LAST, S.set.id);
+  try { await dbPut("sets", JSON.parse(JSON.stringify(S.set, (k, v) => k === "openSynth" ? undefined : v))); lsSet(LS_LAST, S.set.id);
     setSaved(T("gespeichert ", "saved ") + new Date().toLocaleTimeString(EN ? "en-GB" : "de-DE", { hour: "2-digit", minute: "2-digit" }) + " ✓"); }
   catch (e) { setSaved(T("Speichern nicht möglich (privates Fenster?)", "Can't save (private window?)")); }
 }
@@ -279,6 +279,7 @@ function fixSet(s) {
   s.gens = (s.gens || []).filter(g => KIND[g.kind]).slice(0, MAX_GEN);
   const used = new Set();
   for (const g of s.gens) {
+    delete g.openSynth;                                // 3.25: die Klang-Ebene öffnet nie von selbst (ältere Sets haben es gespeichert)
     g.p = Object.assign(genDefaults(g.kind), g.p || {}); g.fx = Object.assign(fxDefaults(), g.fx || {});
     if (g.slot == null || used.has(g.slot) || g.slot >= MAX_GEN) { for (let i = 0; i < MAX_GEN; i++) if (!used.has(i)) { g.slot = i; break; } }
     used.add(g.slot);
@@ -505,7 +506,9 @@ async function startGen(g, now = false) {
 }
 function stopGen(g, now = false) { post({ t: "stop", id: g.id, now }); }
 function genOn(g) { const s = S.states.get(g.id); return !!(s && s.on); }
-function genPending(g) { const s = S.states.get(g.id); return s && (s.startAt != null ? "start" : s.stopAt != null ? "stop" : null); }
+// 3.25: blendet gerade ein ("in") oder aus ("out") — nur der Autopilot blendet
+function genFading(g) { const s = S.states.get(g.id); return (s && s.fading) || null; }
+function genPending(g) { const s = S.states.get(g.id); return s && (s.startAt != null ? "start" : s.stopAt != null || s.fading === "out" ? "stop" : null); }
 function toggleGen(g) { if (genOn(g) && genPending(g) !== "stop") stopGen(g); else startGen(g); }
 // ---------- 3.20 ✋ Selbst einspielen ----------
 const hasOwn = (g) => TAKE_K.has(g.kind) && g.p.src === "own" && Array.isArray(g.own) && g.own.length > 0;
@@ -879,7 +882,9 @@ const STYLE_ALT = {
 
 // =====================================================================================================
 // Autopilot: arrangiert im Takt — tauscht Generatoren, Breakdown mit Filterfahrt, Steigerung vor dem Drop, frische Muster
+// 3.25: wer geht, blendet über FADE_SWAP Takte aus, wer kommt, ebenso ein; nach dem Breakdown kommen Beat und Bass über einen Takt
 // =====================================================================================================
+const FADE_SWAP = 2, FADE_BACK = 1;
 function autopilotBar(d) {
   if (!S.g) return;
   const A = S.set.auto, B = d.bar, t0 = d.time, bl = d.spb, now = S.ctx.currentTime;
@@ -898,13 +903,13 @@ function autopilotBar(d) {
   const say = (de, en) => { S.auto.log = T(`Takt ${at + 1}: `, `Bar ${at + 1}: `) + T(de, en); renderAutoLog(); };
   if (r < 0.25 && core.length) {
     // Breakdown: Beat und Bass 4 Takte raus, Filter langsam zu und beim Wiedereinsatz auf
-    for (const g of core) post({ t: "stop", id: g.id });
+    for (const g of core) post({ t: "stop", id: g.id, fade: FADE_SWAP });
     const lp = S.g.apLP.frequency;
     lp.cancelScheduledValues(now); lp.setValueAtTime(lp.value, now); lp.setTargetAtTime(700, t0 + bl, bl * 1.2);
     // 3.17.2: als laufender Effekt geführt — endet sicher (Würfeln, Stopp, Autopilot aus, Set-Wechsel), Beat und Bass kommen wieder
     S.auto.fx.push({ kind: "breakdown", until: at + 4, stopped: core.map(g => g.id) });
-    S.auto.plan.push({ bar: at + 4, fn: (t) => { for (const g of core) post({ t: "start", id: g.id }); lp.cancelScheduledValues(t - 0.05); lp.setValueAtTime(lp.value, t - 0.05); lp.exponentialRampToValueAtTime(20000, t + 0.02); S.auto.fx = S.auto.fx.filter(x => x.kind !== "breakdown"); S.auto.calm = at + 5; } });
-    say("Breakdown — Beat und Bass setzen 4 Takte aus", "Breakdown — beat and bass drop out for 4 bars");
+    S.auto.plan.push({ bar: at + 4, fn: (t) => { for (const g of core) post({ t: "start", id: g.id, fade: FADE_BACK }); lp.cancelScheduledValues(t - 0.05); lp.setValueAtTime(lp.value, t - 0.05); lp.exponentialRampToValueAtTime(20000, t + 0.02); S.auto.fx = S.auto.fx.filter(x => x.kind !== "breakdown"); S.auto.calm = at + 5; } });
+    say("Breakdown — Beat und Bass blenden für 4 Takte aus", "Breakdown — beat and bass fade out for 4 bars");
   } else if (r < 0.45) {
     // Steigerung: 4 Takte Hochpass hoch, dann Drop
     const hp = S.g.apHP.frequency; hp.cancelScheduledValues(now); hp.setValueAtTime(Math.max(10, hp.value), t0 + bl); hp.exponentialRampToValueAtTime(1400, t0 + bl * 5);
@@ -915,8 +920,8 @@ function autopilotBar(d) {
     const outG = on.filter(g => g.kind !== "beat" && g.kind !== "bass" && !g.lock);
     const goOut = outG.length > 1 || (outG.length && off.length) ? outG[Math.floor(Math.random() * outG.length)] : null;
     const goIn = off.length ? off[Math.floor(Math.random() * off.length)] : null;
-    if (goOut) post({ t: "stop", id: goOut.id });
-    if (goIn) { post({ t: "start", id: goIn.id }); autoMix({ ids: [goIn.id] }); }
+    if (goOut) post({ t: "stop", id: goOut.id, fade: FADE_SWAP });
+    if (goIn) { post({ t: "start", id: goIn.id, fade: FADE_SWAP }); autoMix({ ids: [goIn.id] }); }
     say((goIn ? goIn.name + " kommt" : "") + (goIn && goOut ? ", " : "") + (goOut ? goOut.name + " geht" : ""), (goIn ? goIn.name + " comes in" : "") + (goIn && goOut ? ", " : "") + (goOut ? goOut.name + " leaves" : ""));
   } else {
     const ton = on.filter(g => ["bass", "chords", "arp", "melody", "beat"].includes(g.kind) && !g.lock && g.p.src !== "own");
@@ -1139,6 +1144,7 @@ function typing(e) { const t = e.target; return t && (["INPUT", "TEXTAREA", "SEL
 function tabVisible() { const v = q("#loopView"); return v && !v.classList.contains("hidden"); }
 window.mwsLoopsVisible = tabVisible;
 function onKeyDown(e) {
+  if (e.key === "Escape" && tabVisible() && !q(".aw-pop,.kw-wrap") && closeSynth()) { e.preventDefault(); return; }
   if (!tabVisible() || typing(e) || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.code === "Space") { e.preventDefault(); e.stopImmediatePropagation(); if (S.set.gens.some(genOn)) stopAll(false); else startAll(); return; }
   if (e.repeat) { if (KEYMAP[e.code] != null) e.preventDefault(); return; }
@@ -1879,7 +1885,7 @@ function openAutoFilters() {
 }
 function endAutoFx({ restart = false } = {}) {
   const fx = S.auto.fx || [];
-  if (restart && S.running) for (const x of fx) for (const id of x.stopped || []) { const g = genById(id); if (g && !genOn(g)) post({ t: "start", id }); }
+  if (restart && S.running) for (const x of fx) for (const id of x.stopped || []) { const g = genById(id); if (g && (!genOn(g) || genPending(g) === "stop")) post({ t: "start", id, fade: FADE_BACK }); }
   S.auto.fx = []; S.auto.plan = []; S.auto.calm = -1;
   openAutoFilters();
 }
@@ -1957,7 +1963,7 @@ function card(g) {
   if (g.kind === "beat" || k.ins) {
     const row = h("div", { class: "lp-row" }, soundSelect(g));
     if (k.ins) row.append(h("button", { type: "button", class: "ghost btn-s", title: T("Alle Regler dieses Klangs", "All controls of this sound"), text: T("🎛 Klang", "🎛 Sound"),
-      onclick: () => { g.openSynth = !g.openSynth; renderSynth(g, c); } }));
+      onclick: () => openSynth(g, !g.openSynth) }));
     row.append(h("button", { type: "button", class: "ghost btn-s lp-extbtn" + (g.ext && g.ext.on ? " on" : ""), text: g.ext && g.ext.on ? "🔌 MIDI ✓" : "🔌 MIDI",
       title: T("MIDI-Ausgang: dieser Generator spielt ein externes Gerät — Hardware-Synth oder Musikprogramm", "MIDI out: this generator plays an external device — a hardware synth or music software"),
       onclick: async () => { g.extOpen = !g.extOpen; if (g.extOpen && !S.midi) await initMidi(); rerenderCard(g); } }));
@@ -2028,11 +2034,33 @@ function takeRow(g) {
   return row;
 }
 // Alle Regler des gewählten Instruments (wie in "Selber machen")
+// 3.25: als Ebene über die ganze Breite — die Abschnitte nebeneinander, die anderen Generatoren liegen darunter, die Tastatur
+// bleibt frei zum Spielen. Die Ebene gehört weiter zur Karte (Live-Werte und Markierungen finden ihre Regler dort).
+function openSynth(g, on) {
+  for (const x of S.set.gens) if (x !== g && x.openSynth) { x.openSynth = false; const cx = q("#lpCard-" + x.id); if (cx) renderSynth(x, cx); }
+  g.openSynth = !!on; const c = q("#lpCard-" + g.id); if (c) renderSynth(g, c);
+}
+function closeSynth() { const g = S.set && S.set.gens.find(x => x.openSynth); if (!g) return false; openSynth(g, false); return true; }
+// Platz bis zur Tastatur (klebt unten, solange die Seite länger als das Fenster ist). Die Transportleiste liegt darunter —
+// sie ist mit Master und Autopilot bis zur halben Fensterhöhe hoch; starten/stoppen geht mit der Leertaste
+function placeSynth() {
+  const box = q(".lp-synth.open"); if (!box) return;
+  const kb = q(".lp-keys"), r = kb && kb.getBoundingClientRect(), vh = window.innerHeight;
+  box.style.setProperty("--lp-sybot", (r && r.top < vh && r.bottom > 0 ? Math.max(8, vh - r.top + 8) : 12) + "px");
+}
 function renderSynth(g, c) {
   const box = q(".lp-synth", c); if (!box) return;
-  box.innerHTML = "";
+  box.innerHTML = ""; box.classList.remove("open"); box.removeAttribute("role"); box.removeAttribute("aria-label");
   if (!g.openSynth || !g.patch) return;
-  box.append(h("h4", { class: "lp-h4" }, h("span", { text: T("Klang des Instruments", "Instrument sound") }), scopeCv(g.id + ":src")));
+  const pr = findPreset(g.preset), title = T(`🎛 Klang · ${g.name}`, `🎛 Sound · ${g.name}`);
+  box.classList.add("open"); box.setAttribute("role", "dialog"); box.setAttribute("aria-label", title);
+  box.append(h("div", { class: "lp-syhead" },
+    h("span", { class: "lp-sytitle", text: title }),
+    h("span", { class: "sub small lp-sypre", text: pr ? T(pr.de, pr.en) : T("eigener Klang", "custom sound") }),
+    scopeCv(g.id + ":src", { cls: "big" }),
+    h("span", { class: "sub small lp-syhint", text: T("Spielen auf der Tastatur unten · Leertaste: alle starten/stoppen · Esc schließt", "Play on the keyboard below · Space: start/stop all · Esc closes") }),
+    h("button", { type: "button", class: "ghost btn-s lp-syclose", title: T("Schließen (Esc)", "Close (Esc)"), text: "✕", onclick: () => openSynth(g, false) })));
+  const body = h("div", { class: "lp-sybody" });
   for (const sec of SCHEMA[g.patch.engine] || []) {
     const row = h("div", { class: "lp-knobs" });
     for (const p of sec.p) {
@@ -2040,8 +2068,10 @@ function renderSynth(g, c) {
       const el = p.t === "knob" ? knob(p, g.patch[p.k] ?? p.def, cb) : p.t === "sel" ? selectBox(p, g.patch[p.k] ?? p.def, cb) : toggle(p, g.patch[p.k] ?? p.def, cb);
       el.dataset.pk = "s:" + p.k; row.append(el);
     }
-    box.append(h("h4", { text: EN ? sec.en : sec.de }), row);
+    body.append(h("div", { class: "lp-group lp-sysec" }, h("div", { class: "lp-gcapr" }, h("span", { class: "lp-gcap", text: EN ? sec.en : sec.de })), row));
   }
+  box.append(body);
+  placeSynth();
   markCard(g);
 }
 function paintCards() { for (const g of S.set.gens) paintCard(g); }
@@ -2220,7 +2250,8 @@ function autoMix({ ids = null, manual = false } = {}) {
 function mixBar(d) {
   const M = S.mix; if (!M) return;
   if (M.phase === "wait") {
-    if (M.ids.some(id => { const g = genById(id); return g && genOn(g); })) { M.phase = "listen"; M.from = d.bar; M.acc = {}; }
+    // 3.25: erst wenn keiner der Gewünschten mehr einblendet — während der Blende wäre er zu leise gemessen und danach zu laut
+    if (M.ids.some(id => { const g = genById(id); return g && genOn(g); }) && !M.ids.some(id => { const g = genById(id); return g && genFading(g) === "in"; })) { M.phase = "listen"; M.from = d.bar; M.acc = {}; }
     else if (++M.waited > 8) { S.mix = null; paintTransport(); }
     return;
   }
@@ -2230,7 +2261,7 @@ function mixMeasure() {
   const M = S.mix; if (!M || M.phase !== "listen") return;
   const buf = S.mixBuf || (S.mixBuf = new Float32Array(SCOPE_N));
   for (const id of M.ids) {
-    const g = genById(id), ch = S.chains.get(id); if (!g || !ch || !genOn(g)) continue;
+    const g = genById(id), ch = S.chains.get(id); if (!g || !ch || !genOn(g) || genFading(g)) continue;   // 3.25: nie während einer Blende
     ch.kAn.getFloatTimeDomainData(buf); let ss = 0; for (let i = 0; i < SCOPE_N; i++) ss += buf[i] * buf[i];
     const pw = ss / SCOPE_N; if (pw > 1e-7) (M.acc[id] || (M.acc[id] = [])).push(pw);
   }
@@ -2297,6 +2328,7 @@ async function init() {
   shell();
   await afterLoad();
   document.addEventListener("keydown", onKeyDown, true);
+  for (const ev of ["resize", "scroll"]) window.addEventListener(ev, placeSynth, { passive: true });
   window.addEventListener("resize", () => { clearTimeout(S.kbT); S.kbT = setTimeout(() => { const v = q("#loopView"); if (!v || v.classList.contains("hidden")) return;
     const w = q("#lpKeys").clientWidth, octs = w >= 1600 ? 5 : w >= 1150 ? 4 : w >= 760 ? 3 : 2; if (octs !== S.kbOcts) renderKeys(); }, 200); });
   document.addEventListener("keyup", onKeyUp, true);
