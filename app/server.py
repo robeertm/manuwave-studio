@@ -73,7 +73,7 @@ HOST = os.environ.get("HOST", "0.0.0.0")      # 3.11: lokale Installation → 12
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, "web")
 
-APP_VERSION = "3.21.0"
+APP_VERSION = "3.22.0"
 BRIDGE_FILE = next((p for p in (os.path.join(ROOT, "bridge", n) for n in ("neonforge_bridge.py", "manuwave_bridge.py"))
                     if os.path.isfile(p)), os.path.join(ROOT, "bridge", "manuwave_bridge.py"))
 BUILD_INFO_FILE = os.path.join(WEB, "build-info.json")
@@ -1159,6 +1159,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 class Server(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
+    # 3.22: Warteschlange statt 5 (Standard) — beim Laden holt der Browser ~20 Dateien auf einmal; unter Last setzte
+    # der Server überzählige Verbindungen zurück (60 gleichzeitig: 25 Abbrüche), eine fehlende Moduldatei legte die App lahm
+    request_queue_size = 256
 
 
 if __name__ == "__main__":

@@ -12,7 +12,8 @@
 // 🔒 Klang festhalten beim Würfeln, ⏪ Flow Capture (die letzten Takte nachträglich sichern, Audio + MIDI) und 🔌 MIDI-Ausgang je
 // Generator — damit spielt die Loop-Maschine auch andere Klangerzeuger oder Hardware-Synths.
 import { openSoundBrowser } from "./klangwahl.js";
-import { SCHEMA, KITS, MODELS, MODEL_GROUPS, PRESETS, PAD_TO_GM, GM_TO_PAD, defaults, normIR, reverbReturn, monoBass, fullness, CATS, TAG_NAMES, catOf, tagsOf, knobIdle, markIdle, showValue, fixText, mutatePatch, knobWheel, keepAudioAlive } from "./selber-presets.js";
+import { pickBox } from "./auswahl.js";
+import { SCHEMA, KITS, KIT_GROUPS, MODELS, MODEL_GROUPS, PRESETS, PAD_TO_GM, GM_TO_PAD, defaults, normIR, reverbReturn, monoBass, fullness, CATS, TAG_NAMES, catOf, tagsOf, knobIdle, markIdle, showValue, fixText, mutatePatch, knobWheel, keepAudioAlive } from "./selber-presets.js";
 
 const EN = window.MWS_LANG === "en";
 const T = (de, en) => (EN ? en : de);
@@ -1290,11 +1291,18 @@ function knob(p, value, onChange, opts = {}) {
   paint();
   return wrap;
 }
+// 3.22: Liste mit Überschriften — groups [[icon, de, en, [werte]]], opts [[wert, de, en]]; was in keiner Gruppe steht, kommt ans Ende
+function groupedOptions(opts, groups, isSel, desc = () => null) {
+  const opt = ([v, de, en]) => h("option", { value: String(v), selected: isSel(v), "data-desc": desc(v) }, EN ? en : de);
+  if (!groups) return opts.map(opt);
+  const used = new Set(groups.flatMap(g => g[3])), rest = opts.filter(o => !used.has(o[0]));
+  return [...groups.map(([icon, de, en, vs]) => h("optgroup", { label: EN ? en : de, "data-icon": icon || null }, vs.map(v => opts.find(o => o[0] === v)).filter(Boolean).map(opt))), ...rest.map(opt)];
+}
 function selectBox(p, value, onChange) {
-  const id = "lpS" + uid();
-  const s = h("select", { id, class: "sb-sel" }, p.opts.map(([v, de, en]) => h("option", { value: String(v), selected: String(v) === String(value) }, EN ? en : de)));
+  const id = "lpS" + uid(), big = p.opts.length >= 12;
+  const s = h("select", { id, class: "sb-sel" }, groupedOptions(p.opts, p.groups, (v) => String(v) === String(value)));
   s.addEventListener("change", () => { const o = p.opts.find(x => String(x[0]) === s.value); onChange(o ? o[0] : s.value); });
-  return h("div", { class: "sb-field" }, h("label", { for: id, text: EN ? p.en : p.de }), s);
+  return h("div", { class: "sb-field" }, h("label", { for: big ? id + "Pick" : id, text: EN ? p.en : p.de }), big ? pickBox(s, { en: EN, title: EN ? p.en : p.de }) : s);
 }
 function toggle(p, value, onChange) {
   const b = h("button", { type: "button", class: "sb-tog" + (value ? " on" : ""), "aria-pressed": String(!!value), text: EN ? p.en : p.de, title: p.tip ? T(...p.tip) : null });
@@ -1736,7 +1744,7 @@ function shell() {
       h("div", { class: "sb-proj" },
         h("label", { class: "sb-cap", for: "lpName", text: T("Set", "Set") }),
         h("input", { id: "lpName", type: "text", maxlength: "80", class: "sb-name" }),
-        h("select", { id: "lpSets", "aria-label": T("Set öffnen", "Open set") }),
+        pickBox(h("select", { id: "lpSets", "aria-label": T("Set öffnen", "Open set") }), { en: EN, title: T("Set öffnen", "Open set") }),
         h("button", { id: "lpNew", type: "button", class: "ghost btn-s", text: T("＋ Neu", "＋ New") }),
         h("button", { id: "lpDel", type: "button", class: "ghost btn-s danger", text: "🗑", title: T("Set löschen", "Delete set") })),
       h("span", { id: "lpSaved", class: "sub small", role: "status" })),
@@ -1894,8 +1902,9 @@ function paintPos() {
 
 function soundSelect(g) {
   if (g.kind === "beat") {
-    const s = h("select", { class: "lp-sound", "aria-label": T("Kit", "Kit") }, Object.entries(KITS).map(([k, kt]) => h("option", { value: k, selected: k === g.kit }, EN ? kt.en : kt.de)));
-    s.onchange = () => setSound(g, s.value); return s;
+    const ko = Object.keys(KITS).map(k => { const [a, b] = (EN ? KITS[k].en : KITS[k].de).split(" — "); return [k, a, a, b]; });
+    const s = h("select", { class: "lp-sound", "aria-label": T("Kit", "Kit") }, groupedOptions(ko, KIT_GROUPS, (v) => v === g.kit, (v) => ko.find(o => o[0] === v)[3]));
+    s.onchange = () => setSound(g, s.value); return pickBox(s, { en: EN, title: T("Kit", "Kit") });
   }
   // 3.21: statt einer langen Liste die Klangwahl (Kategorien, Suche, Schlagworte, Favoriten, Probehören)
   const pr = findPreset(g.preset), m = modelOf(g.model), cat = CATS.find(c => c[0] === catOf(pr || { model: g.model, de: "" }));

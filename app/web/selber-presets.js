@@ -5,20 +5,22 @@
 // [k, de, en, min, max, def, opts]   opts: { c: "exp", u: "Hz"|"s"|"st"|"ct"|"%"|"x", st: Schritt }
 // Auswahl: ["sel", k, de, en, [[wert, de, en], …], def]   Schalter: ["tog", k, de, en, def]
 const K = (k, de, en, min, max, def, o = {}) => ({ t: "knob", k, de, en, min, max, def, ...o });
-const SEL = (k, de, en, opts, def) => ({ t: "sel", k, de, en, opts, def });
+// groups: [[icon, de, en, [werte]]] — Ausklappliste mit Überschriften; ab 12 Einträgen wird daraus ein Auswahlfeld mit Suche (auswahl.js)
+const SEL = (k, de, en, opts, def, groups) => ({ t: "sel", k, de, en, opts, def, groups });
 const TOG = (k, de, en, def = false) => ({ t: "tog", k, de, en, def });
 
 const WAVES = [["saw", "Säge", "Saw"], ["square", "Rechteck/Puls", "Square/pulse"], ["tri", "Dreieck", "Triangle"], ["sine", "Sinus", "Sine"],
   ["wt", "Wavetable", "Wavetable"], ["noise", "Rauschen", "Noise"]];
 const SYNC = [["off", "frei (Hz)", "free (Hz)"], ["4/1", "4 Takte", "4 bars"], ["2/1", "2 Takte", "2 bars"], ["1/1", "1 Takt", "1 bar"], ["1/2", "1/2", "1/2"],
   ["1/4", "1/4", "1/4"], ["1/4T", "1/4 Triole", "1/4 triplet"], ["1/8", "1/8", "1/8"], ["1/8T", "1/8 Triole", "1/8 triplet"], ["1/16", "1/16", "1/16"]];
+const SYNC_G = [["", "Frei", "Free", ["off"]], ["", "Takte", "Bars", ["4/1", "2/1", "1/1"]], ["", "Noten", "Notes", ["1/2", "1/4", "1/8", "1/16"]], ["", "Triolen", "Triplets", ["1/4T", "1/8T"]]];
 const SHAPES = [["sine", "Sinus", "Sine"], ["tri", "Dreieck", "Triangle"], ["saw", "Säge", "Saw"], ["square", "Rechteck", "Square"], ["sh", "Zufall (S&H)", "Random (S&H)"]];
 const DESTS = [["off", "aus", "off"], ["pitch", "Tonhöhe", "Pitch"], ["cut", "Filter", "Filter"], ["pw", "Pulsbreite", "Pulse width"], ["amp", "Lautstärke", "Volume"],
   ["pan", "Panorama", "Pan"], ["wt", "Wavetable-Position", "Wavetable position"]];
 const lfo = (n, rate, dest) => ({ id: "lfo" + n, de: "LFO " + n, en: "LFO " + n, p: [
   SEL("l" + n + "shape", "Form", "Shape", SHAPES, "sine"),
   K("l" + n + "rate", "Tempo", "Rate", 0.05, 20, rate, { c: "exp", u: "Hz" }),
-  SEL("l" + n + "sync", "Im Takt", "Tempo sync", SYNC, "off"),
+  SEL("l" + n + "sync", "Im Takt", "Tempo sync", SYNC, "off", SYNC_G),
   SEL("l" + n + "dest", "Ziel", "Destination", DESTS, dest),
   K("l" + n + "amt", "Menge", "Amount", 0, 1, 0, { u: "%" }),
 ] });
@@ -43,11 +45,12 @@ const VOICE = (mode = "poly", voices = 8) => ({ id: "voice", de: "Spielweise", e
 // ---- 3.21: Raum für jedes Instrument (Hall bis 30 s, Einfrieren, Shimmer · Echo im Takt · Fülle & Breite) ----
 const ECHO_T = [["1/16", "1/16", "1/16"], ["1/8T", "1/8 Triole", "1/8 triplet"], ["1/8", "1/8", "1/8"], ["3/16", "3/16 (punktiert)", "3/16 (dotted)"], ["1/4T", "1/4 Triole", "1/4 triplet"],
   ["1/4", "1/4", "1/4"], ["3/8", "3/8 (punktiert)", "3/8 (dotted)"], ["1/2", "1/2", "1/2"], ["3/4", "3/4", "3/4"], ["1/1", "1 Takt", "1 bar"], ["ms", "frei (ms)", "free (ms)"]];
+const ECHO_G = [["", "Gerade", "Straight", ["1/16", "1/8", "1/4", "1/2", "1/1"]], ["", "Punktiert", "Dotted", ["3/16", "3/8", "3/4"]], ["", "Triolen", "Triplets", ["1/8T", "1/4T"]], ["", "Frei", "Free", ["ms"]]];
 const SPACE = [
   { id: "space", de: "Hall", en: "Reverb", p: [K("rvmix", "Hall", "Reverb", 0, 1, 0, { u: "%" }), K("rvtime", "Hallzeit", "Decay", 0.2, 30, 3, { c: "exp", u: "s" }),
     K("rvsize", "Raumgröße", "Size", 0, 1, 0.6, { u: "%" }), K("rvpre", "Vorverzögerung", "Pre-delay", 0, 0.25, 0.02, { c: "exp0", u: "s" }),
     K("rvdamp", "Hall-Höhen", "Reverb highs", 0, 1, 0.5, { u: "%" }), K("rvshim", "Shimmer (Oktave)", "Shimmer (octave)", 0, 1, 0, { u: "%" }), TOG("rvfreeze", "Einfrieren", "Freeze")] },
-  { id: "echo", de: "Echo", en: "Echo", p: [K("dlmix", "Echo", "Echo", 0, 1, 0, { u: "%" }), SEL("dltime", "Echo-Zeit", "Echo time", ECHO_T, "3/16"),
+  { id: "echo", de: "Echo", en: "Echo", p: [K("dlmix", "Echo", "Echo", 0, 1, 0, { u: "%" }), SEL("dltime", "Echo-Zeit", "Echo time", ECHO_T, "3/16", ECHO_G),
     K("dlms", "Zeit frei", "Free time", 20, 2500, 350, { c: "exp", u: "ms" }), K("dlfb", "Wiederholungen", "Feedback", 0, 0.95, 0.4, { u: "%" }), K("dltone", "Echo-Ton", "Echo tone", 0, 1, 0.5, { u: "%" })] },
   { id: "fill", de: "Fülle & Breite", en: "Body & width", p: [K("fwarm", "Wärme", "Warmth", 0, 1, 0, { u: "%" }), K("fbody", "Körper", "Body", 0, 1, 0, { u: "%" }),
     K("fair", "Luft", "Air", 0, 1, 0, { u: "%" }), K("fwidth", "Breite", "Width", 0, 1, 0, { u: "%" })] },
@@ -62,9 +65,15 @@ const OTYPES = [["strings", "Streichorchester", "String orchestra"], ["violins",
   ["horn", "Horn", "French horn"], ["trumpet", "Trompete", "Trumpet"], ["trombone", "Posaune", "Trombone"], ["tuba", "Tuba", "Tuba"], ["brass", "Blechbläser-Satz", "Brass section"],
   ["flute", "Flöte", "Flute"], ["panflute", "Panflöte", "Pan flute"], ["clarinet", "Klarinette", "Clarinet"], ["oboe", "Oboe", "Oboe"], ["bassoon", "Fagott", "Bassoon"], ["sax", "Saxofon", "Saxophone"],
   ["woods", "Holzbläser-Satz", "Woodwind section"]];
+const MTYPE_G = [["🎹", "Klaviere", "Pianos", ["grand", "felt", "upright", "honky", "bright", "dark", "celesta", "toy"]],
+  ["🥢", "Mallets und Spieluhr", "Mallets and music box", ["marimba", "xylo", "vibes", "glock", "musicbox", "kalimba"]],
+  ["🔔", "Glocken und Metall", "Bells and metal", ["tubular", "bell", "steel", "bowl", "glass", "gong"]]];
+const OTYPE_G = [["🎻", "Streicher", "Strings", ["strings", "violins", "violas", "cellos", "basses", "solovln", "solocello", "pizz", "tremolo"]],
+  ["🎺", "Blechbläser", "Brass", ["horn", "trumpet", "trombone", "tuba", "brass"]],
+  ["🎷", "Holzbläser", "Woodwinds", ["flute", "panflute", "clarinet", "oboe", "bassoon", "sax", "woods"]]];
 const SCHEMA_321 = {
   modal: [
-    { id: "minst", de: "Instrument", en: "Instrument", p: [SEL("mtype", "Art", "Type", MTYPES, "grand"), K("tune", "Stimmung", "Tuning", -100, 100, 0, { u: "ct" }),
+    { id: "minst", de: "Instrument", en: "Instrument", p: [SEL("mtype", "Art", "Type", MTYPES, "grand", MTYPE_G), K("tune", "Stimmung", "Tuning", -100, 100, 0, { u: "ct" }),
       K("stretch", "Oktavspreizung", "Octave stretch", 0, 1, 0.5, { u: "%" }), K("inh", "Saitensteifigkeit", "Inharmonicity", 0, 1, 0.5, { u: "%" }), K("uni", "Saiten-Verstimmung", "Unison width", 0, 1, 0.3, { u: "%" })] },
     { id: "hammer", de: "Hammer & Anschlag", en: "Hammer & touch", p: [K("hard", "Härte", "Hardness", 0, 1, 0.55, { u: "%" }), K("felt", "Filz", "Felt", 0, 1, 0, { u: "%" }),
       K("velb", "Anschlag → hell", "Velocity → bright", 0, 1, 0.6, { u: "%" }), K("pos", "Anschlagstelle", "Strike point", 0.05, 0.5, 0.125, { u: "%" }),
@@ -85,7 +94,7 @@ const SCHEMA_321 = {
     lfo(1, 5, "off"), ...SPACE, VOICE("poly", 10), ARP,
   ],
   orch: [
-    { id: "oinst", de: "Instrument", en: "Instrument", p: [SEL("otype", "Instrument", "Instrument", OTYPES, "strings"), K("players", "Spieler je Ton", "Players per note", 1, 8, 6, { st: 1 }),
+    { id: "oinst", de: "Instrument", en: "Instrument", p: [SEL("otype", "Instrument", "Instrument", OTYPES, "strings", OTYPE_G), K("players", "Spieler je Ton", "Players per note", 1, 8, 6, { st: 1 }),
       K("spread", "Streuung", "Spread", 0, 1, 0.5, { u: "%" }), K("width", "Breite", "Width", 0, 1, 0.7, { u: "%" })] },
     { id: "oplay", de: "Spiel", en: "Playing", p: [K("att", "Einschwingen", "Attack", 0.002, 2, 0.2, { c: "exp", u: "s" }), K("rel", "Ausklingen", "Release", 0.02, 4, 0.5, { c: "exp", u: "s" }),
       K("expr", "Dynamik", "Expression", 0, 1, 0.6, { u: "%" }), K("bright", "Helligkeit", "Brightness", 0, 1, 0.5, { u: "%" }), K("body", "Korpus", "Body", 0, 1, 0.6, { u: "%" }),
@@ -173,7 +182,7 @@ export const SCHEMA = {
       K("tone", "Ton", "Tone", 0, 1, 0.7, { u: "%" })] },
     { id: "lfo1", de: "Tremolo", en: "Tremolo", p: [
       SEL("l1dest", "Art", "Type", [["off", "aus", "off"], ["pan", "Stereo (Autopan)", "Stereo (auto-pan)"], ["amp", "Lautstärke", "Volume"]], "pan"),
-      K("l1rate", "Tempo", "Rate", 0.1, 12, 4.5, { c: "exp", u: "Hz" }), SEL("l1sync", "Im Takt", "Tempo sync", SYNC, "off"),
+      K("l1rate", "Tempo", "Rate", 0.1, 12, 4.5, { c: "exp", u: "Hz" }), SEL("l1sync", "Im Takt", "Tempo sync", SYNC, "off", SYNC_G),
       K("l1amt", "Tiefe", "Depth", 0, 1, 0.35, { u: "%" })] },
     VOICE("poly", 12), ARP,
   ],
@@ -427,6 +436,9 @@ export const DRUM_MODELS = [
   ["shaker", "Shaker", "Shaker"], ["tamb", "Tamburin", "Tambourine"], ["conga", "Conga", "Conga"], ["clave", "Clave", "Clave"],
   ["zap", "Zap", "Zap"], ["lofi", "Lo-Fi-Rauschen", "Lo-fi noise"],
 ];
+export const DRUM_GROUPS = [["🦶", "Kicks", "Kicks", ["kick808", "kick909", "kickacoustic"]], ["👏", "Snares und Claps", "Snares and claps", ["snare", "snare909", "clap", "rim"]],
+  ["🔅", "Hi-Hats und Becken", "Hi-hats and cymbals", ["hatc", "hato", "crash", "ride", "cymbal"]], ["🪘", "Toms", "Toms", ["tomlo", "tommid", "tomhi"]],
+  ["🪇", "Percussion", "Percussion", ["cowbell", "shaker", "tamb", "conga", "clave"]], ["⚡", "Effekte", "Effects", ["zap", "lofi"]]];
 // GM-Drum-Noten → Pad (für Keyboard-Spiel: C1 = Kick …)
 export const GM_TO_PAD = { 36: 0, 35: 0, 38: 1, 40: 1, 39: 2, 42: 3, 44: 3, 46: 4, 41: 5, 43: 5, 45: 6, 47: 6, 48: 7, 50: 7, 37: 8, 56: 9, 49: 10, 57: 10, 51: 11, 59: 11, 70: 12, 69: 12, 63: 13, 64: 13, 75: 14, 54: 15 };
 export const PAD_TO_GM = [36, 38, 39, 42, 46, 41, 45, 48, 37, 56, 49, 51, 70, 63, 75, 54];
@@ -479,7 +491,8 @@ export const KITS = {
 // ---- Synthesizer-Modelle: was man im "Instrument"-Menü wählt ----
 // g: Gruppe im Menü — "base" Grundmodelle, "classic" Nachbauten berühmter Synthesizer (3.16), "drums"
 // Die Namen der Klassiker nennen nur das Vorbild; es sind eigene Nachbauten, keine Samples und kein Bezug zu den Herstellern.
-export const MODEL_GROUPS = [["base", "Grundmodelle", "Basic models"], ["classic", "Klassiker (Nachbau)", "Classics (recreations)"], ["acoustic", "Akustisch (Klangmodell)", "Acoustic (modelled)"], ["fx", "Effekte", "Effects"], ["drums", "Drums", "Drums"]];
+export const MODEL_GROUPS = [["base", "Grundmodelle", "Basic models", "🎛"], ["classic", "Klassiker (Nachbau)", "Classics (recreations)", "🕹"], ["acoustic", "Akustisch (Klangmodell)", "Acoustic (modelled)", "🎻"], ["fx", "Effekte", "Effects", "🌀"], ["drums", "Drums", "Drums", "🥁"]];
+export const KIT_GROUPS = [["🎛", "Drumcomputer-Klassiker", "Classic drum machines", ["808", "909", "606", "cr78", "80s"]], ["🎚", "Nach Stil", "By style", ["trap", "techno", "lofi"]]];
 export const MODELS = [
   { id: "poly", g: "base", engine: "va", de: "Analog Poly", en: "Analog Poly", hd: "Flächen, Akkorde, Brass — zwei Oszillatoren, Leiterfilter", he: "Pads, chords, brass — two oscillators, ladder filter" },
   { id: "mono", g: "base", engine: "va", de: "Analog Mono", en: "Analog Mono", hd: "Bässe und Leads — ein Ton, Glide, drei Oszillatoren", he: "Basses and leads — one note, glide, three oscillators" },

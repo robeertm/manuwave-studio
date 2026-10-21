@@ -1,5 +1,6 @@
 import { MASTER_PRESETS, masterClean, masterKey, cutOf, autoEnd, masterDefault, decodeAudio, masterAudio } from "./mastering.js";
 import { GENRE_GROUPS, familyOf, roughOf, tempoOf, composeIdea, randomGenre } from "./genres.js";
+import { pickBox } from "./auswahl.js";
 /* Manuwave Studio 3 — eine Musik-App, nur lokale KI.
  *
  * Produktions-Brief, die Musik-KI ACE-Step 1.5 rechnet ihn auf dem Mac. Weitergearbeitet
@@ -2213,8 +2214,12 @@ async function renderMsPick() {
   all.sort((a, b) => b.created - a.created);
   const sel = $("#msPick");
   sel.innerHTML = "";
-  all.forEach(r => { const o = el("option"); o.value = r.id;
-    o.textContent = `${r.title}${r.variant ? " · " + r.variant : ""}${r.master ? "  🎚" : ""}`; sel.append(o); });
+  // 3.22: nach Ordnern gruppiert, sobald mehr als ein Ordner belegt ist (das Auswahlfeld sucht ab 10 Tracks)
+  const opt = (r) => { const o = el("option"); o.value = r.id;
+    o.textContent = `${r.title}${r.variant ? " · " + r.variant : ""}${r.master ? "  🎚" : ""}`; return o; };
+  const byF = new Map(); all.forEach(r => { const f = r.folder && folderName(r.folder) ? r.folder : ""; if (!byF.has(f)) byF.set(f, []); byF.get(f).push(r); });
+  if (byF.size < 2) all.forEach(r => sel.append(opt(r)));
+  else [...folders().map(f => f.id), ""].filter(f => byF.has(f)).forEach(f => { const g = el("optgroup"); g.label = f ? folderName(f) : "Unsortiert"; g.dataset.icon = "📁"; byF.get(f).forEach(r => g.append(opt(r))); sel.append(g); });
   if (ms.id) sel.value = ms.id;
   $("#msEmpty").classList.toggle("hidden", !!all.length);
   $("#msBody").classList.toggle("hidden", !all.length);
@@ -2305,6 +2310,7 @@ function bindMaster() {
   $("#msFull").onclick = () => { if (!ms.m) return; msBefore(true); delete ms.m.start; delete ms.m.end; msChanged(); };
   $("#msReset").onclick = () => { if (!ms.buf) return; msBefore(true); ms.m = masterDefault(ms.buf); msChanged(); setMsg($("#msMsg"), "Vorschlag wiederhergestellt", ""); };
   $("#msUndo").onclick = undoMaster;
+  pickBox($("#msPick"), { en: window.MWS_LANG === "en", title: "Track zum Mastern" });
   $("#msPick").onchange = (e) => loadMaster(e.target.value);
   $$("#tabs [data-tab]").forEach(b => b.onclick = () => showTab(b.dataset.tab));
   $("#msExport").onclick = async () => { if (!ms.id) return; const id = ms.id; await msLeave(); openExport([id]); };
