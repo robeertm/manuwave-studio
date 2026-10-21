@@ -25,6 +25,7 @@ hobby showcase, where you can also share your own tracks.
 | | |
 |---|---|
 | 🎼 **Idea → song** | One sentence is enough. A local language model turns it into a brief: sound tags, tempo, key, structure and original lyrics. |
+| 🧬 **From your songs** | Upload 1–3 songs: your computer measures tempo, key, chords, groove, instrumentation, energy and structure, the AI writes a new song with their character — no melody or lyrics taken over. |
 | 🎲 **Dice** | Picks from 114 styles in 11 groups — from melodic techno to bossa nova, metal, film score — and writes a detailed idea, then renders right away. |
 | 🎶 **Music AI** | [ACE-Step 1.5](https://huggingface.co/ACE-Step/Ace-Step1.5) via [acestep.cpp](https://github.com/ServeurpersoCom/acestep.cpp) renders instruments, vocals and mix in one pass. |
 | 🎨 **Cover art** | FLUX.2 [klein] 4B (macOS) or Z-Image Turbo (Windows/Linux) paints a cover that fits the mood. |
@@ -38,6 +39,8 @@ hobby showcase, where you can also share your own tracks.
 | 🤖 **AI takes over** | From the loop machine: the music AI continues your jam (your bars are the start of the song) or plays a band around a loop you sang — with your real voice kept on top. The result is an AI track; its note says which part is yours. |
 | 🎼 **MIDI image** | Every AI song is turned into notes on your computer — drums, bass, chords and melody, on the beat. Open it on the instruments with one click (*Play*) and change anything, or download it as a MIDI file for any DAW. Optional; runs only while your computer is otherwise idle. |
 | 🔏 **Honest by design** | Every file is labelled in its tags — “AI-generated”, or “self-played” for what you made in *Make your own* (then only the cover counts as AI); an inaudible watermark (macOS/Linux) proves where it came from. |
+
+![From your songs: three songs analysed — tempo, key, chords, groove, instrumentation, energy and structure](docs/screenshots/songs.png)
 
 ![Mastering](docs/screenshots/mastering.png)
 

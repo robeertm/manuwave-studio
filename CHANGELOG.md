@@ -3,6 +3,27 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.24.0 — 2026-10-21 (bridge 3.19.0)
+
+### Added
+- **From your songs:** upload one to three songs in *New track*. Your computer analyses each of them and the AI makes
+  a new song of your own from what they have in common.
+  - The music AI listens (style, time signature, language of the vocals). The lyrics it hears are discarded.
+  - Your computer measures the song: tempo, key (with the second candidate when it's close), chord progression, groove
+    (kick on every beat, backbeat or broken), how much drums, bass, vocals and the rest take up, vocals, brightness,
+    loudness, dynamics, the energy over time and the structure (repeating parts, calm/medium/full).
+  - Each song gets a card with its energy curve; below them, what they share.
+  - *Create a new song from them* writes the brief from the measured character — no melody, no lyrics, no riff, no
+    title and no file name is passed on. If the songs' tempos are close, the new song takes the measured tempo; the key
+    only if they agree.
+  - Checked on archive tracks: tempo right in 7 of 8 (8 of 8 allowing for double/half time), key in 6 of 8;
+    10–20 seconds per song.
+  - Measuring needs the optional *MIDI image* component of the installer; without it, the music AI's description is used.
+- Replaces the single reference track under *Details*.
+
+### Changed
+- Screenshots show a neutral device name.
+
 ## 3.23.0 — 2026-10-21 (bridge 3.18.0)
 
 ### Added

@@ -58,7 +58,7 @@ try:
 except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.18.0"
+BRIDGE_VERSION = "3.19.0"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
@@ -995,7 +995,7 @@ WM_MAGIC = "4e4601"
 WM_STRENGTH = 3
 AUFBEREITET_V = 2       # Fassung der Archiv-Aufbereitung (adeclip wenn beschnitten + leises Zeichen + 24 Bit)
 TAGS_VERSION = 1
-CAPS = "settings,export,cover,verify,nachruesten,archiv,master,loeschen,paket,web,master_merken,midi,weiter"
+CAPS = "settings,export,cover,verify,nachruesten,archiv,master,loeschen,paket,web,master_merken,midi,weiter,analyse"
 
 
 def caps_for(cfg: dict) -> str:
@@ -4064,6 +4064,395 @@ _midi_lock = threading.Lock()
 _midi_proc = None                 # der laufende Rechenprozess — SIGTERM nimmt ihn mit (sonst rechnet er als Waise weiter)
 
 
+# Läuft in derselben Umgebung wie das MIDI-Abbild und benutzt dessen Helfer (transcribe.py). Nur Stilmerkmale.
+ANALYSE_SCRIPT = r'''"""Manuwave Studio 3.24 — einen hochgeladenen Song vermessen (für „Aus deinen Songs“): Tempo, Tonart, Akkordschleife,
+Aufbau, Energieverlauf, Anteile der Stimmen, Gesang, Klangfarbe, Groove. Nur Stilmerkmale — keine Melodie, kein Text.
+
+    python analyse.py <audio> <aus.json>
+
+Benutzt die Helfer des MIDI-Abbilds (transcribe.py daneben): Laden, Demucs-Trennung, Tempo, Schlagzeug-Einsätze.
+"""
+import json, os, sys, warnings, logging
+warnings.filterwarnings("ignore")
+logging.disable(logging.WARNING)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import numpy as np
+from transcribe import SR, load, separate, tempo_and_beats, drum_hits, beat_pos
+
+MAX_S = 360                       # länger wird nicht vermessen (Rechenzeit), der Anfang trägt den Charakter
+NOTES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
+# Krumhansl-Kessler-Profile (Dur, Moll)
+KK_MAJ = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
+KK_MIN = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
+ROMAN = ["I", "bII", "II", "bIII", "III", "IV", "#IV", "V", "bVI", "VI", "bVII", "VII"]
+STEP = {"major": {0: "I", 2: "II", 4: "III", 5: "IV", 7: "V", 9: "VI", 11: "VII"},
+        "minor": {0: "I", 2: "II", 3: "III", 5: "IV", 7: "V", 8: "VI", 10: "VII"}}
+
+
+def roman(d, q, mode):
+    """Stufe relativ zur Tonart (in Moll auf die natürliche Molltonleiter bezogen); Moll-Akkord klein geschrieben."""
+    s = STEP[mode].get(d) or ROMAN[d]
+    return s.lower() if q == "m" else s
+
+
+def tempo_estimate(mix, drums):
+    """Tempo ohne Vorgabe. 🔑 Der Schätzer von librosa griff bei Drum & Bass (172) auf 116 (zwei Drittel). Darum zählt die
+    ganze Familie: Phasen-Kohärenz und Autokorrelation des Einsatz-Signals bei b, b/2 und 2b. Zwischen b und 2b
+    entscheidet die Kohärenz, bei Gleichstand das Tempo zwischen 90 und 180 (D&B 172 statt 86, Trance 138 statt 69)."""
+    import librosa
+    sr, hop = SR // 2, 128
+    loud = np.sqrt((drums ** 2).mean()) > 0.25 * np.sqrt((mix ** 2).mean())
+    env = librosa.onset.onset_strength(y=drums if loud else mix, sr=sr, hop_length=hop)
+    e = env - env.mean()
+    t = np.arange(len(e)) * hop / sr
+    grid = np.arange(40.0, 360.01, 0.25)
+    coh = np.array([abs((e * np.exp(2j * np.pi * t / (60.0 / b))).sum()) for b in grid])
+    ac = librosa.autocorrelate(e, max_size=int(sr / hop * 1.6))
+    lag = 60.0 / grid * sr / hop
+    acv = np.interp(lag, np.arange(len(ac)), ac, left=0, right=0)
+    sel = (grid >= 60) & (grid <= 200)
+    cn, an = coh / (coh[sel].max() + 1e-9), np.maximum(0, acv) / (acv[sel].max() + 1e-9)
+    val = lambda arr, b: float(np.interp(b, grid, arr)) if 40 <= b <= 360 else 0.0
+    def score(b):
+        return val(cn, b) + val(an, b) + 0.5 * (val(cn, b / 2) + val(an, b / 2)) + 0.5 * (val(cn, 2 * b) + val(an, 2 * b))
+    cands = grid[(grid >= 70) & (grid <= 180)]
+    sc = np.array([score(b) for b in cands])
+    best = float(cands[int(np.argmax(sc))])
+    conf = float(sc.max() / (np.sort(sc)[-40:].mean() + 1e-9))
+    for alt in (best * 2, best / 2):
+        if 90 <= alt <= 180 and not 90 <= best <= 180 and val(cn, alt) >= 0.8 * val(cn, best):
+            best = alt
+            break
+    return best, min(1.0, conf / 2)
+
+
+def key_of(chroma, bass_chroma=None, bars=None, upper_chroma=None):
+    """Tonart. Krumhansl-Kessler allein verwechselte Quinte (C statt G) und Parallele (F-Dur statt a-Moll). Darum werden die
+    sechs besten Kandidaten zusätzlich nach dem Kernton der oberen Stimmen, dem Bass und dem Tonika-Akkord bewertet.
+    🔑 Der Bass allein führte in die Irre: in einem a-Moll-Trance spielte er am meisten F (die VI. Stufe)."""
+    v = chroma / (chroma.sum() + 1e-9)
+    sc = {}
+    for r in range(12):
+        for prof, mode in ((KK_MAJ, "major"), (KK_MIN, "minor")):
+            sc[(r, mode)] = float(np.corrcoef(v, np.roll(prof, r))[0, 1])
+    bc = bass_chroma / (bass_chroma.sum() + 1e-9) if bass_chroma is not None else None
+    uc = upper_chroma / (upper_chroma.sum() + 1e-9) if upper_chroma is not None else None
+    seq = [b for b in (bars or []) if b]
+    first = seq[0] if seq else None
+    def total(k):
+        r, mode = k
+        x = sc[k]
+        if uc is not None:
+            x += 0.8 * float(uc[r])
+        if bc is not None:
+            x += 0.3 * float(bc[r])
+        q = "m" if mode == "minor" else ""
+        fits = lambda c: c[0] == r and c[1] in (q, "?")          # unklare Terz zählt für beide Tongeschlechter
+        if seq:
+            x += 0.4 * sum(1 for c in seq if fits(c)) / len(seq)
+        if first and fits(first):
+            x += 0.1
+        return x
+    top = sorted(sc, key=sc.get, reverse=True)[:6]
+    ranked = sorted(top, key=total, reverse=True)
+    k = ranked[0]
+    alt = ranked[1] if len(ranked) > 1 and total(ranked[0]) - total(ranked[1]) < 0.04 else None
+    return k[0], k[1], sc[k], alt
+
+
+def chords_per_beat(chroma_beats):
+    """Dur-/Moll-Dreiklang je Schlag (Schablonen), schwache Schläge = keiner."""
+    tmpl = []
+    for r in range(12):
+        for q, iv in (("", (0, 4, 7)), ("m", (0, 3, 7))):
+            v = np.zeros(12)
+            for i in iv:
+                v[(r + i) % 12] = 1
+            tmpl.append((r, q, v / np.linalg.norm(v)))
+    out = []
+    for c in chroma_beats.T:
+        n = np.linalg.norm(c)
+        if n < 1e-6:
+            out.append(None)
+            continue
+        s = [(float(np.dot(c / n, v)), r, q) for r, q, v in tmpl]
+        sc, r, q = max(s)
+        if sc <= 0.6:
+            out.append(None)
+            continue
+        cn = c / n
+        maj3, min3 = cn[(r + 4) % 12], cn[(r + 3) % 12]
+        # Terz kaum hörbar (Powerchord, Quinten-Pads): Tongeschlecht später aus der Tonart
+        out.append((r, q if abs(maj3 - min3) > 0.25 * cn[r] else "?"))
+    return out
+
+
+DIATONIC = {"major": {0: "", 2: "m", 4: "m", 5: "", 7: "", 9: "m", 11: "m"},
+            "minor": {0: "m", 2: "m", 3: "", 5: "m", 7: "m", 8: "", 10: ""}}
+
+
+def settle(chord, root, mode):
+    """Akkord mit unklarer Terz → Tongeschlecht der Stufe in der Tonart (in a-Moll: Am statt A)."""
+    if not chord or chord[1] != "?":
+        return chord
+    return (chord[0], DIATONIC[mode].get((chord[0] - root) % 12, ""))
+
+
+def loop_of(bar_chords, root, mode):
+    """Akkordfolge: gleiche Takte zusammenfassen, dann die häufigste Folge von vier Wechseln (bei weniger Wechseln die
+    vorhandenen). 🔑 Je Takt gezählt zeigte ein Trance mit 2–4 Takten je Akkord nur „Am–Am–Am–Am“."""
+    from collections import Counter
+    runs = []
+    for c in bar_chords:
+        if not c:
+            continue
+        if runs and runs[-1][0] == c:
+            runs[-1][1] += 1
+        else:
+            runs.append([c, 1])
+    if not runs:
+        return None
+    chords = [c for c, _ in runs]
+    if len(set(chords)) == 1:
+        loop, share = [chords[0]], 1.0
+    elif len(chords) >= 5:
+        grams = Counter(tuple(chords[i:i + 4]) for i in range(len(chords) - 3))
+        g, n = grams.most_common(1)[0]
+        # gleich gute Lesarten derselben Schleife: die, die auf dem Grundton beginnt (sonst schwankte die Anzeige
+        # zwischen F#m–A–Em–G und Bm–D–A–Em, je nach Lauf)
+        tonic = [x for x, k in grams.most_common() if k >= 0.6 * n and x[0][0] == root]
+        if tonic and g[0][0] != root:
+            g = tonic[0]
+            n = grams[g]
+        loop, share = list(g), n / max(1, len(chords) - 3)
+        if loop[2:] == loop[:2]:                       # A–B–A–B → A–B
+            loop = loop[:2]
+    else:
+        loop, share = chords[:4], 0.0
+    per_bar = float(np.median([n for _, n in runs])) if runs else 1.0
+    return {"names": [NOTES[r] + ("m" if q == "m" else "") for r, q in loop],
+            "roman": [roman((r - root) % 12, "m" if q == "m" else "", mode) for r, q in loop],
+            "bars_per_chord": per_bar, "share": round(share, 2)}
+
+
+def sections_of(y, sr, beats_s, energy_db):
+    """Aufbau: Abschnitte über Wiederholung (Chroma + Klangfarbe je Schlag), gleiche Teile tragen denselben Buchstaben."""
+    import librosa
+    hop = 512
+    bf = librosa.time_to_frames(beats_s, sr=sr, hop_length=hop)
+    chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=hop)
+    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13, hop_length=hop)
+    F = np.vstack([librosa.util.normalize(chroma, axis=0), librosa.util.normalize(mfcc[1:], axis=1)])
+    Fs = librosa.util.sync(F, bf, aggregate=np.median)
+    dur = len(y) / sr
+    k = int(np.clip(round(dur / 28), 3, 10))
+    if Fs.shape[1] <= k + 1:
+        return []
+    bounds = librosa.segment.agglomerative(Fs, k)
+    bt = librosa.frames_to_time(librosa.util.fix_frames(bf, x_max=F.shape[1]), sr=sr, hop_length=hop)
+    starts = sorted(set([0.0] + [float(bt[min(b, len(bt) - 1)]) for b in bounds if b > 0]))
+    segs = []
+    for i, s in enumerate(starts):
+        e = starts[i + 1] if i + 1 < len(starts) else dur
+        if e - s < 4 and segs:                                # Splitter an den Vorgänger hängen
+            segs[-1]["end"] = round(e, 1)
+            continue
+        segs.append({"start": round(s, 1), "end": round(e, 1)})
+    # gleiche Teile erkennen: mittlere Merkmale je Abschnitt, Ähnlichkeit > 0,92 → derselbe Buchstabe
+    def feat(sg):
+        a = int(np.searchsorted(bt, sg["start"]))
+        b = max(a + 1, int(np.searchsorted(bt, sg["end"])))
+        v = Fs[:, a:b].mean(1)
+        return v / (np.linalg.norm(v) + 1e-9)
+    labels, protos = [], []
+    for sg in segs:
+        v = feat(sg)
+        sims = [float(np.dot(v, p)) for p in protos]
+        if sims and max(sims) > 0.92:
+            labels.append(int(np.argmax(sims)))
+        else:
+            protos.append(v)
+            labels.append(len(protos) - 1)
+    lo, hi = np.percentile(energy_db, 10), np.percentile(energy_db, 95)
+    for sg, lb in zip(segs, labels):
+        a, b = int(sg["start"]), max(int(sg["start"]) + 1, int(sg["end"]))
+        lv = float(np.mean(energy_db[a:b])) if b <= len(energy_db) else float(np.mean(energy_db[a:]))
+        x = (lv - lo) / max(1e-6, hi - lo)
+        sg["label"] = chr(65 + min(lb, 25))
+        sg["energy"] = "voll" if x > 0.75 else "mittel" if x > 0.45 else "ruhig"
+    return segs
+
+
+def main():
+    import librosa
+    src, out_json = sys.argv[1], sys.argv[2]
+    wav = load(src)
+    full = wav.shape[1] / SR
+    wav = wav[:, :MAX_S * SR]
+    dur = wav.shape[1] / SR
+    st = separate(wav)
+    mix = wav.mean(0)
+    # Anteile der Stimmen (Energie), Gesang über die Zeit
+    en = {k: float((v.astype(np.float64) ** 2).sum()) for k, v in st.items()}
+    tot = sum(en.values()) + 1e-12
+    stems = {k: round(100 * en[k] / tot) for k in ("drums", "bass", "vocals", "other") if k in en}
+    win = SR // 2
+    n = len(mix) // win
+    rm = lambda x: np.sqrt((x[:n * win].reshape(n, win).astype(np.float64) ** 2).mean(1) + 1e-12)
+    vr, mr = rm(st["vocals"]), rm(mix)
+    voc_share = float(((vr > 0.2 * mr) & (mr > 10 ** (-40 / 20))).mean()) if n else 0.0
+    vocals = "viel" if voc_share > 0.45 else "etwas" if voc_share > 0.15 else "kaum"
+    # Tempo und Schläge (ohne Vorgabe), halb/doppelt geprüft
+    est, conf = tempo_estimate(mix[::2], st["drums"][::2])
+    bpm, beats = tempo_and_beats(mix[::2], st["drums"][::2], est)    # Feinsuche ±6 % um die Schätzung + Schläge
+    # Groove: Kick auf jedem Schlag? 🔑 Der Schlag-Tracker rastet mitunter auf Offbeat-Hi-Hats ein — darum zählt die Lage
+    # der Kicks relativ zu ihrer eigenen häufigsten Phase, nicht zur Phase der Schläge.
+    hits = drum_hits(st["drums"])
+    kicks = beat_pos([t for t, k, _ in hits if k == "kick"], beats, bpm)
+    kv = np.array([v for t, k, v in hits if k == "kick"])
+    covered, phase, even_odd = 0.0, 0.0, 1.0
+    if len(kicks) > 4:
+        phase = float(np.angle(np.exp(2j * np.pi * kicks).mean()) / (2 * np.pi)) % 1
+        d = ((kicks - phase + 0.5) % 1) - 0.5
+        on = np.abs(d) < 0.15
+        idx = np.round(kicks[on] - phase).astype(int)
+        # nur Schläge zählen, auf denen das Schlagzeug spielt — Breakdowns ohne Kick drückten sonst den Anteil
+        dr = st["drums"].astype(np.float64)
+        bi = (np.asarray(beats) * SR).astype(int)
+        bl = max(1, int(SR * 60 / bpm))
+        brms = np.array([np.sqrt((dr[i:i + bl] ** 2).mean() + 1e-12) if i < len(dr) else 0 for i in bi])
+        active = brms > 0.15 * np.percentile(brms, 90) if len(brms) else brms
+        act_idx = set(np.nonzero(active)[0].tolist())
+        covered = len(set(idx.tolist()) & act_idx) / max(1, len(act_idx))
+        ev, od = kv[on][idx % 2 == 0], kv[on][idx % 2 == 1]
+        if len(ev) and len(od):
+            even_odd = float(min(ev.mean(), od.mean()) / max(ev.mean(), od.mean()))
+    four = covered > 0.6 and even_odd > 0.7
+    snares = beat_pos([t for t, k, _ in hits if k == "snare"], beats, bpm)
+    # Backbeat: Snares eine Viertel neben den Kicks, jeden zweiten Schlag
+    backbeat = float(np.mean(np.abs((((snares - phase) % 2) - 1)) < 0.2)) if len(snares) > 8 and not four else 0.0
+    if not four and covered > 0.6 and even_odd <= 0.7:
+        backbeat = 1.0                                     # Kick und Snare im Wechsel
+    # Tonart aus allem außer Schlagzeug, Akkorde aus Bass + Rest je Schlag
+    sr = 22050
+    harm = librosa.resample((st["bass"] + st["other"] + 0.5 * st["vocals"]).astype(np.float32), orig_sr=SR, target_sr=sr)
+    hop = 512
+    chroma = librosa.feature.chroma_cqt(y=harm, sr=sr, hop_length=hop)
+    # Akkorde ohne den Bass: sein fünfter Teilton (große Terz) machte aus a-Moll ein A-Dur.
+    # 🔑 Trägt der obere Teil kaum etwas (ein Trance: Rest 3 %, Gesang 10 % — die Trennung legte die Synths zum Bass),
+    #    sind Akkorde daraus Zufall und kippen die Tonart. Dann das ganze harmonische Signal, die Terz entscheidet die Tonart.
+    up_share = (stems.get("other", 0) + stems.get("vocals", 0)) / 100.0
+    upper_sig = st["other"] + 0.5 * st["vocals"] if up_share >= 0.15 else st["bass"] + st["other"] + 0.5 * st["vocals"]
+    upper = librosa.resample(upper_sig.astype(np.float32), orig_sr=SR, target_sr=sr)
+    chroma_up = librosa.feature.chroma_cqt(y=upper, sr=sr, hop_length=hop)
+    bf = librosa.time_to_frames(beats, sr=sr, hop_length=hop)
+    cb = librosa.util.sync(chroma_up, librosa.util.fix_frames(bf, x_max=chroma_up.shape[1]), aggregate=np.median)
+    pb = chords_per_beat(cb)
+    if up_share < 0.15:                                  # mit Bass gemessen: Terz nicht trauen
+        pb = [(c[0], "?") if c else None for c in pb]
+    bars = []
+    for i in range(0, len(pb) - 3, 4):                     # je Takt der häufigste Akkord
+        cs = [c for c in pb[i:i + 4] if c]
+        bars.append(max(set(cs), key=cs.count) if cs else None)
+    bass_y = librosa.resample(st["bass"].astype(np.float32), orig_sr=SR, target_sr=sr)
+    bass_c = librosa.feature.chroma_cqt(y=bass_y, sr=sr, hop_length=hop, fmin=librosa.note_to_hz("C1"), n_octaves=5).sum(1)
+    root, mode, kconf, kalt = key_of(chroma.sum(1), bass_c, bars, chroma_up.sum(1))
+    bars = [settle(b, root, mode) for b in bars]
+    loop = loop_of(bars, root, mode)
+    # Lautheit, Dynamik, Klangfarbe, Energieverlauf (je Sekunde)
+    y = librosa.resample(mix.astype(np.float32), orig_sr=SR, target_sr=sr)
+    sec = sr
+    m = len(y) // sec
+    e = np.sqrt((y[:m * sec].reshape(m, sec).astype(np.float64) ** 2).mean(1) + 1e-12)
+    edb = 20 * np.log10(e)
+    loud = float(20 * np.log10(np.sqrt((y.astype(np.float64) ** 2).mean()) + 1e-12))
+    dyn = float(np.percentile(edb, 90) - np.percentile(edb, 10)) if m > 4 else 0.0
+    cent = float(np.median(librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=1024)))
+    colour = "hell" if cent > 2600 else "warm" if cent > 1500 else "dunkel"
+    lo, hi = np.percentile(edb, 5), edb.max()
+    curve = [int(round(100 * min(1, max(0, (v - lo) / max(1e-6, hi - lo))))) for v in edb]
+    secs = sections_of(y, sr, beats, edb)
+    out = {"v": 1, "duration": round(full, 1), "measured_s": round(dur, 1),
+           "bpm": round(float(bpm), 1), "bpm_conf": round(conf, 2),
+           "key": {"root": int(root), "name": NOTES[root], "mode": mode, "conf": round(kconf, 2),
+                   "alt": {"root": int(kalt[0]), "name": NOTES[kalt[0]], "mode": kalt[1]} if kalt else None},
+           "chords": loop, "stems": stems, "vocals": vocals, "vocal_share": round(voc_share, 2),
+           "groove": {"four_on_floor": bool(four), "kick_cover": round(min(1.0, covered), 2), "kick_even": round(even_odd, 2), "backbeat": round(backbeat, 2)},
+           "loudness_db": round(loud, 1), "dynamics_db": round(dyn, 1), "brightness_hz": int(cent), "colour": colour,
+           "energy": curve[:600], "sections": secs}
+    with open(out_json, "w") as f:
+        json.dump(out, f)
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
+def analyse_measure(cfg: dict, audio: bytes, filename: str) -> dict:
+    """Tempo, Tonart, Akkordfolge, Aufbau, Energie, Stimmen-Anteile, Gesang, Klangfarbe, Groove. Ohne MIDI-Umgebung
+    (Installer mit --skip-midi) → {"unavailable": …} — die Musik-KI hört trotzdem zu."""
+    py = midi_python()
+    if not py:
+        return {"unavailable": "MIDI-Umgebung fehlt (Installer-Schritt „MIDI image“)"}
+    for name, code in (("transcribe.py", MIDI_SCRIPT), ("analyse.py", ANALYSE_SCRIPT)):
+        p = os.path.join(MIDI_DIR, name)
+        if _read_bytes(p) != code.encode():
+            _write_atomic(p, code.encode())
+    ext = os.path.splitext(filename or "")[1].lower()
+    ext = ext if re.match(r"^\.[a-z0-9]{2,5}$", ext) else ".audio"
+    work = os.path.join(MIDI_DIR, "analyse-" + uuid.uuid4().hex[:8])
+    os.makedirs(work, exist_ok=True)
+    src, out = os.path.join(work, "song" + ext), os.path.join(work, "ergebnis.json")
+    try:
+        with open(src, "wb") as f:
+            f.write(audio)
+        env = dict(os.environ, MWS_FFMPEG=tool(cfg, "ffmpeg") or "ffmpeg", TORCH_HOME=os.path.join(MIDI_DIR, "torch"),
+                   HF_HOME=os.path.join(MIDI_DIR, "hf"), MWS_MIDI_DEVICE="mps" if sys.platform == "darwin" else "cpu",
+                   PYTORCH_ENABLE_MPS_FALLBACK="1")
+        t0 = time.time()
+        r = subprocess.run([py, os.path.join(MIDI_DIR, "analyse.py"), src, out], env=env, capture_output=True, timeout=900)
+        if r.returncode != 0 or not os.path.isfile(out):
+            msg = (r.stderr.decode(errors="replace").strip().splitlines() or ["?"])[-1]
+            log("Vermessen nicht möglich (%s): %s" % (filename, msg[-200:]))
+            return {"unavailable": "Vermessen nicht möglich: " + msg[-160:]}
+        data = _read_json(out)
+        log("Vermessen in %.0f s: %s · %s BPM · %s %s" % (time.time() - t0, filename, data.get("bpm"),
+            (data.get("key") or {}).get("name"), (data.get("key") or {}).get("mode")))
+        return data
+    except subprocess.TimeoutExpired:
+        return {"unavailable": "Vermessen dauerte zu lange"}
+    finally:
+        for p in (src, out):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+        try:
+            os.rmdir(work)
+        except OSError:
+            pass
+
+
+def analyse_job(cfg: dict, eng, srv, job: dict, tick) -> dict:
+    """Auftrag „analyse“: die Musik-KI hört zu (Stil, Takt, Sprache) und der Mac vermisst den Song.
+    🔑 Den erkannten Liedtext NICHT weitergeben — aus Vorbildern entsteht ein neuer Song, kein nachgesungener."""
+    upload = srv.upload(job["id"])
+    name = job.get("filename") or "upload"
+    try:
+        ace = eng.understand(upload, name, tick)
+        ace.pop("lyrics", None)
+    except Exception as e:  # noqa: BLE001
+        ace = {"unavailable": (str(e) or type(e).__name__)[:160]}
+    tick("Dein Mac vermisst den Song (Tempo, Tonart, Akkorde, Aufbau) …")
+    measure = analyse_measure(cfg, upload, name)
+    if ace.get("unavailable") and measure.get("unavailable"):
+        raise RuntimeError("Analyse nicht möglich: %s · %s" % (ace["unavailable"], measure["unavailable"]))
+    out = {"v": 1, "ace": ace, "measure": measure}
+    srv.result_json(job["id"], out)
+    return out
+
+
 def midi_python() -> str:
     p = os.path.join(MIDI_DIR, "Scripts", "python.exe") if IS_WIN else os.path.join(MIDI_DIR, "bin", "python")
     return p if os.path.isfile(p) else ""
@@ -4569,6 +4958,8 @@ def run(cfg: dict) -> None:
                 result = eng.understand(upload, job.get("filename") or "upload", tick)
                 srv.result_json(jid, result)
                 log("Analyse fertig: %s" % json.dumps(result, ensure_ascii=False)[:160])
+            elif job.get("kind") == "analyse":
+                analyse_job(cfg, eng, srv, job, tick)
             elif job.get("kind") in ("nachruesten", "cover"):
                 finish_job(cfg, srv, job, tick)
             else:

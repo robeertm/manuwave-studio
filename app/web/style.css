@@ -118,9 +118,6 @@ input[type=range]{accent-color:var(--neon);width:100%}
 .more summary{cursor:pointer;color:var(--sub);font-size:13px}
 .more summary:hover{color:var(--ink)}
 .more[open] summary{margin-bottom:10px}
-.ref-chip{margin-top:12px;font-size:13px;padding:8px 12px;border-radius:10px;
-  border:1px solid rgba(124,92,255,.5);background:rgba(124,92,255,.10);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.ref-chip button{padding:1px 8px;font-size:11px;border-radius:6px;margin-left:auto}
 .go-row{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:16px}
 .hero{padding:13px 26px;font-size:16.5px;background:linear-gradient(90deg,var(--pink),var(--neon2) 55%,var(--neon));
   box-shadow:0 0 0 1px rgba(255,255,255,.06),0 8px 30px rgba(255,77,148,.25)}
@@ -389,3 +386,32 @@ body.has-now #app{padding-bottom:110px}
 .upd-notes{max-height:min(44dvh,420px);overflow:auto;white-space:pre-wrap;word-break:break-word;font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;
   background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0;color:var(--sub)}
 .upd-notes:empty{display:none}
+/* 3.24 Aus deinen Songs */
+.vorbilder{margin-top:16px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:linear-gradient(180deg,var(--panel2),var(--panel))}
+.vb-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
+.vb-head h3{margin:0;font-size:15px}
+.vb-head p{margin:0;flex:1 1 320px;min-width:0}
+.vb-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:10px;margin-top:10px}
+.vb-cards:empty{display:none}
+.vb-card{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--bg2);min-width:0;display:flex;flex-direction:column;gap:6px}
+.vb-card.err{border-color:var(--pink)}
+.vb-card p{margin:0}
+.vb-chead{display:flex;align-items:center;gap:6px;font-weight:600;font-size:13.5px;min-width:0}
+.vb-chead span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto}
+.vb-x{padding:1px 8px;font-size:11px;flex:0 0 auto}
+.vb-style{font-size:12.5px;color:var(--sub);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.vb-chips{display:flex;flex-wrap:wrap;gap:5px}
+.vb-chip{font-size:12px;padding:3px 8px;border-radius:999px;border:1px solid var(--line);background:var(--panel2);color:var(--sub)}
+.vb-chip b{color:var(--ink);font-weight:600}
+.vb-cl::after{content:" "}
+.vb-line{font-size:12.5px;color:var(--sub)}
+.vb-stems{display:flex;height:8px;border-radius:999px;overflow:hidden;background:var(--panel2)}
+.vb-stems span{display:block;height:100%}
+.vb-legend{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:11.5px;color:var(--sub)}
+.vb-leg i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:middle}
+.vb-energy{width:100%;height:34px;display:block;border-radius:6px;background:var(--panel2)}
+.vb-area{fill:color-mix(in srgb,var(--neon) 40%,transparent);stroke:var(--neon);stroke-width:.6;vector-effect:non-scaling-stroke}
+.vb-cut{stroke:var(--sub);stroke-width:1;stroke-dasharray:2 2;vector-effect:non-scaling-stroke;opacity:.7}
+.vb-mix{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-top:10px}
+.vb-mixtext{flex:1 1 320px;min-width:0;font-size:13px}
+.vb-take{margin-top:3px}
