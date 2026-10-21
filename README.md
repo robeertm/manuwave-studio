@@ -178,6 +178,17 @@ From 3.23 on, Manuwave Studio updates itself with one click:
 **Git clones made before 2026-10-21:** the repository history was rewritten on that day, so `git pull` refuses to
 merge. Clone the repository again (or `git fetch origin && git reset --hard origin/main` if you changed nothing).
 
+## If something doesn't work
+
+- **Keep the start window open.** *Manuwave Studio* (the window that opens when you start it) runs the app and the
+  bridge, and starts either of them again if it stops. Closing it stops everything.
+- **🔴 App not responding** at the top right means the app is not running: open the start window again. The page
+  carries on by itself once it's back.
+- **Logs** are in `~/ManuwaveStudio` (`%USERPROFILE%\ManuwaveStudio` on Windows): `app.log`, `bridge.log`, and
+  `app.restart.log` / `bridge.restart.log` after a restart. They help when you report a problem.
+- **Windows installs before 3.24.1** could not run in Windows PowerShell 5.1. Download 3.24.1 and run the installer
+  again — finished steps are skipped.
+
 ## How it works
 
 ```

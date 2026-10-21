@@ -64,6 +64,7 @@ import re
 import secrets
 import socket
 import socketserver
+import subprocess
 import sys
 import threading
 import time
@@ -76,7 +77,7 @@ HOST = os.environ.get("HOST", "0.0.0.0")      # 3.11: lokale Installation → 12
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, "web")
 
-APP_VERSION = "3.24.0"
+APP_VERSION = "3.24.1"
 BRIDGE_FILE = next((p for p in (os.path.join(ROOT, "bridge", n) for n in ("neonforge_bridge.py", "manuwave_bridge.py"))
                     if os.path.isfile(p)), os.path.join(ROOT, "bridge", "manuwave_bridge.py"))
 BUILD_INFO_FILE = os.path.join(WEB, "build-info.json")
@@ -774,14 +775,40 @@ def mws_home() -> str:
     return home
 
 
+def respawn_needed() -> bool:
+    """3.24.1: Windows-Starter bis 3.24.0 erkannten Code 75 nie (Start-Process -PassThru ohne gemerkten Handle →
+    ExitCode bleibt leer) — Server und Brücke blieben nach Update oder neuem Code einfach aus. Erst der Starter ab
+    3.24.1 setzt MWS_SUPERVISED=1 und startet zuverlässig neu; unter einem älteren startet sich das Programm selbst."""
+    if os.environ.get("MWS_TEST_RESPAWN") == "1":          # Prüfstand: diesen Weg auch auf POSIX gehen
+        return True
+    return os.name == "nt" and os.environ.get("MWS_SUPERVISED") != "1"
+
+
+def spawn_detached(argv: list, cwd: str, log_name: str) -> None:
+    """Den Nachfolger losgelöst starten — er überlebt das Ende dieses Prozesses und des alten Starters."""
+    home = mws_home() or cwd
+    try:
+        err = open(os.path.join(home, log_name), "ab")
+    except OSError:
+        err = subprocess.DEVNULL
+    if os.name == "nt":
+        kw = {"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
+    else:
+        kw = {"start_new_session": True}
+    subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=err, stderr=err, close_fds=True, **kw)
+
+
 def restart_self(code: int = 75) -> None:
     """Neu starten mit dem Code auf der Platte. POSIX: execv (dieselbe Prozessnummer, der Starter behält sie);
-    Windows: beenden mit 75 — der Starter startet dann neu."""
+    Windows mit Starter ab 3.24.1: beenden mit 75 — der Starter startet neu; unter einem älteren: selbst neu starten."""
     try:
         sys.stdout.flush()
         sys.stderr.flush()
     except Exception:  # noqa: BLE001
         pass
+    if respawn_needed():
+        spawn_detached([sys.executable, os.path.join(ROOT, "server.py")], ROOT, "app.restart.log")
+        os._exit(0)
     if os.name == "nt":
         os._exit(code)
     os.chdir(ROOT)
@@ -1461,15 +1488,31 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 
 class Server(socketserver.ThreadingTCPServer):
-    allow_reuse_address = True
+    #    teilten Browser und Brücke auf: Aufträge kamen bei dem einen an, die Brücke fragte beim anderen.
+    allow_reuse_address = os.name != "nt"
     daemon_threads = True
     # 3.22: Warteschlange statt 5 (Standard) — beim Laden holt der Browser ~20 Dateien auf einmal; unter Last setzte
     # der Server überzählige Verbindungen zurück (60 gleichzeitig: 25 Abbrüche), eine fehlende Moduldatei legte die App lahm
     request_queue_size = 256
 
 
+def _bind() -> "Server":
+    """Ein Nachfolger startet, während sein Vorgänger den Port noch hält — kurz warten statt aufgeben."""
+    for i in range(60):
+        try:
+            return Server((HOST, PORT), Handler)
+        except OSError as e:
+            busy = e.errno in (98, 48, 10048) or getattr(e, "winerror", None) == 10048
+            if not busy or i == 59:
+                if busy:
+                    print(f"Port {PORT} ist belegt — läuft Manuwave Studio schon? Dann dort weiterarbeiten.", flush=True)
+                raise
+            time.sleep(0.25)
+    raise RuntimeError("unreachable")
+
+
 if __name__ == "__main__":
-    with Server((HOST, PORT), Handler) as httpd:
+    with _bind() as httpd:
         b = _build_info()
         print(f"Manuwave Studio v{b['version']} ({b['commit'] or '?'}, built {b['builtAt'] or 'local'}) "
               f"on :{PORT}", flush=True)

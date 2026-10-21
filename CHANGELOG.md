@@ -3,6 +3,27 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.24.1 — 2026-10-21 (bridge 3.19.1)
+
+### Fixed
+- **Windows: installer and start window did not run.** Windows PowerShell 5.1 reads scripts without a byte-order mark
+  as ANSI; the dashes in them turned into quotation marks and broke the syntax. Both scripts are plain ASCII now, and
+  CI parses them the way Windows PowerShell 5.1 does.
+- **Windows: app and bridge did not come back after an update or new code.** The start window waited for exit code 75,
+  which Windows PowerShell never reported (`Start-Process -PassThru` without a cached handle). It now restarts both
+  whenever they end. Under an older start window the app and the bridge start their successor themselves, so the
+  update to this version works too.
+- **Windows: a second app could take the same port.** `SO_REUSEADDR` lets a second process bind the same port on
+  Windows — jobs then reached one app while the bridge asked the other. A second app now stops with a clear message.
+
+### Changed
+- **The start window heals the app (macOS, Linux, Windows).** If the app or the bridge stops (crash, killed), the
+  start window starts it again within seconds — at most every 10 seconds.
+- **The page says when the app is not running** (*🔴 App not responding* and a note what to do) instead of showing
+  *Computer asleep* while every click went nowhere. It carries on by itself once the app is back.
+- A successor waits briefly until the port is free instead of giving up.
+- CI runs the real start window on Windows: start, restart after a crash, second app refused, self-restart.
+
 ## 3.24.0 — 2026-10-21 (bridge 3.19.0)
 
 ### Added

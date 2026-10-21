@@ -1,11 +1,11 @@
-# Manuwave Studio — installer for Windows 10/11 with an NVIDIA GPU.
+# Manuwave Studio - installer for Windows 10/11 with an NVIDIA GPU.
 #
 #   powershell -ExecutionPolicy Bypass -File install.ps1 [-Yes] [-Lm 0.6B|1.7B|4B] [-Xl] [-NoStart] [-SkipWriter] [-SkipImage] [-SkipQa] [-SkipMidi] [-SkipLoopAi]
 #
 # Safe to run again; everything lands in %USERPROFILE%\ManuwaveStudio. No administrator rights needed.
 # Engine: prebuilt acestep.cpp from this project's GitHub release (CUDA + Vulkan). Covers: stable-diffusion.cpp
 # (CUDA 12 build from its release) + Z-Image Turbo. Watermarks are not available on Windows (no audiowmark build).
-# ⚠ Status: experimental — built and checked in CI, not yet run on real NVIDIA hardware by the maintainer.
+# ! Status: experimental - built and checked in CI, not yet run on real NVIDIA hardware by the maintainer.
 param([switch]$Yes, [string]$Lm = "", [switch]$Xl, [switch]$NoStart, [switch]$SkipWriter, [switch]$SkipImage, [switch]$SkipQa, [switch]$SkipMidi, [switch]$SkipLoopAi)
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
@@ -19,9 +19,9 @@ New-Item -ItemType Directory -Force -Path $Home_, $Tools, $Src, (Join-Path $Home
 Start-Transcript -Append -Path (Join-Path $Home_ "install.log") | Out-Null
 
 function Step($t) { Write-Host "`n$t" -ForegroundColor White }
-function Ok($t) { Write-Host "  ✓ $t" -ForegroundColor Green }
+function Ok($t) { Write-Host "  OK $t" -ForegroundColor Green }
 function Warn($t) { Write-Host "  ! $t" -ForegroundColor Yellow }
-function Die($t) { Write-Host "`n  ✗ $t" -ForegroundColor Red; Stop-Transcript | Out-Null; exit 1 }
+function Die($t) { Write-Host "`n  X $t" -ForegroundColor Red; Stop-Transcript | Out-Null; exit 1 }
 function Fetch($url, $dst) {
   if ((Test-Path $dst) -and (Get-Item $dst).Length -gt 0) { return }
   New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
@@ -39,7 +39,7 @@ function Asset($repo, $tag, $pattern) {
 }
 function Unzip($zip, $dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null; Expand-Archive -Force -Path $zip -DestinationPath $dir }
 
-Step "Manuwave Studio — installing into $Home_"
+Step "Manuwave Studio - installing into $Home_"
 
 Step "1/10  Checking this PC"
 $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
@@ -47,7 +47,7 @@ if (-not $smi) { Die "No NVIDIA driver found. Install the current GeForce/Studio
 $gpu = (& nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | Select-Object -First 1)
 $ramGb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
 $freeGb = [math]::Round((Get-PSDrive (Split-Path $Home_ -Qualifier).TrimEnd(":")).Free / 1GB)
-Ok "GPU: $gpu · RAM $ramGb GB · $freeGb GB free"
+Ok "GPU: $gpu | RAM $ramGb GB | $freeGb GB free"
 if (-not $Lm) { $Lm = if ($ramGb -lt 12) { "0.6B" } elseif ($ramGb -lt 24) { "1.7B" } else { "4B" } }
 if ($freeGb -lt 25) { Die "About 25 GB of free space are needed." }
 
@@ -86,7 +86,7 @@ Step "4/10  Music models"
 $M = Join-Path $Engine "models"; New-Item -ItemType Directory -Force -Path $M | Out-Null
 $dit = if ($Xl) { "acestep-v15-xl-sft-Q8_0.gguf" } else { "acestep-v15-sft-Q8_0.gguf" }
 foreach ($f in @("vae-BF16.gguf", "Qwen3-Embedding-0.6B-Q8_0.gguf", "acestep-5Hz-lm-$Lm-Q8_0.gguf", $dit)) {
-  Write-Host "  ↓ $f"; Fetch "$Hf/$f" (Join-Path $M $f); Ok $f
+  Write-Host "  -> $f"; Fetch "$Hf/$f" (Join-Path $M $f); Ok $f
 }
 Set-Content -Path (Join-Path $Home_ "engine.conf") -Value "MODE=single`nLM_FILE=acestep-5Hz-lm-$Lm-Q8_0.gguf`nTESTED_REV=b7ba6d9"
 
@@ -161,7 +161,7 @@ Step "9/10 Loop machine AI (optional, base model about $baseSize GB)"
 # ACE-Step's "complete" task (a band for your sung loop) needs the base model; continuing a jam works without it.
 $base = if ($Xl) { "acestep-v15-xl-base-Q8_0.gguf" } else { "acestep-v15-base-Q8_0.gguf" }
 if (-not $SkipLoopAi) {
-  try { Write-Host "  ↓ $base"; Fetch "$Hf/$base" (Join-Path $M $base); Ok $base }
+  try { Write-Host "  -> $base"; Fetch "$Hf/$base" (Join-Path $M $base); Ok $base }
   catch { Warn "download failed - the loop machine still continues jams; run again to resume" }
 } else { Warn "skipped (-SkipLoopAi): the loop machine continues jams, a band for your voice gets a weaker bass" }
 
@@ -174,7 +174,7 @@ Set-Content -Path (Join-Path $Home_ "install_rev") -Value $rev -Encoding ascii
 Copy-Item -Force (Join-Path $Repo "install\windows\Manuwave Studio.ps1"), (Join-Path $Repo "install\windows\Manuwave Studio.bat") $Home_
 $lnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "Manuwave Studio.lnk"
 $sh = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk); $sh.TargetPath = Join-Path $Home_ "Manuwave Studio.bat"; $sh.WorkingDirectory = $Home_; $sh.Save()
-Ok "Start with “Manuwave Studio” on your desktop."
+Ok "Start with 'Manuwave Studio' on your desktop."
 Step "Done."
 Stop-Transcript | Out-Null
 if (-not $NoStart) { Start-Process (Join-Path $Home_ "Manuwave Studio.bat") }

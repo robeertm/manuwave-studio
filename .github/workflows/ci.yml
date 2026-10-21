@@ -15,6 +15,8 @@ jobs:
         with: { node-version: "22" }
       - name: JavaScript syntax
         run: for f in app/web/*.js; do node --check "$f"; done
+      - name: Windows scripts are ASCII (Windows PowerShell 5.1 reads files without BOM as ANSI)
+        run: if LC_ALL=C grep -nP '[^\x00-\x7F]' install/windows/*; then exit 1; fi
       - name: PowerShell syntax
         shell: pwsh
         run: |
@@ -29,3 +31,65 @@ jobs:
       - name: Secret scan
         uses: gitleaks/gitleaks-action@v2
         env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+
+  windows:
+    # The launcher as customers run it: Windows PowerShell 5.1 (via the .bat), the real app and bridge, no models.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Windows PowerShell 5.1 parses the scripts
+        shell: powershell
+        run: |
+          foreach ($f in Get-ChildItem install/windows/*.ps1) {
+            $e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$e)
+            if ($e) { $e | ForEach-Object { Write-Error "$($f.Name): $_" }; exit 1 }
+          }
+      - name: Launcher starts, restarts a crashed app and bridge, refuses a second app
+        shell: powershell
+        run: |
+          $H = Join-Path $env:RUNNER_TEMP "mws"
+          New-Item -ItemType Directory -Force (Join-Path $H "tools\ollama") | Out-Null
+          Copy-Item -Recurse app (Join-Path $H "app")
+          Copy-Item "install/windows/Manuwave Studio.ps1" $H
+          '{"token":"ci-smoke-token-00000000000000","server":"http://127.0.0.1:8104"}' | Set-Content (Join-Path $H "bridge.json")
+          (Get-Command python).Source | Set-Content (Join-Path $H "python.txt")
+          Copy-Item "$env:WINDIR\System32\whoami.exe" (Join-Path $H "tools\ollama\ollama.exe")
+          function Up($port) { for ($i = 0; $i -lt 120; $i++) { try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "http://127.0.0.1:$port/version" | Out-Null; return $true } catch { Start-Sleep -Milliseconds 500 } }; return $false }
+          function Pids($pat) { @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -like "*$pat*" } | ForEach-Object { $_.ProcessId }) }
+          function Fail($m) { Write-Host "FAIL: $m"; Get-Content (Join-Path $H "starter.out"), (Join-Path $H "app.log"), (Join-Path $H "bridge.log") -ErrorAction SilentlyContinue; exit 1 }
+          $env:MWS_HOME = $H; $env:MWS_NO_BROWSER = "1"
+          $l = Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$H\Manuwave Studio.ps1`"" -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $H "starter.out")
+          if (-not (Up 8104)) { Fail "app did not start" }
+          Start-Sleep -Seconds 3
+          $s0 = Pids "server.py"; $b0 = Pids "manuwave_bridge.py"
+          if ($s0.Count -ne 1 -or $b0.Count -ne 1) { Fail "expected one app and one bridge: $s0 / $b0" }
+          Stop-Process -Id $s0[0] -Force
+          Start-Sleep -Seconds 3
+          if (-not (Up 8104)) { Fail "app not restarted" }
+          $s1 = Pids "server.py"; if ($s1.Count -ne 1 -or $s1[0] -eq $s0[0]) { Fail "app restart: $s0 -> $s1" }
+          Stop-Process -Id $b0[0] -Force
+          $ok = $false; for ($i = 0; $i -lt 40; $i++) { Start-Sleep -Milliseconds 500; $b1 = Pids "manuwave_bridge.py"; if ($b1.Count -eq 1 -and $b1[0] -ne $b0[0]) { $ok = $true; break } }
+          if (-not $ok) { Fail "bridge not restarted" }
+          Write-Host "restart ok: app $s0 -> $s1, bridge $b0 -> $b1"
+          $env:HOST = "127.0.0.1"; $env:PORT = "8104"
+          $p2 = Start-Process (Get-Command python).Source -ArgumentList "server.py" -WorkingDirectory (Join-Path $H "app") -PassThru -Wait -WindowStyle Hidden `
+            -RedirectStandardOutput (Join-Path $H "second.out") -RedirectStandardError (Join-Path $H "second.err")
+          if ($p2.ExitCode -eq 0) { Fail "a second app took the same port" }
+          if ((Pids "server.py").Count -ne 1 -or -not (Up 8104)) { Fail "first app disturbed" }
+          Write-Host "second app refused (exit $($p2.ExitCode))"
+          Stop-Process -Id $l.Id -Force
+          Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -like "*$H*" -or $_.CommandLine -like "*server.py*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+      - name: Without a supervising launcher the app restarts itself (detached successor)
+        shell: powershell
+        run: |
+          $H = Join-Path $env:RUNNER_TEMP "mws"
+          $env:MWS_HOME = $H; $env:HOST = "127.0.0.1"; $env:PORT = "8106"; Remove-Item Env:MWS_SUPERVISED -ErrorAction SilentlyContinue
+          Push-Location (Join-Path $H "app")
+          python -c "import server; server.restart_self()"
+          Pop-Location
+          $ok = $false; for ($i = 0; $i -lt 60; $i++) { try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 "http://127.0.0.1:8106/version" | Out-Null; $ok = $true; break } catch { Start-Sleep -Milliseconds 500 } }
+          if (-not $ok) { Get-Content (Join-Path $H "app.restart.log") -ErrorAction SilentlyContinue; Write-Host "FAIL: successor did not come up"; exit 1 }
+          Write-Host "successor serves on 8106"
+          Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -like "*server.py*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
