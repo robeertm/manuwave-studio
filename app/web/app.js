@@ -188,7 +188,7 @@ async function fetchBlob(url) {
 
 //    (kein Neuladen: das unterbräche Spielen in Instrumente/Loops nach jedem Neustart des Servers).
 async function serverAlive() {
-  try { return (await fetch("/version", { cache: "no-store" })).ok; } catch (e) { return false; }
+  try { const r = await fetch("/version", { cache: "no-store" }); await r.text(); return r.ok; } catch (e) { return false; }
 }
 async function refreshBridge() {
   const alive = await serverAlive();
