@@ -3,6 +3,12 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.22.1 — 2026-10-21 (bridge 3.17.0)
+
+### Changed
+- Hints, tooltips, comments and documentation no longer refer to other music software; the AIFF export hint now reads
+  “uncompressed, with cover”.
+
 ## 3.22.0 — 2026-10-21 (bridge 3.17.0)
 
 ### Changed
@@ -125,8 +131,8 @@ computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
 ## 3.18.0 — 2026-10-20 (bridge 3.17.0)
 
-New ways to shape and move sound in the loop machine, built with Manuwave's own sound engine — plus a MIDI output,
-so the loop machine can also play other instruments (music software or any hardware synth).
+New ways to shape and move sound in the loop machine, built with Manuwave's own sound engine — plus a MIDI output, so the
+loop machine can also play other instruments (music software or any hardware synth).
 
 ### Added
 - **🔮 Orb** on every generator: drag the dot and it moves three to six knobs at once — the direction picks which, the

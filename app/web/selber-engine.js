@@ -422,6 +422,7 @@ class VAVoice {
     const bendM = ins.pitchMul();
     const dms = this.dms || (this.dms = new Float64Array(7)), pans = this.pans || (this.pans = new Float64Array(7));
     for (let u = 0; u < uni; u++) { const off = uni === 1 ? 0 : (u / (uni - 1) - 0.5) * 2; dms[u] = Math.pow(2, off * det / 12); pans[u] = off * spread; }
+    // 3.18 Analog-Drift: jede Stimme wandert langsam und zufällig — bis ±30 Cent,
     // der Filter bis ±¼ Oktave; wie ein warmgelaufener, nie ganz stabiler Analogsynth
     let dCut = 0;
     const drift = num(p.drift, 0);
