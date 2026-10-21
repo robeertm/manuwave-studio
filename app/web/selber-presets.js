@@ -270,6 +270,7 @@ export function knobIdle(eng, k, p) {
   return null;
 }
 
+// 3.18: Mutationen — aus einem Klang eine verwandte Variante, von sanft (0,15) bis
 // extrem (0,9). Gedreht wird in der Reglerstellung (0…1), nicht in Einheiten: so verhalten sich Hz, Sekunden und % gleich.
 // Was die Tonhöhe verschiebt (Halbtöne, Träger-Verhältnis) oder die Spielweise ändert, bleibt; danach wird geprüft, dass der
 // Klang hörbar bleibt (Pegel, Filter nicht zu, Saite klingt aus). opts.short: Bass/Arp/Lead — Einschwingen bleibt kurz.

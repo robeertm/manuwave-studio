@@ -154,6 +154,7 @@ const FX = [
 // Live-Regler in Gruppen wie auf einem Mischpultkanal
 const FX_GROUPS = [["filter", "Filter", "Filter", ["cut", "res", "hp", "wob", "wdepth"]], ["tone", "Klangfarbe", "Tone", ["lo", "mid", "hi", "drive"]],
   ["space", "Raum", "Space", ["echo", "etime", "efb", "rev"]], ["move", "Bewegung", "Motion", ["shift", "smix", "smode", "vib", "ens"]], ["mix", "Kanal", "Channel", ["pan", "vol"]]];
+// 3.18 Global: sechs Regler, die bei jedem Klang wirken — sie wissen, welche Regler des
 // Instruments Ton, Filter, Hüllkurve und Unisono ausmachen (Tabelle GLOB_MAP), und drehen diese mit (Mitte = wie eingestellt)
 const GLOB = [K("tone", "Ton", "Tone", -1, 1, 0, { u: "pm" }), K("amb", "Raum", "Ambience", -1, 1, 0, { u: "pm" }), K("filt", "Filter", "Filter", -1, 1, 0, { u: "pm" }),
   K("env", "Hüllkurve", "Envelope", -1, 1, 0, { u: "pm" }), K("vib", "Vibrato", "Vibrato", 0, 1, 0, { u: "%" }), K("uni", "Unisono", "Unison", 0, 1, 0, { u: "%" })];
