@@ -22,6 +22,10 @@ computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
   (bars / notes / triplets).
 - While the overview is open, keys belong to it: Space no longer starts playback and letters don't play notes.
 
+### Fixed
+- Reloading while the computer was busy could leave the app half-loaded: the built-in web server kept only five
+  waiting connections and reset the rest, so a script file went missing. It now queues up to 256.
+
 ## 3.21.0 — 2026-10-20 (bridge 3.17.0)
 
 ### Added
