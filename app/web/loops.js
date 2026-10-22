@@ -1956,13 +1956,15 @@ function card(g) {
       text: g.lock ? "🔒" : "🔓", onclick: (e) => { g.lock = !g.lock; e.target.textContent = g.lock ? "🔒" : "🔓"; e.target.classList.toggle("on", g.lock); e.target.setAttribute("aria-pressed", String(g.lock)); changed(); } }),
     h("button", { type: "button", class: "ghost btn-s lp-mute" + (g.mute ? " on" : ""), title: T("Stumm (läuft weiter)", "Mute (keeps running)"), text: "M", onclick: (e) => { g.mute = !g.mute; e.target.classList.toggle("on", g.mute); applyFx(g); changed(); } }),
     h("button", { type: "button", class: "ghost btn-s lp-solo" + (g.solo ? " on" : ""), title: T("Solo", "Solo"), text: "S", onclick: (e) => { g.solo = !g.solo; e.target.classList.toggle("on", g.solo); for (const x of S.set.gens) applyFx(x); changed(); } }),
+    h("button", { type: "button", class: "ghost btn-s lp-bigbtn", "aria-pressed": "false", title: T("Groß: alle Einstellungen dieses Generators auf einer Seite (Esc schließt)", "Large: all settings of this generator on one page (Esc closes)"),
+      text: "⤢", onclick: () => openSynth(g, !g.openSynth) }),
     h("button", { type: "button", class: "ghost btn-s lp-x", title: T("Generator entfernen (die anderen spielen weiter, ↶ holt ihn zurück)", "Remove generator (the others keep playing, ↶ brings it back)"), text: "✕", onclick: () => removeGen(g, { undo: true }) })));
   c.append(h("div", { class: "lp-prog", "aria-hidden": "true" }, h("i"), h("canvas", { class: "lp-gmeter", width: 120, height: 4 })));
   c.append(h("p", { class: "sub small lp-hint", text: T(k.hd, k.he) }));
   // Klangquelle
   if (g.kind === "beat" || k.ins) {
     const row = h("div", { class: "lp-row" }, soundSelect(g));
-    if (k.ins) row.append(h("button", { type: "button", class: "ghost btn-s", title: T("Alle Regler dieses Klangs", "All controls of this sound"), text: T("🎛 Klang", "🎛 Sound"),
+    if (k.ins) row.append(h("button", { type: "button", class: "ghost btn-s lp-sybtn", title: T("Alle Regler dieses Klangs — groß, mit allen Einstellungen des Generators", "All controls of this sound — large, with all settings of the generator"), text: T("🎛 Klang", "🎛 Sound"),
       onclick: () => openSynth(g, !g.openSynth) }));
     row.append(h("button", { type: "button", class: "ghost btn-s lp-extbtn" + (g.ext && g.ext.on ? " on" : ""), text: g.ext && g.ext.on ? "🔌 MIDI ✓" : "🔌 MIDI",
       title: T("MIDI-Ausgang: dieser Generator spielt ein externes Gerät — Hardware-Synth oder Musikprogramm", "MIDI out: this generator plays an external device — a hardware synth or music software"),
@@ -1997,8 +1999,10 @@ function card(g) {
   const gp = h("div", { class: "lp-gen" });
   if (sels.length) { const r = h("div", { class: "lp-sels" }); for (const p of sels) { const el = control(g, p, false); if (/^z[abcd]$/.test(p.k)) el.classList.add("lp-zsel"); r.append(el); } gp.append(r); }
   const kr = h("div", { class: "lp-knobs" }); for (const p of kn) kr.append(control(g, p, false)); gp.append(kr);
-  c.append(h("h4", { class: "lp-h4" }, h("span", { text: T("Generator", "Generator") }), scopeCv(g.id + ":src"),
-    g.kind === "osc" ? scopeCv(g.id + ":lfo", { cls: "lfo", title: T("LFO — sein Ausschlag über die letzten Sekunden", "LFO — its swing over the last seconds") }) : null), gp);
+  // 3.25: Abschnitte — in der Karte unsichtbar (display:contents), in der Großansicht Kacheln nebeneinander
+  const body = h("div", { class: "lp-cbody" });
+  body.append(h("div", { class: "lp-sec", "data-sec": "gen" }, h("h4", { class: "lp-h4" }, h("span", { text: T("Generator", "Generator") }), scopeCv(g.id + ":src"),
+    g.kind === "osc" ? scopeCv(g.id + ":lfo", { cls: "lfo", title: T("LFO — sein Ausschlag über die letzten Sekunden", "LFO — its swing over the last seconds") }) : null), gp));
   // 3.18 Orb (alle Generatoren) und Global (Klang-Generatoren)
   const om = h("div", { class: "lp-omni" }, orbPanel(g));
   if (g.patch) {
@@ -2007,14 +2011,15 @@ function card(g) {
     for (const p of GLOB) { const el = knob(p, gl[p.k], (v) => withFix(g, "gl:" + p.k, () => { gl[p.k] = v; if (p.k === "vib" || p.k === "uni") postFx(g); changed(); }), { lk: `${g.id}:gl:${p.k}` }); el.dataset.pk = "gl:" + p.k; row.append(el); }
     grp.append(row); om.append(grp);
   }
-  c.append(h("h4", { class: "lp-h4" }, h("span", { text: g.patch ? T("🔮 Orb · 🎛 Global", "🔮 Orb · 🎛 Global") : T("🔮 Orb", "🔮 Orb") })), om);
+  body.append(h("div", { class: "lp-sec", "data-sec": "orb" }, h("h4", { class: "lp-h4" }, h("span", { text: g.patch ? T("🔮 Orb · 🎛 Global", "🔮 Orb · 🎛 Global") : T("🔮 Orb", "🔮 Orb") })), om));
   const fx = h("div", { class: "lp-fx" });
   for (const [id, de, en, keys] of FX_GROUPS) {
     const grp = h("div", { class: "lp-group", "data-g": id }, h("div", { class: "lp-gcapr" }, h("span", { class: "lp-gcap", text: T(de, en) }), scopeCv(g.id + ":" + id)));
     const row = h("div", { class: "lp-knobs" }); for (const key of keys) row.append(control(g, FX.find(p => p.k === key), true)); grp.append(row); fx.append(grp);
   }
-  c.append(h("h4", { text: T("Klang live", "Live sound") }), fx);
-  c.append(h("div", { class: "lp-synth" }));
+  body.append(h("div", { class: "lp-sec", "data-sec": "fx" }, h("h4", { text: T("Klang live", "Live sound") }), fx));
+  body.append(h("div", { class: "lp-synth" }));
+  c.append(body);
   if (g.openSynth) renderSynth(g, c);
   markIdle(c, (pk) => loopIdle(g, pk), EN); c.classList.toggle("zon", !!g.p.zones);
   return c;
@@ -2033,45 +2038,50 @@ function takeRow(g) {
   row.append(h("span", { class: "sub small lp-takeinfo" }));
   return row;
 }
-// Alle Regler des gewählten Instruments (wie in "Selber machen")
-// 3.25: als Ebene über die ganze Breite — die Abschnitte nebeneinander, die anderen Generatoren liegen darunter, die Tastatur
-// bleibt frei zum Spielen. Die Ebene gehört weiter zur Karte (Live-Werte und Markierungen finden ihre Regler dort).
+// 3.25: ⤢ Großansicht — die ganze Karte (Generator, Orb/Global, Klang live, Einspielen, MIDI und alle Regler des Instruments)
+// liegt über den anderen Generatoren, die Abschnitte nebeneinander; die Tastatur unten bleibt frei und spielt diesen Generator.
+// Es bleibt dieselbe Karte — Live-Werte, Markierungen und Regler finden sich wie immer. Immer nur eine; nie gespeichert.
 function openSynth(g, on) {
   for (const x of S.set.gens) if (x !== g && x.openSynth) { x.openSynth = false; const cx = q("#lpCard-" + x.id); if (cx) renderSynth(x, cx); }
   g.openSynth = !!on; const c = q("#lpCard-" + g.id); if (c) renderSynth(g, c);
+  if (on && S.sel !== g.id) { S.sel = g.id; qa(".lp-card").forEach(x => x.classList.toggle("sel", x.id === "lpCard-" + g.id)); renderKeys(); }
 }
 function closeSynth() { const g = S.set && S.set.gens.find(x => x.openSynth); if (!g) return false; openSynth(g, false); return true; }
 // Platz bis zur Tastatur (klebt unten, solange die Seite länger als das Fenster ist). Die Transportleiste liegt darunter —
 // sie ist mit Master und Autopilot bis zur halben Fensterhöhe hoch; starten/stoppen geht mit der Leertaste
 function placeSynth() {
-  const box = q(".lp-synth.open"); if (!box) return;
+  const box = q(".lp-card.big"); if (!box) return;
   const kb = q(".lp-keys"), r = kb && kb.getBoundingClientRect(), vh = window.innerHeight;
   box.style.setProperty("--lp-sybot", (r && r.top < vh && r.bottom > 0 ? Math.max(8, vh - r.top + 8) : 12) + "px");
 }
 function renderSynth(g, c) {
   const box = q(".lp-synth", c); if (!box) return;
-  box.innerHTML = ""; box.classList.remove("open"); box.removeAttribute("role"); box.removeAttribute("aria-label");
-  if (!g.openSynth || !g.patch) return;
-  const pr = findPreset(g.preset), title = T(`🎛 Klang · ${g.name}`, `🎛 Sound · ${g.name}`);
-  box.classList.add("open"); box.setAttribute("role", "dialog"); box.setAttribute("aria-label", title);
-  box.append(h("div", { class: "lp-syhead" },
-    h("span", { class: "lp-sytitle", text: title }),
-    h("span", { class: "sub small lp-sypre", text: pr ? T(pr.de, pr.en) : T("eigener Klang", "custom sound") }),
-    scopeCv(g.id + ":src", { cls: "big" }),
-    h("span", { class: "sub small lp-syhint", text: T("Spielen auf der Tastatur unten · Leertaste: alle starten/stoppen · Esc schließt", "Play on the keyboard below · Space: start/stop all · Esc closes") }),
-    h("button", { type: "button", class: "ghost btn-s lp-syclose", title: T("Schließen (Esc)", "Close (Esc)"), text: "✕", onclick: () => openSynth(g, false) })));
-  const body = h("div", { class: "lp-sybody" });
-  for (const sec of SCHEMA[g.patch.engine] || []) {
-    const row = h("div", { class: "lp-knobs" });
-    for (const p of sec.p) {
-      const cb = (v) => withFix(g, "s:" + p.k, () => { g.patch[p.k] = v; dropMod(g, "s:" + p.k); post({ t: "param", id: g.id, k: p.k, v }); changed(); });
-      const el = p.t === "knob" ? knob(p, g.patch[p.k] ?? p.def, cb) : p.t === "sel" ? selectBox(p, g.patch[p.k] ?? p.def, cb) : toggle(p, g.patch[p.k] ?? p.def, cb);
-      el.dataset.pk = "s:" + p.k; row.append(el);
+  box.innerHTML = "";
+  const big = !!g.openSynth, bb = q(".lp-bigbtn", c);
+  c.classList.toggle("big", big);
+  if (big) { c.setAttribute("role", "dialog"); c.setAttribute("aria-label", T(`Alle Einstellungen: ${g.name}`, `All settings: ${g.name}`)); }
+  else { c.removeAttribute("role"); c.removeAttribute("aria-label"); c.style.removeProperty("--lp-sybot"); }
+  if (bb) { bb.textContent = big ? "⤡" : "⤢"; bb.setAttribute("aria-pressed", String(big)); bb.title = big ? T("Zurück in die Karte (Esc)", "Back to the card (Esc)") : T("Groß: alle Einstellungen dieses Generators auf einer Seite (Esc schließt)", "Large: all settings of this generator on one page (Esc closes)"); }
+  const sb = q(".lp-sybtn", c); if (sb) sb.classList.toggle("on", big);
+  let hint = q(".lp-bighint", c);
+  if (big && !hint) q(".lp-chead", c).after(hint = h("p", { class: "sub small lp-bighint", text: T("Alle Einstellungen · spielen auf der Tastatur unten · Leertaste: alle starten/stoppen · Esc schließt", "All settings · play on the keyboard below · Space: start/stop all · Esc closes") }));
+  if (!big && hint) hint.remove();
+  if (!big) return;
+  if (g.patch) {
+    box.append(h("h4", { class: "lp-h4" }, h("span", { text: T("🎛 Klang des Instruments", "🎛 Instrument sound") }), scopeCv(g.id + ":src")));
+    const body = h("div", { class: "lp-sybody" });
+    for (const sec of SCHEMA[g.patch.engine] || []) {
+      const row = h("div", { class: "lp-knobs" });
+      for (const p of sec.p) {
+        const cb = (v) => withFix(g, "s:" + p.k, () => { g.patch[p.k] = v; dropMod(g, "s:" + p.k); post({ t: "param", id: g.id, k: p.k, v }); changed(); });
+        const el = p.t === "knob" ? knob(p, g.patch[p.k] ?? p.def, cb) : p.t === "sel" ? selectBox(p, g.patch[p.k] ?? p.def, cb) : toggle(p, g.patch[p.k] ?? p.def, cb);
+        el.dataset.pk = "s:" + p.k; row.append(el);
+      }
+      body.append(h("div", { class: "lp-group lp-sysec" }, h("div", { class: "lp-gcapr" }, h("span", { class: "lp-gcap", text: EN ? sec.en : sec.de })), row));
     }
-    body.append(h("div", { class: "lp-group lp-sysec" }, h("div", { class: "lp-gcapr" }, h("span", { class: "lp-gcap", text: EN ? sec.en : sec.de })), row));
+    box.append(body);
   }
-  box.append(body);
-  placeSynth();
+  requestAnimationFrame(placeSynth); placeSynth();
   markCard(g);
 }
 function paintCards() { for (const g of S.set.gens) paintCard(g); }
