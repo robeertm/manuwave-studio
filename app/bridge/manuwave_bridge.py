@@ -58,7 +58,7 @@ try:
 except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.19.2"
+BRIDGE_VERSION = "3.20.0"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
@@ -68,6 +68,15 @@ EXE = ".exe" if IS_WIN else ""
 DIR = os.environ.get("MWS_HOME") or (os.path.join(HOME, "NeonForge") if os.path.isdir(os.path.join(HOME, "NeonForge"))
                                      else os.path.join(HOME, "ManuwaveStudio"))
 CONFIG = os.path.join(DIR, "bridge.json")
+# 3.20 (App 3.26): so zeigt die App den Ordner an (Kunden: ~/ManuwaveStudio) — statt eines festen Pfads in Texten
+def shown_path(p: str) -> str:
+    """Pfad so, wie ihn ein Mensch eintippt: ~/… (Windows: %USERPROFILE%\\…)."""
+    if not os.path.abspath(p).startswith(HOME + os.sep):
+        return p
+    return ("%USERPROFILE%\\" if IS_WIN else "~/") + os.path.relpath(p, HOME)
+
+
+SHOWN_DIR = shown_path(DIR)
 INFLIGHT = os.path.join(DIR, "inflight.json")    # der Auftrag, den der Modellserver gerade rechnet
 RENDERS = os.path.join(DIR, "renders")
 LABEL = "com.robert.neonforge-bridge"
@@ -94,6 +103,7 @@ DEFAULTS = {
     # Den Produktions-Brief schreibt der Mac selbst (Ollama). Leer = selbst das beste wählen.
     "writer_url": "http://127.0.0.1:11434",
     "writer_model": "",
+    "writer_model_url": "",  # 3.20: welches Ollama das gewählte Modell hat (leer = das eigene)
     # Klangführung der Musik-KI (APG), wenn der Browser keine mitschickt. 7,0 rechnet der
     # Modellserver in seinem eigenen Vergleich mit dem Python-Original für SFT; bis 2.2 lief
     # jeder Track mit 1,0 = ungeführt. 1,0 schaltet sie ab.
@@ -202,7 +212,8 @@ def agent_info(cfg: dict, busy: bool) -> dict:
             "lm": m.group(1) if m else (lm or "?"), "mode": conf.get("MODE", "?"),
             "engine": "ACE-Step 1.5", "version": BRIDGE_VERSION, "busy": busy,
             "writer": find_writer(cfg), "dits": ",".join(sorted(dit_files(cfg)))[:80],
-            "caps": caps_for(cfg), "image": find_image_model(cfg)}
+            "caps": caps_for(cfg), "image": find_image_model(cfg), "home": SHOWN_DIR,
+            "script": shown_path(os.path.abspath(__file__))}
 
 
 # =============================================================================
@@ -212,37 +223,135 @@ def agent_info(cfg: dict, busy: bool) -> dict:
 # Bevorzugte Modelle, in dieser Reihenfolge — instruktionsfeste, die JSON nach Schema können.
 WRITER_PREFER = ("qwen2.5:14b", "qwen2.5:7b", "qwen3", "qwen2.5", "llama3.1", "llama3",
                  "gemma3", "gemma2", "mistral")
-_writer_cache = {"at": 0.0, "name": ""}
+# 3.20 (App 3.26): Auch das Ollama, das jemand schon selbst hat (Standardport), liefert Brief-Schreiber — unter ⚙️
+# wählbar. Gefragt werden nur diese festen Adressen auf diesem Rechner, nie eine aus dem Browser.
+USER_OLLAMA = "http://127.0.0.1:11434"
+# Bild- und Einbettungsmodelle schreiben keinen Text (ältere Ollama melden keine Fähigkeiten → nach Namen)
+NOT_WRITER = re.compile(r"embed|flux|z-image|stable-diffusion|sdxl|whisper", re.I)
+_writer_cache = {"at": 0.0, "list": [], "pick": None}
 _writer_lock = threading.Lock()
 
 
-def find_writer(cfg: dict) -> str:
-    """Name des Modells, das hier Briefe schreibt — "" heißt: kann der Mac gerade nicht.
-    Gefragt wird bei jeder Abholung (alle ~25 s), deshalb eine Minute gemerkt."""
+def _norm_url(u: str) -> str:
+    return (u or "").strip().rstrip("/").replace("://localhost:", "://127.0.0.1:")
+
+
+def writer_sources(cfg: dict) -> list:
+    """Die Ollama-Adressen, die Briefe schreiben dürfen: die eigene der Installation zuerst, dann die des Nutzers."""
+    own = _norm_url(cfg.get("writer_url") or DEFAULTS["writer_url"])
+    more = cfg.get("writer_also", [USER_OLLAMA])
+    out = [own]
+    for u in (more if isinstance(more, list) else []):
+        u = _norm_url(str(u))
+        if u.startswith("http://127.0.0.1:") and u not in out:
+            out.append(u)
+    return out
+
+
+def _ollama_get(url: str, path: str, body=None, timeout=3):
+    req = urllib.request.Request(url + path, data=json.dumps(body).encode() if body is not None else None,
+                                 method="POST" if body is not None else "GET",
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read())
+
+
+def _writer_models(url: str) -> list:
+    """Modelle einer Ollama-Adresse, die Text schreiben können — [] wenn sie nicht läuft."""
+    try:
+        tags = _ollama_get(url, "/api/tags").get("models", [])
+    except Exception:
+        return []
+    out = []
+    for m in tags:
+        name = m.get("name", "")
+        if not name or NOT_WRITER.search(name):
+            continue
+        try:
+            caps = _ollama_get(url, "/api/show", {"model": name}).get("capabilities") or []
+        except Exception:
+            caps = []
+        if caps and "completion" not in caps:
+            continue
+        out.append({"name": name, "url": url, "thinking": "thinking" in caps,
+                    "gb": round((m.get("size") or 0) / 1e9, 1)})
+    return out
+
+
+def _pick_auto(found: list, own: str):
+    for group in ([w for w in found if w["url"] == own], [w for w in found if w["url"] != own]):
+        names = [w["name"] for w in group]
+        for pre in WRITER_PREFER:
+            hit = sorted(n for n in names if n.startswith(pre))
+            if hit:
+                return next(w for w in group if w["name"] == hit[0])
+        if group:
+            return group[0]
+    return None
+
+
+def writer_state(cfg: dict, fresh: bool = False) -> dict:
+    """Was zur Wahl steht und wer gerade schreibt. Gefragt wird bei jeder Abholung (alle ~25 s),
+    deshalb eine Minute gemerkt. Ist das gewählte Modell weg (Ollama des Nutzers aus), schreibt
+    von selbst das beste andere — die Wahl bleibt gespeichert und gilt wieder, sobald es zurück ist."""
     now = time.time()
     with _writer_lock:
-        if now - _writer_cache["at"] < 60:
-            return _writer_cache["name"]
-    name = ""
-    try:
-        with urllib.request.urlopen(cfg["writer_url"].rstrip("/") + "/api/tags", timeout=3) as r:
-            names = [m.get("name", "") for m in json.loads(r.read()).get("models", [])]
-        names = [n for n in names if n and "embed" not in n.lower()]
-        want = (cfg.get("writer_model") or "").strip()
-        if want and want in names:
-            name = want
-        else:
-            for pre in WRITER_PREFER:
-                hit = [n for n in names if n.startswith(pre)]
-                if hit:
-                    name = sorted(hit)[0]
-                    break
-            name = name or (names[0] if names else "")
-    except Exception:
-        name = ""
+        if not fresh and now - _writer_cache["at"] < 60:
+            return dict(_writer_cache)
+    srcs = writer_sources(cfg)
+    found = [w for u in srcs for w in _writer_models(u)]
+    want = (cfg.get("writer_model") or "").strip()
+    want_url = _norm_url(cfg.get("writer_model_url") or srcs[0])
+    pick = next((w for w in found if w["name"] == want and w["url"] == want_url), None) if want else None
+    pick = pick or _pick_auto(found, srcs[0])
     with _writer_lock:
-        _writer_cache.update(at=now, name=name)
-    return name
+        _writer_cache.update(at=now, list=found, pick=pick)
+        return dict(_writer_cache)
+
+
+def find_writer(cfg: dict) -> str:
+    """Name des Modells, das hier Briefe schreibt — "" heißt: kann der Rechner gerade nicht."""
+    pick = writer_state(cfg)["pick"]
+    return pick["name"] if pick else ""
+
+
+def writer_chat(cfg: dict, body: dict, timeout: int) -> dict:
+    """Eine Anfrage an den Brief-Schreiber. Denkende Modelle (Qwen 3 …) antworten sonst erst nach einer langen
+    Denkphase — für Tags und Liedtext bringt das nichts außer Wartezeit, also aus."""
+    pick = writer_state(cfg)["pick"]
+    if not pick:
+        raise RuntimeError("Kein Sprachmodell erreichbar (Ollama)")
+    body = dict(body, model=pick["name"])
+    if pick.get("thinking"):
+        body["think"] = False
+    return _ollama_get(pick["url"], "/api/chat", body, timeout=timeout)
+
+
+def writer_settings(cfg: dict, fresh: bool = False) -> dict:
+    st = writer_state(cfg, fresh)
+    own = writer_sources(cfg)[0]
+    pick = st["pick"] or {}
+    return {"auto": not (cfg.get("writer_model") or "").strip(), "model": (cfg.get("writer_model") or "").strip(),
+            "url": _norm_url(cfg.get("writer_model_url") or own) if cfg.get("writer_model") else "",
+            "using": pick.get("name", ""), "using_url": pick.get("url", ""),
+            "options": [dict(w, mine=w["url"] != own) for w in st["list"]],
+            "user_ollama": any(u != own for u in writer_sources(cfg))}
+
+
+def set_writer(cfg: dict, want) -> None:
+    """Wahl aus ⚙️: {"model": "", …} = automatisch, sonst Name + Adresse aus der angebotenen Liste."""
+    if not isinstance(want, dict):
+        raise RuntimeError("Ungültige Modellwahl")
+    name, url = str(want.get("model") or "").strip(), _norm_url(str(want.get("url") or ""))
+    if name:
+        found = writer_state(cfg, fresh=True)["list"]
+        if not any(w["name"] == name and w["url"] == url for w in found):
+            raise RuntimeError("Dieses Sprachmodell ist gerade nicht erreichbar")
+    with _cfg_lock:
+        cfg["writer_model"], cfg["writer_model_url"] = name, url if name else ""
+        save_config(cfg)
+    writer_state(cfg, fresh=True)
+    log("Brief-Schreiber: %s" % (name or "automatisch"))
 
 
 # Ein kleines Modell schreibt nur dann einen brauchbaren Brief, wenn man ihm wenig
@@ -423,11 +532,7 @@ def _ask_writer(cfg: dict, model: str, user: str, temperature: float, ui_lang: s
             "messages": [{"role": "system", "content": writer_system(ui_lang)},
                          {"role": "user", "content": user}],
             "options": {"temperature": temperature, "num_ctx": 8192}}
-    req = urllib.request.Request(cfg["writer_url"].rstrip("/") + "/api/chat",
-                                 data=json.dumps(body).encode(), method="POST",
-                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=240) as r:
-        answer = json.loads(r.read())
+    answer = writer_chat(cfg, body, 240)
     try:
         raw = json.loads((answer.get("message") or {}).get("content") or "")
     except ValueError:
@@ -642,7 +747,7 @@ class Engine:
                     break
                 time.sleep(0.5)
             else:
-                raise RuntimeError("Modellserver ist nicht hochgekommen — Log in ~/NeonForge/")
+                raise RuntimeError("Modellserver ist nicht hochgekommen — Log in %s" % SHOWN_DIR)
         self.last_used = time.time()
 
     def model_file(self, report, *wishes) -> str:
@@ -995,7 +1100,7 @@ WM_MAGIC = "4e4601"
 WM_STRENGTH = 3
 AUFBEREITET_V = 2       # Fassung der Archiv-Aufbereitung (adeclip wenn beschnitten + leises Zeichen + 24 Bit)
 TAGS_VERSION = 1
-CAPS = "settings,export,cover,verify,nachruesten,archiv,master,loeschen,paket,web,master_merken,midi,weiter,analyse"
+CAPS = "settings,export,cover,verify,nachruesten,archiv,master,loeschen,paket,web,master_merken,midi,weiter,analyse,writer"
 
 
 def caps_for(cfg: dict) -> str:
@@ -1711,10 +1816,7 @@ def cover_scene(cfg: dict, info: dict) -> str:
                 "messages": [{"role": "system", "content": COVER_SYSTEM}, {"role": "user", "content": user}],
                 "options": {"temperature": 0.8, "num_ctx": 4096}}
         try:
-            req = urllib.request.Request(cfg["writer_url"].rstrip("/") + "/api/chat", data=json.dumps(body).encode(),
-                                         method="POST", headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=120) as r:
-                p = json.loads(json.loads(r.read()).get("message", {}).get("content") or "{}").get("prompt", "")
+            p = json.loads(writer_chat(cfg, body, 120).get("message", {}).get("content") or "{}").get("prompt", "")
             p = scrub_prompt(re.sub(r"\s+", " ", str(p)).strip())
             if 40 <= len(p) <= 900:
                 return p.rstrip(".") + "."
@@ -2882,7 +2984,7 @@ def release_package(cfg: dict, path: str, res: dict, info: dict, opts: dict, fin
                     ("Datei", _h("%s · %s · %s · %d Hz · %.1f MB" % (res["filename"], res["format"].upper(), qual, res["rate"], len(audio) / 1e6))),
                     ("SHA-256", "<span class='klein'>%s</span>" % _h(sha)),
                     ("Wasserzeichen", _h(wm or "—") + "<br><span class='klein'>unhörbar (audiowmark), übersteht MP3 und Bearbeitung; prüfen auf dem Mac: "
-                     "python3 ~/NeonForge/neonforge_bridge.py --pruefen &lt;Datei&gt;</span>"),
+                     "python3 %s --pruefen &lt;Datei&gt;</span>" % _h(shown_path(os.path.abspath(__file__)))),
                     ("Archiv", _h(rel_home(path)))])
                 + "<h2>Beschreibung beim Erzeugen</h2><p class='klein'>%s</p>" % _h(info.get("caption") or "—")
                 + ("<h2>Liedtext</h2><pre>%s</pre>" % _h(info.get("lyrics")) if not instrumental else "")
@@ -3161,10 +3263,7 @@ def translate_text(cfg: dict, text: str, target: str) -> str:
     body = {"model": model, "stream": False,
             "messages": [{"role": "system", "content": TRANSLATE_SYSTEM[target]}, {"role": "user", "content": text}],
             "options": {"temperature": 0.2, "num_ctx": 4096}}
-    req = urllib.request.Request(cfg["writer_url"].rstrip("/") + "/api/chat", data=json.dumps(body).encode(), method="POST",
-                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=180) as r:
-        answer = json.loads(r.read())
+    answer = writer_chat(cfg, body, 180)
     out = ((answer.get("message") or {}).get("content") or "").strip().strip('"„“”')
     # Nur annehmen, was wirklich in der Zielsprache steht und nicht bloß das Original wiederholt
     if not out or out == text.strip() or is_german(out) != (target == "de"):
@@ -4688,6 +4787,7 @@ def delete_tracks(rels: list, cfg=None) -> dict:
 
 def settings_result(cfg: dict) -> dict:
     return {"rights": rights(cfg), "tools": tools_state(cfg), "version": BRIDGE_VERSION,
+            "writer": writer_settings(cfg), "home": SHOWN_DIR,
             "formats": [{"id": k, "name": v["name"], "ext": v["ext"], "lossless": k != "mp3"}
                         for k, v in FORMATS.items()]}
 
@@ -4716,6 +4816,10 @@ def tool_job(cfg: dict, srv, job: dict) -> None:
                 cfg["rights"] = r
                 save_config(cfg)
             log("Urheberangaben geändert")
+        if "writer" in req:
+            set_writer(cfg, req["writer"])
+        elif req.get("fresh"):
+            writer_state(cfg, fresh=True)
         srv.result_json(jid, settings_result(cfg))
     elif kind == "verify":
         data = srv.upload(jid)

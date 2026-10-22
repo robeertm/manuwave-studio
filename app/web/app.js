@@ -244,6 +244,9 @@ function renderBridge() {
     `🎵 Musik: <b>ACE-Step 1.5</b>, Sprachmodell ${esc(i.lm || "?")}, Modus ${esc(i.mode || "?")}.`;
   else t.innerHTML = "🟡 Gekoppelt, aber der Mac meldet sich gerade nicht (schläft? Dienst aus?). Aufträge warten, bis er wieder da ist.";
   $("#unpairBtn").hidden = !paired;
+  // 3.26: Ordner und Brücke so, wie sie auf DIESEM Rechner heißen (Kunden: ~/ManuwaveStudio)
+  if (i.home) $("#rendersDir").textContent = i.home.replace(/\\$/, "") + (i.home.includes("\\") ? "\\renders" : "/renders");
+  if (i.script) $("#pairCmd").textContent = `${/\\/.test(i.script) ? "python" : "/usr/bin/python3"} ${i.script} --pair`;
   $("#setupCmd").textContent =
     `curl -fsSL ${location.origin}/bridge/neonforge_bridge.py -o ~/neonforge_bridge.py && /usr/bin/python3 ~/neonforge_bridge.py --server ${location.origin} --install`;
   $("#oldKeyBox").classList.toggle("hidden", localStorage.getItem(LS_OLD_KEY) == null);
@@ -2623,9 +2626,50 @@ function applySettings(res, fromMac = true) {
     autoSaveRights();
   }
   renderRightsPreview();
+  if (fromMac) renderWriter(res.writer);
   const t = res.tools || {};
   const ok = (v) => v ? "✓" : "✗";
-  $("#toolsLine").textContent = `Auf dem Mac: ffmpeg ${ok(t.ffmpeg)} · audiowmark ${ok(t.audiowmark)} · Wasserzeichen-Schlüssel ${t.key ? "✓" : "entsteht beim ersten Track"} · Bildmodell ${t.image_model || "✗ fehlt (~/NeonForge/tools/ollama-bild)"}`;
+  $("#toolsLine").textContent = `Auf dem Mac: ffmpeg ${ok(t.ffmpeg)} · audiowmark ${ok(t.audiowmark)} · Wasserzeichen-Schlüssel ${t.key ? "✓" : "entsteht beim ersten Track"} · Bildmodell ${t.image_model || "✗ fehlt — den Installer noch einmal ausführen"}`;
+}
+
+// ---- 3.26: Sprachmodell für Brief und Liedtext — auch eines aus dem Ollama, das jemand schon hat ----
+// Die Brücke bietet nur an, was sie selbst findet (eigenes Ollama + das des Nutzers auf dem Standardport);
+// gewählt wird Name + Adresse aus dieser Liste. Ist das Gewählte weg, schreibt die Brücke von selbst mit dem besten anderen.
+function renderWriter(w) {
+  const sel = $("#wModel"), msg = $("#wMsg"), hint = $("#wHint");
+  const can = macCan("writer") && w && Array.isArray(w.options);
+  $("#writerBox").classList.toggle("dim", !can);
+  sel.disabled = !can;
+  if (!can) {
+    sel.replaceChildren(new Option(macWriter() || "—", ""));
+    setMsg(msg, "", "");
+    hint.textContent = state.bridge.connected ? "Die Auswahl kommt mit dem nächsten Update der Brücke auf deinem Mac." : "";
+    return;
+  }
+  const opt = (o) => new Option(`${o.name}${o.gb ? ` · ${o.gb} GB` : ""}`, o.url + " " + o.name);
+  const kids = [new Option(w.using && w.auto ? `Automatisch (empfohlen) — ${w.using}` : "Automatisch (empfohlen)", "")];
+  [["Von Manuwave Studio", w.options.filter(o => !o.mine)], ["Aus deinem Ollama", w.options.filter(o => o.mine)]].forEach(([label, list]) => {
+    if (!list.length) return;
+    // label ist ein Attribut — die Übersetzung der Seite sieht es nicht, darum hier
+    const g = document.createElement("optgroup"); g.label = (window.mwsT || String)(label); g.append(...list.map(opt)); kids.push(g);
+  });
+  const want = w.auto ? "" : w.url + " " + w.model;
+  if (want && !w.options.some(o => o.url + " " + o.name === want)) kids.push(new Option(`${w.model} — gerade nicht erreichbar`, want));
+  sel.replaceChildren(...kids);
+  sel.value = want;
+  if (!w.using) setMsg(msg, "✗ kein Sprachmodell erreichbar — läuft Ollama?", "err");
+  else if (!w.auto && w.using !== w.model) setMsg(msg, `${w.model} ist gerade nicht erreichbar — es schreibt ${w.using}`, "err");
+  else setMsg(msg, `✓ schreibt: ${w.using}`, "ok");
+  hint.textContent = w.options.some(o => o.mine)
+    ? "Modelle aus deinem Ollama nutzt Manuwave Studio direkt, ohne sie ein zweites Mal zu laden. Denkende Modelle antworten hier ohne Denkphase."
+    : w.user_ollama ? "Hast du Ollama schon selbst installiert, stehen deine Modelle hier, sobald es läuft." : "";
+}
+async function chooseWriter() {
+  const v = $("#wModel").value, cut = v.indexOf(" ");
+  const writer = v ? { url: v.slice(0, cut), model: v.slice(cut + 1) } : { model: "" };
+  setMsg($("#wMsg"), "speichere auf dem Mac …", "busy");
+  try { const j = await macJob("settings", { writer }, { timeoutMs: 45000 }); applySettings(j.result); refreshBridge(); }
+  catch (e) { setMsg($("#wMsg"), "✗ " + e.message, "err"); }
 }
 function renderRightsPreview() {
   const rg = {};
@@ -2638,11 +2682,12 @@ async function loadRights() {
   if (!can) {
     const rg = rightsCached();
     if (rg) applySettings({ rights: rg }, false);
+    renderWriter(null);
     $("#rSave").disabled = true;
     return setMsg($("#rightsMsg"), state.bridge.connected ? "Die Brücke auf deinem Mac ist älter als 3.2 — einmal neu einrichten (unten)." : "Dein Mac ist gerade nicht verbunden — die Angaben liegen auf ihm.", "err");
   }
   setMsg($("#rightsMsg"), "lese vom Mac …", "busy");
-  try { const j = await macJob("settings", {}, { timeoutMs: 45000 }); applySettings(j.result); setMsg($("#rightsMsg"), "", ""); }
+  try { const j = await macJob("settings", { fresh: true }, { timeoutMs: 45000 }); applySettings(j.result); setMsg($("#rightsMsg"), "", ""); }
   catch (e) { setMsg($("#rightsMsg"), "✗ " + e.message, "err"); }
 }
 const LS_RIGHTS_DRAFT = "nf_rights_draft";   // nur falls der Mac beim Verlassen nicht erreichbar war
@@ -3355,6 +3400,7 @@ function init() {
   $("#settingsBtn").onclick = openSettings;
   $("#pairNoteBtn").onclick = openSettings;
   $("#closeSettings").onclick = closeSettings;
+  $("#wModel").addEventListener("change", chooseWriter);
   // 3.23 Update
   $("#updPill").onclick = updOpen;
   $("#updLater").onclick = updClose;

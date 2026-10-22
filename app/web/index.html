@@ -273,7 +273,7 @@
       <span id="selMsg" class="status"></span>
     </div>
     <div id="libList" class="lib-list"></div>
-    <p class="sub small">Die Bibliothek liegt in diesem Browser. Jede Datei liegt zusätzlich auf deinem Mac unter <code>~/NeonForge/renders</code> — mit Cover, Tags und Wasserzeichen.</p>
+    <p class="sub small">Die Bibliothek liegt in diesem Browser. Jede Datei liegt zusätzlich auf deinem Mac unter <code id="rendersDir">~/ManuwaveStudio/renders</code> — mit Cover, Tags und Wasserzeichen.</p>
   </section>
   </div>
 
@@ -376,7 +376,7 @@
       <pre id="setupCmd" class="cmd"></pre>
       <p>Das richtet die Brücke als Dienst ein (startet mit dem Mac) und öffnet Manuwave Studio gekoppelt. Der Mac verbindet
         sich nur <b>nach außen</b> — er öffnet keinen Port. Neuer Code für ein weiteres Gerät:
-        <code>/usr/bin/python3 ~/NeonForge/neonforge_bridge.py --pair</code></p>
+        <code id="pairCmd">/usr/bin/python3 ~/ManuwaveStudio/app/bridge/manuwave_bridge.py --pair</code></p>
     </details>
     <section id="rightsBox" class="rights">
       <h3>© Urheber &amp; Rechte</h3>
@@ -405,6 +405,16 @@
         <span id="rSaveMsg" class="status"></span>
       </div>
       <p id="toolsLine" class="sub small"></p>
+    </section>
+    <section id="writerBox" class="rights">
+      <h3>✍️ Sprachmodell für Brief und Liedtext</h3>
+      <p class="sub">Die Musik macht immer <b>ACE-Step 1.5</b>. Das Sprachmodell schreibt Stil-Tags, Liedtext und Aufbau —
+        es bestimmt, was gesungen wird und wie gut die Richtung getroffen wird, nicht die Klangqualität.</p>
+      <div class="row wrap">
+        <label class="lbl">Modell<select id="wModel" aria-label="Sprachmodell"></select></label>
+        <span id="wMsg" class="status"></span>
+      </div>
+      <p id="wHint" class="sub small"></p>
     </section>
     <section class="rights">
       <h3>🔏 Wasserzeichen prüfen</h3>
