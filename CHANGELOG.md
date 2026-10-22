@@ -3,6 +3,14 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.25.1 — 2026-10-22 (bridge 3.19.2)
+
+### Changed
+- **Loop machine: the large view shows everything.** ⤢ on any generator — or *Sound* — opens all of its settings
+  across the whole width: generator, orb & global, live sound, recording, mutations, MIDI out and every knob of the
+  instrument, in sections side by side. It is the same card, so moving knobs and live values carry on as before;
+  the keyboard below plays that generator. ⤡ or Esc goes back. Beat, oscillator and mic loop have it too.
+
 ## 3.25.0 — 2026-10-21 (bridge 3.19.2)
 
 ### Changed

@@ -52,16 +52,24 @@
 .lp-group .sb-field{min-width:86px}
 .lp-group .sb-field select{max-width:112px;font-size:12px}
 .lp-synth:empty{display:none}
-/* 3.25: 🎛 Klang als Ebene über die ganze Breite — Abschnitte nebeneinander, die anderen Generatoren liegen darunter,
-   die Tastatur (klebt unten) bleibt frei: --lp-sybot setzt placeSynth() */
-.lp-synth.open{position:fixed;z-index:8;left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));top:12px;bottom:var(--lp-sybot,12px);
-  display:flex;flex-direction:column;gap:8px;padding:10px 14px 14px;border:1px solid var(--gc);border-top:4px solid var(--gc);border-radius:14px;
-  background:linear-gradient(180deg,var(--plate2),var(--plate));box-shadow:0 18px 60px rgba(0,0,0,.6),0 0 0 100vmax rgba(5,6,12,.35);overflow:hidden}
-.lp-syhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:0 0 auto}
-.lp-sytitle{font-weight:700;font-size:15px}
-.lp-syhint{margin-left:auto}
-.lp-syclose{font-size:16px;padding:4px 10px}
-.lp-sybody{flex:1 1 auto;min-height:0;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;align-items:start;align-content:start;padding-right:2px}
+/* 3.25: ⤢ Großansicht — die ganze Karte über den anderen Generatoren, Abschnitte als Kacheln nebeneinander; die Tastatur
+   (klebt unten) bleibt frei: --lp-sybot setzt placeSynth(). In der Karte sind die Abschnitte unsichtbare Hüllen. */
+.lp-cbody,.lp-sec{display:contents}
+.lp-bigbtn{font-size:15px}
+.lp-sybtn.on{border-color:var(--gc);color:var(--gc)}
+.lp-card.big{position:fixed;z-index:8;left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));top:12px;bottom:var(--lp-sybot,12px);
+  overflow:auto;overscroll-behavior:contain;padding:12px 16px 16px;gap:8px;border-top-width:4px;border-top-color:var(--gc);
+  box-shadow:0 18px 60px rgba(0,0,0,.6),0 0 0 100vmax rgba(5,6,12,.45);transition:none}
+.lp-card.big .lp-chead{position:sticky;top:-12px;z-index:3;margin:-12px -16px 0;padding:10px 16px;background:linear-gradient(180deg,var(--plate2),var(--plate2) 85%,transparent)}
+.lp-card.big .lp-gname{font-size:16px}
+.lp-bighint{margin:0}
+.lp-card.big .lp-cbody{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,420px),1fr));gap:10px;align-items:start;align-content:start}
+.lp-card.big .lp-sec{display:block;border:1px solid var(--line);border-radius:12px;padding:6px 10px 10px;background:rgba(0,0,0,.14);min-width:0}
+.lp-card.big .lp-sec[data-sec="fx"]{grid-column:span 2}
+.lp-card.big .lp-sec > h4:first-child{margin-top:2px}
+.lp-card.big .lp-synth{grid-column:1/-1;border-top:0;padding-top:0}
+.lp-card.big .lp-synth:empty{display:none}
+.lp-sybody{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;align-items:start;align-content:start}
 .lp-sysec .sb-knob.small{width:62px}
 .lp-recbtn.armed{animation:lpPulse .5s infinite alternate}
 .lp-recbtn.going{background:var(--pink)}
@@ -151,8 +159,9 @@
   .lp-scope.big{width:84px;height:36px}
   .lp-orbbox{flex-wrap:wrap}
   .lp-ext select{max-width:100%}
-  .lp-synth.open{left:6px;right:6px;top:6px;padding:8px 10px 10px}
-  .lp-syhint{display:none}
+  .lp-card.big{left:6px;right:6px;top:6px;padding:8px 10px 10px}
+  .lp-card.big .lp-chead{margin:-8px -10px 0;padding:8px 10px;top:-8px}
+  .lp-card.big .lp-sec[data-sec="fx"]{grid-column:auto}
   .lp-sybody{grid-template-columns:1fr}
 }
 /* 3.20: Meldungszeile hält ihre Höhe (zwei Zeilen) — eine kommende/gehende Meldung schob sonst alles darunter */
