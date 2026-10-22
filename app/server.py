@@ -77,7 +77,7 @@ HOST = os.environ.get("HOST", "0.0.0.0")      # 3.11: lokale Installation → 12
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, "web")
 
-APP_VERSION = "3.25.1"
+APP_VERSION = "3.26.0"
 BRIDGE_FILE = next((p for p in (os.path.join(ROOT, "bridge", n) for n in ("neonforge_bridge.py", "manuwave_bridge.py"))
                     if os.path.isfile(p)), os.path.join(ROOT, "bridge", "manuwave_bridge.py"))
 BUILD_INFO_FILE = os.path.join(WEB, "build-info.json")
@@ -352,9 +352,13 @@ def clean_job(kind: str, raw) -> dict:
         return clean_weiter(raw)
     if kind == "settings":
         raw = raw if isinstance(raw, dict) else {}
+        # 3.26: Wahl des Brief-Schreibers (Name + Ollama-Adresse; die Brücke nimmt nur, was sie selbst anbietet)
+        w = raw.get("writer")
+        if isinstance(w, dict):
+            return {"writer": {"model": str(w.get("model") or "")[:120], "url": str(w.get("url") or "")[:80]}}
         s = raw.get("set")
         if not isinstance(s, dict):
-            return {}
+            return {"fresh": True} if raw.get("fresh") is True else {}
         keep = {}
         for k in ("owner", "artist", "copyright", "album", "label", "website"):
             if isinstance(s.get(k), str):
@@ -462,7 +466,7 @@ def clean_agent(raw: str) -> dict:
         return {}
     keep = {}
     for k in ("host", "chip", "ram_gb", "lm", "mode", "engine", "version", "busy", "writer", "dits",
-              "caps", "image"):
+              "caps", "image", "home", "script"):
         v = data.get(k)
         if isinstance(v, (str, int, float, bool)):
             keep[k] = v if not isinstance(v, str) else v[:400 if k == "caps" else 80]

@@ -24,7 +24,7 @@ hobby showcase, where you can also share your own tracks.
 
 | | |
 |---|---|
-| 🎼 **Idea → song** | One sentence is enough. A local language model turns it into a brief: sound tags, tempo, key, structure and original lyrics. |
+| 🎼 **Idea → song** | One sentence is enough. A local language model turns it into a brief: sound tags, tempo, key, structure and original lyrics. Already run Ollama yourself? Pick one of your own models under ⚙️ — it is used directly, nothing is downloaded twice. |
 | 🧬 **From your songs** | Upload 1–3 songs: your computer measures tempo, key, chords, groove, instrumentation, energy and structure, the AI writes a new song with their character — no melody or lyrics taken over. |
 | 🎲 **Dice** | Picks from 114 styles in 11 groups — from melodic techno to bossa nova, metal, film score — and writes a detailed idea, then renders right away. |
 | 🎶 **Music AI** | [ACE-Step 1.5](https://huggingface.co/ACE-Step/Ace-Step1.5) via [acestep.cpp](https://github.com/ServeurpersoCom/acestep.cpp) renders instruments, vocals and mix in one pass. |
@@ -195,7 +195,7 @@ merge. Clone the repository again (or `git fetch origin && git reset --hard orig
 
 ```
 Browser (UI, library)  ⇄  app server (127.0.0.1:8104)  ⇄  bridge  ─┬─ ace-server  (ACE-Step 1.5, GPU)
-                                                                  ├─ Ollama      (Qwen 2.5 — brief & lyrics)
+                                                                  ├─ Ollama      (Qwen 2.5 or your own model — brief & lyrics)
                                                                   ├─ cover model (FLUX.2 klein / Z-Image Turbo)
                                                                   ├─ quality check (Audiobox Aesthetics, CPU, optional)
                                                                   ├─ MIDI image    (Demucs + Basic Pitch, when idle, optional)

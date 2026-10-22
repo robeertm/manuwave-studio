@@ -3,6 +3,23 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.26.0 — 2026-10-22 (bridge 3.20.0)
+
+### Added
+- **Choose the language model.** ⚙️ → *Language model for brief and lyrics* lists the models of the app's own
+  Ollama and — if you already run Ollama yourself — yours as well. Your own models are used directly, nothing is
+  downloaded a second time. *Automatic* stays the default. The language model writes style tags, lyrics and
+  structure; the music itself always comes from ACE-Step 1.5.
+- **Thinking models answer straight away.** Models with a thinking phase are asked without it — a brief takes
+  seconds instead of minutes.
+- If the chosen model is not reachable (your Ollama is not running), the best other one writes and the setting
+  says so; your choice comes back by itself once Ollama runs again.
+
+### Fixed
+- The library folder, the pairing command, the image-model hint, the model-server error and the proof-of-origin
+  PDF named a fixed folder of an older layout. They now show the folder of your install (`~/ManuwaveStudio`,
+  `%USERPROFILE%\ManuwaveStudio` on Windows).
+
 ## 3.25.1 — 2026-10-22 (bridge 3.19.2)
 
 ### Changed
