@@ -3,6 +3,25 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.27.0 — 2026-10-23 (bridge 3.21.0)
+
+### Added
+- **Mastering presets.** Save the current sound under a name, mark favourites (⭐ — they sit next to the built-in
+  presets), overwrite or delete them. Presets live on your computer, so every browser and every export without a
+  browser uses the same ones.
+- **“My sound”** — calculated from your own mastered tracks (the median of your settings, from three tracks on), so it
+  learns along with you.
+- **Default for new tracks.** Pick one preset and every newly produced track gets that sound straight away — in the
+  library, in exports and on your computer. Existing tracks keep their settings.
+- **Parametric equalizer** with up to 8 bands: low cut and high cut (24 dB/octave), low and high shelf, and bells with
+  adjustable width. Drag the points on the curve over the track's spectrum, use the mouse wheel for width, double-click
+  to add a band, or type exact values. The browser preview and the export on your computer use the same filter
+  formulas — measured within 0.02 dB of each other and of the reference formulas.
+- **Mono bass** below an adjustable frequency (60–200 Hz) and **stereo width** (50–150 %), computed in mid/side.
+- **Loudness target:** streaming −14 LUFS, −16 LUFS (services that normalise lower) or club −9 LUFS; “Auto” follows it.
+- **Starting curves** for melodic techno, trance, deep house and vocal pop, plus “Foundation & air”: a clean low end
+  (rumble filter, kick fundament at 55 Hz, mono bass) with a little air on top.
+
 ## 3.26.0 — 2026-10-22 (bridge 3.20.0)
 
 ### Added

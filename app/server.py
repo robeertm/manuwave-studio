@@ -77,7 +77,7 @@ HOST = os.environ.get("HOST", "0.0.0.0")      # 3.11: lokale Installation → 12
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, "web")
 
-APP_VERSION = "3.26.0"
+APP_VERSION = "3.27.0"
 BRIDGE_FILE = next((p for p in (os.path.join(ROOT, "bridge", n) for n in ("neonforge_bridge.py", "manuwave_bridge.py"))
                     if os.path.isfile(p)), os.path.join(ROOT, "bridge", "manuwave_bridge.py"))
 BUILD_INFO_FILE = os.path.join(WEB, "build-info.json")
@@ -356,6 +356,15 @@ def clean_job(kind: str, raw) -> dict:
         w = raw.get("writer")
         if isinstance(w, dict):
             return {"writer": {"model": str(w.get("model") or "")[:120], "url": str(w.get("url") or "")[:80]}}
+        # 3.27: Mastering-Presets (die Brücke prüft jedes Preset noch einmal selbst)
+        if isinstance(raw.get("master_presets"), list):
+            ps = []
+            for p in raw["master_presets"][:40]:
+                if isinstance(p, dict):
+                    m = clean_master(p.get("m")) or {}
+                    ps.append({"id": str(p.get("id") or "")[:24], "name": str(p.get("name") or "")[:40], "fav": p.get("fav") is True,
+                               "m": {k: m[k] for k in ("bass", "tone", "treble", "soft", "fade_in", "fade_out", "eq", "mono_bass", "breite", "ziel") if k in m}})
+            return {"master_presets": ps, "master_vorgabe": str(raw.get("master_vorgabe") or "")[:24]}
         s = raw.get("set")
         if not isinstance(s, dict):
             return {"fresh": True} if raw.get("fresh") is True else {}
@@ -431,6 +440,38 @@ MASTER_KEYS = {"bass": (-12, 12), "tone": (-6, 6), "treble": (-12, 12), "soft": 
                "fade_in": (0, 10), "fade_out": (0, 15), "start": (0, 3600), "end": (0, 3600)}
 
 
+# 3.27: Equalizer — bis zu 8 Bänder hinter den Schnellreglern (wie eqClean in mastering.js)
+EQ_TYPES = {"lc": "highpass", "ls": "lowshelf", "pk": "peaking", "hs": "highshelf", "hc": "lowpass"}
+EQ_MAX, EQ_F, EQ_G, EQ_Q = 8, (20, 20000), (-12.0, 12.0), (0.3, 8.0)
+
+
+def clean_eq(raw) -> list:
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for b in raw[:EQ_MAX]:
+        if not isinstance(b, dict) or b.get("t") not in EQ_TYPES:
+            continue
+        f, g, q = b.get("f"), b.get("g", 0), b.get("q", 1)
+        if not isinstance(f, (int, float)) or isinstance(f, bool) or not math.isfinite(f):
+            continue
+        f = int(round(max(EQ_F[0], min(EQ_F[1], f))))
+        g = g if isinstance(g, (int, float)) and not isinstance(g, bool) and math.isfinite(g) else 0
+        q = q if isinstance(q, (int, float)) and not isinstance(q, bool) and math.isfinite(q) else 1
+        t = b["t"]
+        if t in ("lc", "hc"):
+            out.append({"t": t, "f": f})
+            continue
+        g = round(max(EQ_G[0], min(EQ_G[1], float(g))), 1)
+        if g == 0:
+            continue
+        if t == "pk":
+            out.append({"t": t, "f": f, "g": g, "q": round(max(EQ_Q[0], min(EQ_Q[1], float(q))), 2)})
+        else:
+            out.append({"t": t, "f": f, "g": g})
+    return out
+
+
 def clean_master(raw):
     if not isinstance(raw, dict):
         return None
@@ -439,6 +480,15 @@ def clean_master(raw):
         v = raw.get(k)
         if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
             out[k] = max(lo, min(hi, float(v)))
+    eq = clean_eq(raw.get("eq"))
+    if eq:
+        out["eq"] = eq
+    for k, (lo, hi) in (("mono_bass", (60, 200)), ("breite", (50, 150))):
+        v = raw.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and lo <= v <= hi:
+            out[k] = int(round(v))
+    if raw.get("ziel") in ("leise", "club"):
+        out["ziel"] = raw["ziel"]
     if raw.get("off") is True:
         out["off"] = True
     return out

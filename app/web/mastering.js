@@ -15,10 +15,47 @@ export const MASTER_PRESETS = {
   hell: { bass: 0, tone: 1.5, treble: 2, soft: 1 },
   club: { bass: 3, tone: 0, treble: 1, soft: 1.5 },
   neutral: { bass: 0, tone: 0, treble: 0, soft: 0 },
+  // 3.27: Startkurven aus der Mastering-Recherche (Tiefschnitt 4. Ordnung, kleine Bewegungen, Bass mono) —
+  //       die Schnellregler stehen dabei auf 0, der Klang steckt im Equalizer.
+  fundament: { bass: 0, tone: 0, treble: 0, soft: 0, mono_bass: 120, breite: 100,
+    eq: [{ t: "lc", f: 25 }, { t: "pk", f: 55, g: 3, q: 0.9 }, { t: "ls", f: 120, g: 2.5 }, { t: "pk", f: 300, g: -1.5, q: 1 },
+      { t: "pk", f: 3200, g: -2, q: 1.2 }, { t: "hs", f: 9000, g: 2 }] },
+  techno: { bass: 0, tone: 0, treble: 0, soft: 0, mono_bass: 120, breite: 100,
+    eq: [{ t: "lc", f: 28 }, { t: "pk", f: 55, g: 2, q: 1 }, { t: "pk", f: 250, g: -1.5, q: 1 }, { t: "pk", f: 3200, g: -1.5, q: 1.2 }, { t: "hs", f: 10000, g: 1.5 }] },
+  trance: { bass: 0, tone: 0, treble: 0, soft: 0, mono_bass: 120, breite: 106,
+    eq: [{ t: "lc", f: 25 }, { t: "pk", f: 60, g: 1.5, q: 1 }, { t: "pk", f: 350, g: -1.5, q: 0.9 }, { t: "pk", f: 2500, g: -1, q: 1.5 }, { t: "hs", f: 12000, g: 2 }] },
+  deephouse: { bass: 0, tone: 0, treble: 0, soft: 0, mono_bass: 100, breite: 100,
+    eq: [{ t: "lc", f: 25 }, { t: "ls", f: 110, g: 2 }, { t: "pk", f: 400, g: -1, q: 1 }, { t: "pk", f: 3000, g: -1, q: 1 }, { t: "hs", f: 9000, g: 0.5 }] },
+  vocalpop: { bass: 0, tone: 0, treble: 0, soft: 0, mono_bass: 0, breite: 100,
+    eq: [{ t: "lc", f: 30 }, { t: "pk", f: 80, g: 1, q: 1 }, { t: "pk", f: 250, g: -2, q: 1.2 }, { t: "pk", f: 3000, g: 1, q: 1 }, { t: "hs", f: 10000, g: 2 }] },
 };
 // Grenzen wie MASTER_RANGES in der Brücke (die Regler im Tab haben dieselben)
 export const MASTER_RANGES = { bass: [-12, 12], tone: [-6, 6], treble: [-12, 12], soft: [0, 8], gain: [-24, 12], fade_in: [0, 10], fade_out: [0, 15] };
 export const MASTER_LIMIT_DB = -1.5, MASTER_TARGET_LUFS = -14;
+// 3.27: Equalizer — bis zu 8 Bänder hinter den Schnellreglern. Typen = RBJ-Biquads, die Web Audio und ffmpeg gleich rechnen:
+//   lc Tiefschnitt (highpass, Butterworth), ls Bass-Kuhschwanz (S=1), pk Glocke (Güte), hs Höhen-Kuhschwanz (S=1),
+//   hc Höhenschnitt (lowpass, Butterworth). 🔑 Web Audio nimmt die Güte von Hoch-/Tiefpass in dB (20·log10 Q).
+export const EQ_TYPES = { lc: "highpass", ls: "lowshelf", pk: "peaking", hs: "highshelf", hc: "lowpass" };
+export const EQ_MAX = 8, EQ_F = [20, 20000], EQ_G = [-12, 12], EQ_Q = [0.3, 8];
+// Hoch-/Tiefpass 4. Ordnung (24 dB/Oktave) = zwei Butterworth-Stufen; ffmpeg: zweimal highpass p=2 t=q mit diesen Q
+export const EQ_BUTTER4 = [0.5411961, 1.3065630];
+// 3.27: Mitte/Seite — Bass unter mono_bass Hz in Mono (Seite hochpassen, 4. Ordnung), Stereobreite = Seitenpegel in %
+export const MONO_BASS = [60, 200], BREITE = [50, 150];
+// Lautheitsziel: Streaming −14 (die großen Dienste), leise −16 (Dienste, die leiser normalisieren), Club −9 (keine Normalisierung)
+export const ZIELE = { streaming: -14, leise: -16, club: -9 };
+export function eqClean(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const b of raw.slice(0, EQ_MAX)) {
+    if (!b || !EQ_TYPES[b.t] || typeof b.f !== "number" || !isFinite(b.f)) continue;
+    const f = Math.round(Math.max(EQ_F[0], Math.min(EQ_F[1], b.f)));
+    const g = (b.t === "lc" || b.t === "hc") ? 0 : Math.round(Math.max(EQ_G[0], Math.min(EQ_G[1], +b.g || 0)) * 10) / 10;
+    const q = b.t === "pk" ? Math.round(Math.max(EQ_Q[0], Math.min(EQ_Q[1], +b.q || 1)) * 100) / 100 : undefined;
+    if ((b.t === "pk" || b.t === "ls" || b.t === "hs") && g === 0) continue;   // ein Band ohne Wirkung ist keins
+    out.push(q === undefined ? (g ? { t: b.t, f, g } : { t: b.t, f }) : { t: b.t, f, g, q });
+  }
+  return out;
+}
 
 export const dbGain = (db) => Math.pow(10, db / 20);
 const Off = () => window.OfflineAudioContext || window.webkitOfflineAudioContext;
@@ -31,6 +68,11 @@ export function masterClean(m, dur = Infinity) {
     const v = m[k];
     if (typeof v === "number" && isFinite(v)) { const [lo, hi] = MASTER_RANGES[k]; out[k] = Math.round(Math.max(lo, Math.min(hi, v)) * 100) / 100; }
   }
+  const eq = eqClean(m.eq);
+  if (eq.length) out.eq = eq;
+  if (typeof m.mono_bass === "number" && m.mono_bass >= MONO_BASS[0]) out.mono_bass = Math.round(Math.min(MONO_BASS[1], m.mono_bass));
+  if (typeof m.breite === "number" && isFinite(m.breite) && Math.round(m.breite) !== 100) out.breite = Math.round(Math.max(BREITE[0], Math.min(BREITE[1], m.breite)));
+  if (m.ziel && m.ziel !== "streaming" && ZIELE[m.ziel] != null) out.ziel = m.ziel;
   if (typeof m.start === "number" && m.start > 0.0005) out.start = Math.round(m.start * 1000) / 1000;
   if (typeof m.end === "number" && m.end > 0 && m.end < dur - 0.0005) out.end = Math.round(m.end * 1000) / 1000;
   return out;
@@ -64,11 +106,18 @@ export function autoEnd(buf) {
   const end = Math.min(buf.duration, (last + 1) * 0.1 + 0.3);
   return buf.duration - end < 0.5 ? null : [Math.round(end * 100) / 100, 1.0];
 }
-// Der Vorschlag für einen Track ohne eigene Einstellungen (= was der Mac ohne Regler exportiert)
-export function masterDefault(buf) {
-  const m = { ...MASTER_DEFAULT };
+// Der Vorschlag für einen Track ohne eigene Einstellungen (= was der Mac ohne Regler exportiert).
+export const PRESET_KEYS = ["bass", "tone", "treble", "soft", "fade_in", "fade_out", "eq", "mono_bass", "breite", "ziel"];
+export function presetKlang(m) {
+  const c = masterClean(m), out = {};
+  for (const k of PRESET_KEYS) if (k in c) out[k] = c[k];
+  return out;
+}
+export function masterDefault(buf, klang) {
+  const k = klang && Object.keys(klang).length ? presetKlang(klang) : null;
+  const m = k ? { bass: 0, tone: 0, treble: 0, soft: 0, fade_in: 0, ...k } : { ...MASTER_DEFAULT };
   const ae = buf && autoEnd(buf);
-  if (ae) { m.end = ae[0]; m.fade_out = ae[1]; }
+  if (ae) { m.end = ae[0]; if (!k || !("fade_out" in k)) m.fade_out = ae[1]; }
   return m;
 }
 
@@ -89,6 +138,35 @@ export function eqNodes(ctx, m) {
   n.bass.gain.value = m.bass || 0; n.toneLo.gain.value = -(m.tone || 0) / 2; n.toneHi.gain.value = (m.tone || 0) / 2;
   n.soft.gain.value = -(m.soft || 0); n.treble.gain.value = m.treble || 0;
   n.input = n.bass; n.output = n.treble;
+  n.all = [n.bass, n.toneLo, n.toneHi, n.soft, n.treble];      // alle Filter — die EQ-Kurve rechnet genau diese
+  // 3.27: die EQ-Bänder dahinter (Reihenfolge = master_filters)
+  for (const b of eqClean(m.eq)) {
+    const stufen = (b.t === "lc" || b.t === "hc") ? EQ_BUTTER4 : [b.q];
+    for (const q of stufen) {
+      const f = ctx.createBiquadFilter(); f.type = EQ_TYPES[b.t]; f.frequency.value = b.f;
+      if (b.t === "lc" || b.t === "hc") f.Q.value = 20 * Math.log10(q);          // Web Audio: Q von Hoch-/Tiefpass in dB
+      else { f.gain.value = b.g; if (b.t === "pk") f.Q.value = q; }
+      n.output.connect(f); n.output = f; n.all.push(f);
+    }
+  }
+  // 3.27: Mitte/Seite — M=(L+R)/2, S=(L−R)/2, S hochpassen (Bass mono) und mit der Breite gewichten, L=M+S, R=M−S
+  const mono = m.mono_bass >= MONO_BASS[0] ? m.mono_bass : 0, breite = m.breite ? m.breite / 100 : 1;
+  if ((mono || breite !== 1) && ctx.destination.channelCount >= 2) {
+    const sp = ctx.createChannelSplitter(2), mid = ctx.createGain(), side = ctx.createGain(), sMinus = ctx.createGain();
+    const gl = ctx.createGain(), gr = ctx.createGain(), mg = ctx.createChannelMerger(2);
+    const aL = ctx.createGain(), aR = ctx.createGain(); aL.gain.value = 0.5; aR.gain.value = 0.5; sMinus.gain.value = -0.5;
+    const sL = ctx.createGain(); sL.gain.value = 0.5;
+    n.output.connect(sp);
+    sp.connect(aL, 0); sp.connect(aR, 1); aL.connect(mid); aR.connect(mid);            // M = (L+R)/2
+    sp.connect(sL, 0); sp.connect(sMinus, 1); sL.connect(side); sMinus.connect(side);   // S = (L−R)/2
+    let s = side;
+    if (mono) for (const q of EQ_BUTTER4) { const f = ctx.createBiquadFilter(); f.type = "highpass"; f.frequency.value = mono; f.Q.value = 20 * Math.log10(q); s.connect(f); s = f; }
+    const sw = ctx.createGain(), sn = ctx.createGain(); sw.gain.value = breite; sn.gain.value = -breite;
+    s.connect(sw); s.connect(sn);
+    mid.connect(gl); sw.connect(gl); mid.connect(gr); sn.connect(gr);                  // L = M + w·S, R = M − w·S
+    gl.connect(mg, 0, 0); gr.connect(mg, 0, 1);
+    n.output = mg;
+  }
   return n;
 }
 
@@ -119,8 +197,9 @@ export async function measureLufs(buf, m) {
 }
 // Welche Messung zu welchen Einstellungen gehört (Pegel und Blenden ändern sie nicht)
 export const lufsKey = (m, dur) => { const c = masterClean(m, dur), { start, end } = cutOf(c, dur);
-  return JSON.stringify([c.bass || 0, c.tone || 0, c.treble || 0, c.soft || 0, start, end]); };
-export const autoGain = (lufs) => Math.max(MASTER_RANGES.gain[0], Math.min(MASTER_RANGES.gain[1], MASTER_TARGET_LUFS - lufs));
+  return JSON.stringify([c.bass || 0, c.tone || 0, c.treble || 0, c.soft || 0, c.eq || [], c.mono_bass || 0, c.breite || 100, start, end]); };
+export const zielLufs = (ziel) => ZIELE[ziel] != null ? ZIELE[ziel] : MASTER_TARGET_LUFS;
+export const autoGain = (lufs, ziel) => Math.max(MASTER_RANGES.gain[0], Math.min(MASTER_RANGES.gain[1], zielLufs(ziel) - lufs));
 
 // Die gemasterte Fassung des Ausschnitts → AudioBuffer
 export async function renderMaster(buf, m, gainDb) {
@@ -206,7 +285,7 @@ export async function masterAudio(buf, master, lufsCache) {
     const lk = lufsKey(m, buf.duration);
     lufs = lufsCache && lufsCache.has(lk) ? lufsCache.get(lk) : await measureLufs(buf, m);
     if (lufsCache) lufsCache.set(lk, lufs);
-    gain = autoGain(lufs);
+    gain = autoGain(lufs, m.ziel);
   }
   const ab = await renderMaster(buf, m, gain);
   const { start, end } = cutOf(m, buf.duration);
