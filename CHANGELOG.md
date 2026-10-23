@@ -3,6 +3,25 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.28.0 — 2026-10-23 (bridge 3.22.0)
+
+### Added
+- **Dynamics in mastering**, three new controls (strength 0–10):
+  - **AI harshness** — a dynamic EQ at 3 kHz. It only turns the band down when it gets harsh and leaves the
+    rest of the track untouched — aimed at the brittle top end AI music tends to have.
+  - **De-esser** — tames sibilance around 7 kHz in the same way.
+  - **Compressor** — a gentle 2:1 glue compressor with a soft knee for the whole mix.
+  Under each control the app shows how much it actually works on the current track (average and deepest
+  reduction). Thresholds follow the loudness target, so the same strength behaves alike on every track. Loudness
+  the dynamics take away is measured and given back afterwards, so “Auto” still lands on the target.
+- The starting curves (Foundation & air, melodic techno, trance, deep house, vocal pop) now include moderate
+  dynamics; presets save and restore the three controls.
+
+### Changed
+- The browser preview computes the dynamics sample by sample with exactly the compressor the export on your
+  computer uses — measured identical to it, within 0.05 dB over the whole track.
+- Fades are now calculated per sample, exactly like the export.
+
 ## 3.27.0 — 2026-10-23 (bridge 3.21.0)
 
 ### Added

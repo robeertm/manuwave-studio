@@ -2040,13 +2040,16 @@ async function doExport() {
 //      Bibliothek ▶︎  → spielt genau diese Fassung (fehlt sie oder ist sie veraltet: wird gerechnet, dann gespielt)
 //      Export         → der Mac rechnet dieselbe Kette aus rec.master (24 Bit)
 //    Ein Track ohne eigene Einstellungen spielt in der Bibliothek roh; bloßes Öffnen im Tab speichert nichts.
-const MS_KNOBS = { msBass: "bass", msTone: "tone", msTreble: "treble", msSoft: "soft", msFadeIn: "fade_in", msFadeOut: "fade_out" };
+const MS_KNOBS = { msBass: "bass", msTone: "tone", msTreble: "treble", msSoft: "soft", msFadeIn: "fade_in", msFadeOut: "fade_out",
+  msHaerte: "haerte", msZisch: "zisch", msKomp: "komp" };          // 3.28: Dynamik
 const MS_ZERO = { bass: 0, tone: 0, treble: 0, soft: 0, fade_in: 0 };     // fehlende Regler = 0 (so liest sie auch der Mac)
 const ms = { id: null, rec: null, buf: null, m: null, own: false, savedJson: "", hist: [], lastEdit: 0, pos: 0, ab: "B", playing: false,
   audio: null, playStart: 0, prev: null, rendering: null, renderTimer: 0, saveTimer: 0, storeTimer: 0, pending: null, run: 0,
   lufs: new Map(), peaks: null, drag: null, orig: null, raf: 0, lastAutoGain: 0, bufs: new Map() };
 
-function fmtCut(s) { s = Math.max(0, +s || 0); const m = Math.floor(s / 60); return `${m}:${(s - m * 60).toFixed(1).padStart(4, "0").replace(".", ",")}`; }
+// Dezimalzeichen der Oberfläche (3.28: vorher stand auch im Englischen ein Komma)
+const DZ = () => window.MWS_LANG === "en" ? "." : ",";
+function fmtCut(s) { s = Math.max(0, +s || 0); const m = Math.floor(s / 60); return `${m}:${(s - m * 60).toFixed(1).padStart(4, "0").replace(".", DZ())}`; }
 const msLen = () => ms.buf ? ms.buf.duration : 0;
 const msStart = () => cutOf(ms.m, msLen()).start;
 const msEnd = () => cutOf(ms.m, msLen()).end;
@@ -2154,7 +2157,7 @@ async function msPrepare() {
       $("#msWave").dataset.renderMs = prev.ms;            // wie lange das Rechnen dauerte (auch für den Prüfstand)
       if (out.lufs != null) { $("#msGain").dataset.lufs = out.lufs.toFixed(2); ms.lastAutoGain = out.gain; }
       const old = ms.prev; ms.prev = prev;
-      paintGain();
+      paintGain(); paintDyn(prev);
       if (ms.playing && ms.ab === "B") msSwap(prev);     // läuft gerade: an derselben Stelle auf die neue Fassung
       if (old) setTimeout(() => URL.revokeObjectURL(old.url), 3000);
       if (ms.own && !ms.pending) msStoreSoon();
@@ -2272,7 +2275,7 @@ function paintMasterWave(t) {
   [xs, xe].forEach(px => { g.fillRect(px - 2, 0, 4, h); g.fillRect(px - 7, h / 2 - 12, 14, 24); });
   if (t != null) { g.fillStyle = "#fff"; g.fillRect(x(t) - 1, 0, 2, h); }
 }
-const sgnDb = (v, u = " dB") => `${v > 0 ? "+" : v < 0 ? "−" : "±"}${Math.abs(v).toFixed(1).replace(".", ",")}${u}`;
+const sgnDb = (v, u = " dB") => `${v > 0 ? "+" : v < 0 ? "−" : "±"}${Math.abs(v).toFixed(1).replace(".", DZ())}${u}`;
 function paintGain() {
   if (!ms.m) return;
   $("#msGain").value = msGain();
@@ -2281,22 +2284,35 @@ function paintGain() {
   $("#msAuto").textContent = `Auto · ${String(zielLufs(ms.m.ziel)).replace("-", "−")} LUFS`;
   $$(".ms-ziel [data-ziel]").forEach(b => { const on = (ms.m.ziel || "streaming") === b.dataset.ziel; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
 }
+// 3.28: wie stark die Dynamik in der letzten Rechnung gegriffen hat (Ø über den Titel, stärkste Stelle)
+function paintDyn(prev) {
+  const d = (prev && prev.dyn) || {}, alt = !!state.bridge.connected && !macCan("dynamik");
+  for (const [id, k] of [["msHaerte", "haerte"], ["msZisch", "zisch"], ["msKomp", "komp"]]) {
+    const el = $("#" + id + "Gr"), v = d[k];
+    el.textContent = !v ? "" : alt ? "der Export braucht das Update der Brücke auf deinem Mac"
+      : v[1] > -0.05 ? "greift bei diesem Titel nicht" : `greift Ø ${sgnDb(v[0])}, bis ${sgnDb(v[1])}`;
+  }
+}
 function paintMaster() {
   const m = ms.m;
   if (!m) return;
   Object.entries(MS_KNOBS).forEach(([id, k]) => { $("#" + id).value = m[k] || 0; });
   $("#msBassV").textContent = sgnDb(m.bass || 0); $("#msTrebleV").textContent = sgnDb(m.treble || 0);
-  $("#msToneV").textContent = (m.tone || 0) === 0 ? "neutral" : (m.tone < 0 ? "wärmer " : "heller ") + Math.abs(m.tone).toFixed(1).replace(".", ",");
-  $("#msSoftV").textContent = (m.soft || 0) ? `−${(m.soft).toFixed(1).replace(".", ",")} dB` : "aus";
+  $("#msToneV").textContent = (m.tone || 0) === 0 ? "neutral" : (m.tone < 0 ? "wärmer " : "heller ") + Math.abs(m.tone).toFixed(1).replace(".", DZ());
+  $("#msSoftV").textContent = (m.soft || 0) ? `−${(m.soft).toFixed(1).replace(".", DZ())} dB` : "aus";
   paintGain();
-  $("#msFadeInV").textContent = `${(m.fade_in || 0).toFixed(1).replace(".", ",")} s`;
+  $("#msFadeInV").textContent = `${(m.fade_in || 0).toFixed(1).replace(".", DZ())} s`;
   $("#msMono").value = m.mono_bass >= 60 ? m.mono_bass : 40;
   $("#msMonoV").textContent = m.mono_bass >= 60 ? `${m.mono_bass} Hz` : "aus";
   $("#msBreite").value = m.breite || 100;
   $("#msBreiteV").textContent = `${m.breite || 100} %`;
-  $("#msFadeOutV").textContent = `${(m.fade_out || 0).toFixed(1).replace(".", ",")} s`;
+  for (const [id, k] of [["msHaerte", "haerte"], ["msZisch", "zisch"], ["msKomp", "komp"]]) {
+    $("#" + id + "V").textContent = m[k] > 0 ? m[k].toFixed(1).replace(".", DZ()) : "aus";
+    if (!(m[k] > 0)) $("#" + id + "Gr").textContent = "";
+  }
+  $("#msFadeOutV").textContent = `${(m.fade_out || 0).toFixed(1).replace(".", DZ())} s`;
   $("#msStartTxt").textContent = fmtCut(msStart());
-  $("#msEndTxt").textContent = `${fmtCut(msEnd())}${msEnd() < msLen() - 0.05 ? ` (−${(msLen() - msEnd()).toFixed(1).replace(".", ",")} s)` : ""}`;
+  $("#msEndTxt").textContent = `${fmtCut(msEnd())}${msEnd() < msLen() - 0.05 ? ` (−${(msLen() - msEnd()).toFixed(1).replace(".", DZ())} s)` : ""}`;
   $("#msA").classList.toggle("on", ms.ab === "A"); $("#msA").setAttribute("aria-pressed", String(ms.ab === "A"));
   $("#msB").classList.toggle("on", ms.ab === "B"); $("#msB").setAttribute("aria-pressed", String(ms.ab === "B"));
   if (!ms.playing) $("#msTime").textContent = `${fmtCut(ms.pos)} / ${fmtCut(msLen())}`;
@@ -2544,6 +2560,9 @@ function presetBeschreibung(m) {
   if (m.treble) t.push(`Höhen ${m.treble > 0 ? "+" : ""}${m.treble}`);
   if (m.soft) t.push(`Weich ${m.soft}`);
   if ((m.eq || []).length) t.push(`EQ ${m.eq.length}`);
+  if (m.haerte) t.push(`KI-Härte ${m.haerte}`);
+  if (m.zisch) t.push(`De-Esser ${m.zisch}`);
+  if (m.komp) t.push(`Kompressor ${m.komp}`);
   return t.length ? t.map(x => `<span>${esc(x)}</span>`).join(" · ") : "<span>neutral</span>";
 }
 async function presetsSenden(liste, vorgabe, ok) {

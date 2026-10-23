@@ -77,7 +77,7 @@ HOST = os.environ.get("HOST", "0.0.0.0")      # 3.11: lokale Installation → 12
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, "web")
 
-APP_VERSION = "3.27.0"
+APP_VERSION = "3.28.0"
 BRIDGE_FILE = next((p for p in (os.path.join(ROOT, "bridge", n) for n in ("neonforge_bridge.py", "manuwave_bridge.py"))
                     if os.path.isfile(p)), os.path.join(ROOT, "bridge", "manuwave_bridge.py"))
 BUILD_INFO_FILE = os.path.join(WEB, "build-info.json")
@@ -363,7 +363,7 @@ def clean_job(kind: str, raw) -> dict:
                 if isinstance(p, dict):
                     m = clean_master(p.get("m")) or {}
                     ps.append({"id": str(p.get("id") or "")[:24], "name": str(p.get("name") or "")[:40], "fav": p.get("fav") is True,
-                               "m": {k: m[k] for k in ("bass", "tone", "treble", "soft", "fade_in", "fade_out", "eq", "mono_bass", "breite", "ziel") if k in m}})
+                               "m": {k: m[k] for k in ("bass", "tone", "treble", "soft", "fade_in", "fade_out", "eq", "mono_bass", "breite", "ziel", "haerte", "zisch", "komp") if k in m}})
             return {"master_presets": ps, "master_vorgabe": str(raw.get("master_vorgabe") or "")[:24]}
         s = raw.get("set")
         if not isinstance(s, dict):
@@ -489,6 +489,10 @@ def clean_master(raw):
             out[k] = int(round(v))
     if raw.get("ziel") in ("leise", "club"):
         out["ziel"] = raw["ziel"]
+    for k in ("haerte", "zisch", "komp"):            # 3.28: Dynamik-Stärken 0–10 (die Brücke rundet auf halbe Schritte)
+        v = raw.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and 0 < v <= 10:
+            out[k] = float(v)
     if raw.get("off") is True:
         out["off"] = True
     return out

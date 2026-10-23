@@ -58,7 +58,7 @@ try:
 except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.21.0"
+BRIDGE_VERSION = "3.22.0"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
@@ -1100,7 +1100,7 @@ WM_MAGIC = "4e4601"
 WM_STRENGTH = 3
 AUFBEREITET_V = 2       # Fassung der Archiv-Aufbereitung (adeclip wenn beschnitten + leises Zeichen + 24 Bit)
 TAGS_VERSION = 1
-CAPS = "settings,export,cover,verify,nachruesten,archiv,master,loeschen,paket,web,master_merken,midi,weiter,analyse,writer,presets"
+CAPS = "settings,export,cover,verify,nachruesten,archiv,master,loeschen,paket,web,master_merken,midi,weiter,analyse,writer,presets,dynamik"
 
 
 def caps_for(cfg: dict) -> str:
@@ -2538,6 +2538,45 @@ ZIELE = {"streaming": -14.0, "leise": -16.0, "club": -9.0}
 EQ_BUTTER4 = (0.5411961, 1.3065630)        # Hoch-/Tiefpass 4. Ordnung = zwei Butterworth-Stufen
 MONO_BASS, BREITE = (60, 200), (50, 150)
 
+# 3.28: Dynamik — dynamischer EQ gegen KI-Härte, De-Esser, Kompressor (wie DYN_STUFEN/dynamik in mastering.js).
+# 🔑 Alle drei = acompressor (Kern seit ffmpeg 5.1 gleich, der Browser rechnet ihn Zeile für Zeile nach — gemessen
+#    bitgleich, die Bänder −140 dB). adynamicequalizer/deesser rechnen je ffmpeg-Fassung anders → nicht genommen.
+#    Band-Stufen: out = x − Bandpass(x) + acompressor(Bandpass(x)). Schwellen relativ zum Lautheitsziel.
+DYN_KEYS, DYN_MAX, DYN_AUSGLEICH = ("haerte", "zisch", "komp"), 10.0, 6.0
+DYN_STUFEN = {
+    "haerte": dict(f=3200, q=1.0, ratio=3, knee=2, att=5, rel=80, thr=lambda s: -5 - 1.1 * s),
+    "zisch": dict(f=7000, q=1.4, ratio=4, knee=2, att=1, rel=40, thr=lambda s: -7 - 1.0 * s),
+    "komp": dict(ratio=2, knee=2.82843, att=30, rel=250, thr=lambda s: 4 - 1.2 * s),
+}
+
+
+def dyn_stufen(m: dict) -> list:
+    z = ZIELE.get(m.get("ziel"), MASTER_TARGET_LUFS)
+    out = []
+    for k in DYN_KEYS:
+        s = m.get(k) or 0
+        if s > 0:
+            d = DYN_STUFEN[k]
+            p = {x: d[x] for x in d if x != "thr"}
+            p.update(k=k, thr=round(10 ** (max(-59.0, min(0.0, z + d["thr"](s))) / 20), 6))
+            out.append(p)
+    return out
+
+
+def dyn_filters(m: dict) -> list:
+    f = []
+    for i, p in enumerate(dyn_stufen(m)):
+        comp = ("acompressor=threshold=%.6f:ratio=%g:attack=%g:release=%g:knee=%g:makeup=1:detection=rms:link=average:mix=1"
+                % (p["thr"], p["ratio"], p["att"], p["rel"], p["knee"]))
+        if p.get("f"):              # Band herausnehmen, allein komprimieren, wieder einsetzen (eindeutige Namen je Stufe)
+            a = "dy%d" % i
+            f.append("aformat=channel_layouts=stereo,asplit=2[{a}x][{a}b];[{a}b]bandpass=f={f}:t=q:w={q:g},asplit=2[{a}p][{a}q];"
+                     "[{a}q]{c}[{a}c];[{a}x][{a}p][{a}c]amerge=inputs=3,pan=stereo|c0=c0-c2+c4|c1=c1-c3+c5".format(
+                         a=a, f=p["f"], q=p["q"], c=comp))
+        else:
+            f.append(comp)
+    return f
+
 
 # 3.27: Equalizer — bis zu 8 Bänder hinter den Schnellreglern (wie eqClean in mastering.js)
 EQ_TYPES = {"lc": "highpass", "ls": "lowshelf", "pk": "peaking", "hs": "highshelf", "hc": "lowpass"}
@@ -2593,6 +2632,11 @@ def clean_master(raw):
         m["breite"] = int(round(max(BREITE[0], min(BREITE[1], br))))
     if raw.get("ziel") in ZIELE and raw.get("ziel") != "streaming":
         m["ziel"] = raw["ziel"]
+    for k in DYN_KEYS:                             # 3.28: Stärke 0–10 in halben Schritten (wie masterClean)
+        if num(raw.get(k)):
+            r = math.floor(min(DYN_MAX, float(raw[k])) * 2 + 0.5) / 2
+            if r > 0:
+                m[k] = r
     if raw.get("off") is True:
         m["off"] = True
     return m
@@ -2600,7 +2644,7 @@ def clean_master(raw):
 
 # 3.27: Mastering-Presets — liegen hier (bridge.json), damit sie für jeden Browser und jeden Export ohne Browser gelten.
 # Ein Preset ist ein ganzer Klang: Schnellregler, EQ und Blenden — nie Ausschnitt oder Pegel (die gehören zum Track).
-PRESET_KEYS = ("bass", "tone", "treble", "soft", "fade_in", "fade_out", "eq", "mono_bass", "breite", "ziel")
+PRESET_KEYS = ("bass", "tone", "treble", "soft", "fade_in", "fade_out", "eq", "mono_bass", "breite", "ziel", "haerte", "zisch", "komp")
 PRESET_MAX = 40
 
 
@@ -2638,7 +2682,7 @@ def mein_sound():
     """„Mein Sound“: der Median deiner Mastering-Regler über alle Titel im Archiv, die du selbst gemastert hast."""
     if time.time() - _mein_sound_cache["at"] < 300:
         return _mein_sound_cache["wert"]
-    werte = {k: [] for k in ("bass", "tone", "treble", "soft", "fade_in", "fade_out")}
+    werte = {k: [] for k in ("bass", "tone", "treble", "soft", "fade_in", "fade_out") + DYN_KEYS}
     n = 0
     for root, dirs, files in os.walk(RENDERS):
         dirs[:] = [x for x in dirs if not x.startswith("_")]
@@ -2706,8 +2750,10 @@ def master_settings(path: str, given) -> dict:
     return m
 
 
-def master_filters(m: dict, dur: float, gain=None) -> list:
-    """ffmpeg-Filter in derselben Reihenfolge wie die Web-Audio-Kette im Browser."""
+def master_filters(m: dict, dur: float, gain=None, ausgleich=0.0, bis_dynamik=False) -> list:
+    """ffmpeg-Filter in derselben Reihenfolge wie die Web-Audio-Kette im Browser.
+    3.28: nach dem Pegel die Dynamik, dann `ausgleich` dB (was die Dynamik an Lautheit nahm), Blenden, Limiter.
+    `bis_dynamik` endet nach der Dynamik — zum Messen des Ausgleichs."""
     f = []
     start = max(0.0, min(m.get("start", 0.0), dur))
     end = m.get("end") or dur
@@ -2738,6 +2784,11 @@ def master_filters(m: dict, dur: float, gain=None) -> list:
         f.append("pan=stereo|c0=c0+%.6f*c1|c1=c0-%.6f*c1" % (breite, breite))
     if gain is not None:
         f.append("volume=%.2fdB" % gain)
+        f += dyn_filters(m)
+        if bis_dynamik:
+            return f
+        if ausgleich:
+            f.append("volume=%.2fdB" % ausgleich)
         L = end - start
         if m.get("fade_in"):
             f.append("afade=t=in:st=0:d=%.3f:curve=qsin" % min(m["fade_in"], L / 2))
@@ -2756,6 +2807,30 @@ def measure_lufs(ff: str, path: str, filters: list) -> float:
     if not m:
         raise RuntimeError("Lautheit nicht messbar")
     return float(m[-1])
+
+
+def master_kette(ff: str, wav_path: str, m: dict, tick=None):
+    """Die ganze Mastering-Kette eines Exports → (ffmpeg-Filter, Infos). Misst Lautheit (wenn „Auto“) und
+    3.28 den Ausgleich nach der Dynamik — dieselbe Rechnung wie masterAudio/renderMaster im Browser."""
+    mi = {}
+    dur = wav_duration(wav_path)
+    gain, lufs = m.get("gain"), None
+    if gain is None:
+        if tick:
+            tick("Lautheit wird gemessen …")
+        lufs = measure_lufs(ff, wav_path, master_filters(m, dur))
+        gain = max(MASTER_RANGES["gain"][0], min(MASTER_RANGES["gain"][1], ZIELE.get(m.get("ziel"), MASTER_TARGET_LUFS) - lufs))
+        mi["lufs_vorher"] = round(lufs, 1)
+    gain = round(gain, 2)
+    ausgleich = 0.0
+    if dyn_stufen(m) and lufs is not None:          # 3.28: was Kompressor & Co. an Lautheit nehmen, kommt danach wieder drauf
+        if tick:
+            tick("Dynamik wird gemessen …")
+        nach = measure_lufs(ff, wav_path, master_filters(m, dur, gain, bis_dynamik=True))
+        ausgleich = round(max(0.0, min(DYN_AUSGLEICH, lufs + gain - nach)), 2)
+        mi["ausgleich"] = ausgleich
+    mi.update(gain=gain, settings=m)
+    return master_filters(m, dur, gain, ausgleich), mi
 
 
 def wav_duration(path: str) -> float:
@@ -2784,20 +2859,7 @@ def export_track(cfg: dict, wav_path: str, fmt: str, rate: int, info: dict, tick
     cpath = wav_path[:-4] + ".jpg"
     cover = _read_bytes(cpath)
     m = master_settings(wav_path, master)
-    mi = {}
-    if not m.get("off"):
-        dur = wav_duration(wav_path)
-        gain = m.get("gain")
-        if gain is None:
-            if tick:
-                tick("Lautheit wird gemessen …")
-            lufs = measure_lufs(ff, wav_path, master_filters(m, dur))
-            gain = max(MASTER_RANGES["gain"][0], min(MASTER_RANGES["gain"][1], ZIELE.get(m.get("ziel"), MASTER_TARGET_LUFS) - lufs))
-            mi["lufs_vorher"] = round(lufs, 1)
-        chain = master_filters(m, dur, round(gain, 2))
-        mi.update(gain=round(gain, 2), settings=m)
-    else:
-        chain = []
+    chain, mi = master_kette(ff, wav_path, m, tick) if not m.get("off") else ([], {})
     if tick:
         tick("Export %s …" % f["name"])
     with Scratch() as s:

@@ -441,3 +441,7 @@ body.has-now #app{padding-bottom:110px}
 .vb-mix{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-top:10px}
 .vb-mixtext{flex:1 1 320px;min-width:0;font-size:13px}
 .vb-take{margin-top:3px}
+/* 3.28: wie stark die Dynamik greift — feste Höhe, damit die Regler beim Rechnen nicht springen */
+.ms-k .ms-gr{display:block;min-height:1.3em;color:var(--amber);font-variant-numeric:tabular-nums}
+.ms-dyn-kopf{margin:6px 0 2px;font-size:13px;font-weight:600;color:var(--ink)}
+.ms-dyn-kopf small{font-weight:400;margin-left:6px}

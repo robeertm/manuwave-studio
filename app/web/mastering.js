@@ -16,17 +16,17 @@ export const MASTER_PRESETS = {
   club: { bass: 3, tone: 0, treble: 1, soft: 1.5 },
   neutral: { bass: 0, tone: 0, treble: 0, soft: 0 },
   // 3.27: Startkurven aus der Mastering-Recherche (Tiefschnitt 4. Ordnung, kleine Bewegungen, Bass mono) —
-  //       die Schnellregler stehen dabei auf 0, der Klang steckt im Equalizer.
-  fundament: { bass: 0, tone: 0, treble: 0, soft: 0, mono_bass: 120, breite: 100,
+  //       die Schnellregler stehen dabei auf 0, der Klang steckt im Equalizer. 3.28: dazu maßvolle Dynamik.
+  fundament: { bass: 0, tone: 0, treble: 0, soft: 0, haerte: 4, zisch: 3, komp: 3, mono_bass: 120, breite: 100,
     eq: [{ t: "lc", f: 25 }, { t: "pk", f: 55, g: 3, q: 0.9 }, { t: "ls", f: 120, g: 2.5 }, { t: "pk", f: 300, g: -1.5, q: 1 },
       { t: "pk", f: 3200, g: -2, q: 1.2 }, { t: "hs", f: 9000, g: 2 }] },
-  techno: { bass: 0, tone: 0, treble: 0, soft: 0, mono_bass: 120, breite: 100,
+  techno: { bass: 0, tone: 0, treble: 0, soft: 0, haerte: 3, komp: 4, mono_bass: 120, breite: 100,
     eq: [{ t: "lc", f: 28 }, { t: "pk", f: 55, g: 2, q: 1 }, { t: "pk", f: 250, g: -1.5, q: 1 }, { t: "pk", f: 3200, g: -1.5, q: 1.2 }, { t: "hs", f: 10000, g: 1.5 }] },
-  trance: { bass: 0, tone: 0, treble: 0, soft: 0, mono_bass: 120, breite: 106,
+  trance: { bass: 0, tone: 0, treble: 0, soft: 0, haerte: 3, zisch: 2, komp: 3, mono_bass: 120, breite: 106,
     eq: [{ t: "lc", f: 25 }, { t: "pk", f: 60, g: 1.5, q: 1 }, { t: "pk", f: 350, g: -1.5, q: 0.9 }, { t: "pk", f: 2500, g: -1, q: 1.5 }, { t: "hs", f: 12000, g: 2 }] },
-  deephouse: { bass: 0, tone: 0, treble: 0, soft: 0, mono_bass: 100, breite: 100,
+  deephouse: { bass: 0, tone: 0, treble: 0, soft: 0, haerte: 2, komp: 3, mono_bass: 100, breite: 100,
     eq: [{ t: "lc", f: 25 }, { t: "ls", f: 110, g: 2 }, { t: "pk", f: 400, g: -1, q: 1 }, { t: "pk", f: 3000, g: -1, q: 1 }, { t: "hs", f: 9000, g: 0.5 }] },
-  vocalpop: { bass: 0, tone: 0, treble: 0, soft: 0, mono_bass: 0, breite: 100,
+  vocalpop: { bass: 0, tone: 0, treble: 0, soft: 0, haerte: 3, zisch: 5, komp: 3, mono_bass: 0, breite: 100,
     eq: [{ t: "lc", f: 30 }, { t: "pk", f: 80, g: 1, q: 1 }, { t: "pk", f: 250, g: -2, q: 1.2 }, { t: "pk", f: 3000, g: 1, q: 1 }, { t: "hs", f: 10000, g: 2 }] },
 };
 // Grenzen wie MASTER_RANGES in der Brücke (die Regler im Tab haben dieselben)
@@ -70,6 +70,10 @@ export function masterClean(m, dur = Infinity) {
   }
   const eq = eqClean(m.eq);
   if (eq.length) out.eq = eq;
+  for (const k of DYN_KEYS) {                                    // 3.28: Dynamik-Stärken 0–10 in halben Schritten
+    const v = m[k], r = typeof v === "number" && isFinite(v) ? Math.floor(Math.min(DYN_MAX, v) * 2 + 0.5) / 2 : 0;
+    if (r > 0) out[k] = r;
+  }
   if (typeof m.mono_bass === "number" && m.mono_bass >= MONO_BASS[0]) out.mono_bass = Math.round(Math.min(MONO_BASS[1], m.mono_bass));
   if (typeof m.breite === "number" && isFinite(m.breite) && Math.round(m.breite) !== 100) out.breite = Math.round(Math.max(BREITE[0], Math.min(BREITE[1], m.breite)));
   if (m.ziel && m.ziel !== "streaming" && ZIELE[m.ziel] != null) out.ziel = m.ziel;
@@ -107,7 +111,7 @@ export function autoEnd(buf) {
   return buf.duration - end < 0.5 ? null : [Math.round(end * 100) / 100, 1.0];
 }
 // Der Vorschlag für einen Track ohne eigene Einstellungen (= was der Mac ohne Regler exportiert).
-export const PRESET_KEYS = ["bass", "tone", "treble", "soft", "fade_in", "fade_out", "eq", "mono_bass", "breite", "ziel"];
+export const PRESET_KEYS = ["bass", "tone", "treble", "soft", "fade_in", "fade_out", "eq", "mono_bass", "breite", "ziel", "haerte", "zisch", "komp"];
 export function presetKlang(m) {
   const c = masterClean(m), out = {};
   for (const k of PRESET_KEYS) if (k in c) out[k] = c[k];
@@ -201,23 +205,124 @@ export const lufsKey = (m, dur) => { const c = masterClean(m, dur), { start, end
 export const zielLufs = (ziel) => ZIELE[ziel] != null ? ZIELE[ziel] : MASTER_TARGET_LUFS;
 export const autoGain = (lufs, ziel) => Math.max(MASTER_RANGES.gain[0], Math.min(MASTER_RANGES.gain[1], zielLufs(ziel) - lufs));
 
-// Die gemasterte Fassung des Ausschnitts → AudioBuffer
-export async function renderMaster(buf, m, gainDb) {
+// =============================================================================
+// 3.28: Dynamik — Kompressor (Zusammenhalt), dynamischer EQ gegen KI-Härte, De-Esser.
+// =============================================================================
+// 🔑 Alle drei sind derselbe Baustein: acompressor von ffmpeg, Zeile für Zeile nachgerechnet (Kern seit ffmpeg 5.1
+//    unverändert — die Kunden haben 5.1 bis 9.x). ffmpegs adynamicequalizer/deesser rechnen je Version anders, darum
+//    nicht genommen. Der dynamische EQ und der De-Esser drücken nur ein Band: out = x − Band + Kompressor(Band),
+//    das Band ist ein RBJ-Bandpass (0 dB Spitze) — die Brücke baut dasselbe mit asplit/bandpass/amerge/pan.
+// 🔑 Sitzt nach dem Pegel (die Schwellen stehen relativ zum Lautheitsziel, gleich für jeden Titel) und vor
+//    Blenden und Limiter. Was die Dynamik an Lautheit nimmt, gleicht ein zweiter Pegel danach aus (gemessen).
+export const DYN_KEYS = ["haerte", "zisch", "komp"], DYN_MAX = 10, DYN_AUSGLEICH = 6;
+// Stärke 0–10 → Einstellungen. thr = Schwelle in dB über/unter dem Lautheitsziel; knee als Faktor wie ffmpeg (2,83 ≈ 9 dB)
+export const DYN_STUFEN = {
+  haerte: { f: 3200, q: 1.0, ratio: 3, knee: 2, att: 5, rel: 80, thr: (s) => -5 - 1.1 * s },
+  zisch: { f: 7000, q: 1.4, ratio: 4, knee: 2, att: 1, rel: 40, thr: (s) => -7 - 1.0 * s },
+  komp: { ratio: 2, knee: 2.82843, att: 30, rel: 250, thr: (s) => 4 - 1.2 * s },
+};
+export function dynStufen(m) {
+  const z = zielLufs(m && m.ziel), out = [];
+  for (const k of DYN_KEYS) {
+    const s = m && m[k];
+    if (!(s > 0)) continue;
+    const d = DYN_STUFEN[k];
+    out.push({ k, f: d.f, q: d.q, ratio: d.ratio, knee: d.knee, att: d.att, rel: d.rel,
+      thr: Math.round(dbGain(Math.max(-59, Math.min(0, z + d.thr(s)))) * 1e6) / 1e6 });   // linear, 6 Stellen wie die Brücke
+  }
+  return out;
+}
+const hermite = (x, x0, x1, p0, p1, m0, m1) => {
+  const w = x1 - x0, t = (x - x0) / w, t2 = t * t, t3 = t2 * t;
+  m0 *= w; m1 *= w;
+  return (2 * p0 + m0 - 2 * p1 + m1) * t3 + (-3 * p0 - 2 * m0 + 3 * p1 - m1) * t2 + m0 * t + p0;
+};
+// acompressor (detection=rms, link=average, makeup=1, mix=1) → Verstärkung je Sample
+export function kompGain(sc, sr, p) {
+  const thres = Math.log(p.thr), lks = p.thr / Math.sqrt(p.knee), lke = p.thr * Math.sqrt(p.knee);
+  const ks = Math.log(lks), ke = Math.log(lke), delta = 1 / p.ratio;
+  const cke = (ke - thres) / p.ratio + thres, ab = lks * lks;
+  const att = Math.min(1, 1 / (p.att * sr / 4000)), rel = Math.min(1, 1 / (p.rel * sr / 4000));
+  const n = sc[0].length, nc = sc.length, g = new Float64Array(n);
+  let ls = 0;
+  for (let i = 0; i < n; i++) {
+    let a = 0; for (let c = 0; c < nc; c++) a += Math.abs(sc[c][i]);
+    a /= nc; a *= a;
+    ls += (a - ls) * (a > ls ? att : rel);
+    if (ls > 0 && ls > ab) {
+      const slope = Math.log(ls) * 0.5;
+      let gain = (slope - thres) / p.ratio + thres;
+      if (p.knee > 1 && slope < ke) gain = hermite(slope, ks, ke, ks, cke, 1, delta);
+      g[i] = Math.exp(gain - slope);
+    } else g[i] = 1;
+  }
+  return g;
+}
+export function bandpass(x, sr, f, q) {
+  const w = 2 * Math.PI * f / sr, al = Math.sin(w) / (2 * q), a0 = 1 + al;
+  const b0 = al / a0, b2 = -al / a0, a1 = -2 * Math.cos(w) / a0, a2 = (1 - al) / a0;
+  const y = new Float64Array(x.length);
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  for (let i = 0; i < x.length; i++) {
+    const v = x[i], o = b0 * v + b2 * x2 - a1 * y1 - a2 * y2;
+    x2 = x1; x1 = v; y2 = y1; y1 = o; y[i] = o;
+  }
+  return y;
+}
+// Wendet die Dynamik auf einen AudioBuffer an (in place) → { haerte|zisch|komp: [Ø-Absenkung dB, stärkste dB] } oder null
+export function dynamik(ab, m) {
+  const st = dynStufen(m);
+  if (!st.length) return null;
+  const sr = ab.sampleRate, chs = [], res = {};
+  for (let c = 0; c < ab.numberOfChannels; c++) chs.push(ab.getChannelData(c));
+  for (const p of st) {
+    const band = p.f ? chs.map(d => bandpass(d, sr, p.f, p.q)) : null;
+    const g = kompGain(band || chs, sr, p);
+    let sum = 0, min = 1;
+    for (let i = 0; i < g.length; i++) { const v = g[i]; sum += v < 1 ? Math.log(v) : 0; if (v < min) min = v; }
+    if (band) chs.forEach((d, c) => { const b = band[c]; for (let i = 0; i < d.length; i++) d[i] += b[i] * (g[i] - 1); });
+    else for (const d of chs) for (let i = 0; i < d.length; i++) d[i] *= g[i];
+    res[p.k] = [Math.round(20 / Math.LN10 * sum / Math.max(1, g.length) * 100) / 100, Math.round(20 * Math.log10(min) * 10) / 10];
+  }
+  return res;
+}
+// Ein-/Ausblenden wie ffmpeg afade curve=qsin (st/d auf ms gerundet wie in der Brücke, Samples gerundet wie av_rescale)
+export function blenden(ab, fi, fo) {
+  const sr = ab.sampleRate, n = ab.length, dur = n / sr, r3 = (x) => Math.round(x * 1000) / 1000;
+  const g = (i) => {
+    let v = 1;
+    if (fi > 0) { const ns = Math.round(r3(Math.min(fi, dur / 2)) * sr); v *= Math.sin(Math.PI / 2 * Math.min(1, Math.max(0, i / ns))); }
+    if (fo > 0) { const d = Math.min(fo, dur / 2), ns = Math.round(r3(d) * sr), st = Math.round(r3(dur - d) * sr);
+      v *= Math.sin(Math.PI / 2 * Math.min(1, Math.max(0, (st + ns - i) / ns))); }
+    return v;
+  };
+  if (!(fi > 0) && !(fo > 0)) return;
+  const chs = []; for (let c = 0; c < ab.numberOfChannels; c++) chs.push(ab.getChannelData(c));
+  for (let i = 0; i < n; i++) { const v = g(i); if (v !== 1) for (const d of chs) d[i] *= v; }
+}
+
+// Die gemasterte Fassung des Ausschnitts → AudioBuffer (+ .dyn: Absenkung je Dynamik-Stufe, .ausgleich: dB danach)
+// 3.28: Klang und Pegel im Graphen, danach auf den Samples: Dynamik → Lautheitsausgleich → Blenden → Limiter.
+//       `lufsVor` = Lautheit nach dem Pegel (gemessen + Pegel); ohne sie (Pegel von Hand) kein Ausgleich.
+export async function renderMaster(buf, m, gainDb, lufsVor) {
   const sr = buf.sampleRate, { start, end } = cutOf(m, buf.duration);
   const len = Math.max(1, Math.round((end - start) * sr));
   const oc = new (Off())(buf.numberOfChannels, len, sr);
   const src = oc.createBufferSource(); src.buffer = buf;
   const n = eqNodes(oc, m);
   const gain = oc.createGain(); gain.gain.value = dbGain(gainDb);
-  const fade = oc.createGain();
-  const dur = len / sr, fi = Math.min(m.fade_in || 0, dur / 2), fo = Math.min(m.fade_out || 0, dur / 2);
-  const kurve = (auf) => { const c = new Float32Array(256); for (let k = 0; k < 256; k++) { const x = k / 255; c[k] = Math.sin(Math.PI / 2 * (auf ? x : 1 - x)); } return c; };
-  if (fi > 0) fade.gain.setValueCurveAtTime(kurve(true), 0, fi);
-  if (fo > 0) fade.gain.setValueCurveAtTime(kurve(false), Math.max(fi, dur - fo), Math.min(fo, dur - fi));
-  src.connect(n.input); n.output.connect(gain); gain.connect(fade); fade.connect(oc.destination);
+  src.connect(n.input); n.output.connect(gain); gain.connect(oc.destination);
   src.start(0, start);
   const out = await oc.startRendering();
+  const dyn = dynamik(out, m);
+  let ausgleich = 0;
+  if (dyn && lufsVor != null) {
+    ausgleich = Math.round(Math.max(0, Math.min(DYN_AUSGLEICH, lufsVor - await measureLufs(out, {}))) * 100) / 100;
+    if (ausgleich) { const k = dbGain(ausgleich); for (let c = 0; c < out.numberOfChannels; c++) { const d = out.getChannelData(c); for (let i = 0; i < d.length; i++) d[i] *= k; } }
+  }
+  blenden(out, m.fade_in || 0, m.fade_out || 0);
   limit(out, MASTER_LIMIT_DB);
+  out.dyn = dyn; out.ausgleich = ausgleich;
   return out;
 }
 
@@ -287,7 +392,8 @@ export async function masterAudio(buf, master, lufsCache) {
     if (lufsCache) lufsCache.set(lk, lufs);
     gain = autoGain(lufs, m.ziel);
   }
-  const ab = await renderMaster(buf, m, gain);
+  const ab = await renderMaster(buf, m, gain, lufs == null ? null : lufs + gain);
   const { start, end } = cutOf(m, buf.duration);
-  return { blob: wavBlob(ab), peaks: peaksOf(ab), dur: ab.duration, gain: Math.round(gain * 100) / 100, lufs, start, end, settings: m };
+  return { blob: wavBlob(ab), peaks: peaksOf(ab), dur: ab.duration, gain: Math.round(gain * 100) / 100, lufs, start, end, settings: m,
+    dyn: ab.dyn, ausgleich: ab.ausgleich };
 }
