@@ -352,6 +352,12 @@
       <label class="ms-k" for="msFadeIn"><span>Einblenden <b id="msFadeInV"></b></span><input id="msFadeIn" type="range" min="0" max="10" step="0.1"></label>
       <label class="ms-k" for="msFadeOut"><span>Ausblenden <b id="msFadeOutV"></b></span><input id="msFadeOut" type="range" min="0" max="15" step="0.1"></label>
     </div>
+    <p class="ms-dyn-kopf">🎛 Dynamik <small class="sub">greift nur, wo es nötig ist — die Lautheit bleibt beim Ziel</small></p>
+    <div class="ms-knobs ms-dyn">
+      <label class="ms-k" for="msHaerte"><span>KI-Härte <b id="msHaerteV"></b></span><input id="msHaerte" type="range" min="0" max="10" step="0.5"><small class="sub">dynamischer EQ bei 3 kHz — greift nur, wenn es hart wird</small><small id="msHaerteGr" class="sub ms-gr"></small></label>
+      <label class="ms-k" for="msZisch"><span>De-Esser <b id="msZischV"></b></span><input id="msZisch" type="range" min="0" max="10" step="0.5"><small class="sub">nimmt Zischlaute bei 7 kHz zurück</small><small id="msZischGr" class="sub ms-gr"></small></label>
+      <label class="ms-k" for="msKomp"><span>Kompressor <b id="msKompV"></b></span><input id="msKomp" type="range" min="0" max="10" step="0.5"><small class="sub">hält den Mix sanft zusammen (2:1)</small><small id="msKompGr" class="sub ms-gr"></small></label>
+    </div>
     <details id="msEqBox" class="ms-eq">
       <summary>🎚 Equalizer <span id="msEqSum" class="sub small"></span></summary>
       <p class="sub small">Punkte ziehen: links/rechts = Frequenz, hoch/runter = Pegel, Mausrad oder zwei Finger = Breite. Doppelklick auf die Kurve setzt ein neues Band. Grau dahinter: das Spektrum des Tracks.</p>
