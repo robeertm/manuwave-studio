@@ -58,7 +58,7 @@ try:
 except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.20.0"
+BRIDGE_VERSION = "3.21.0"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
@@ -1100,7 +1100,7 @@ WM_MAGIC = "4e4601"
 WM_STRENGTH = 3
 AUFBEREITET_V = 2       # Fassung der Archiv-Aufbereitung (adeclip wenn beschnitten + leises Zeichen + 24 Bit)
 TAGS_VERSION = 1
-CAPS = "settings,export,cover,verify,nachruesten,archiv,master,loeschen,paket,web,master_merken,midi,weiter,analyse,writer"
+CAPS = "settings,export,cover,verify,nachruesten,archiv,master,loeschen,paket,web,master_merken,midi,weiter,analyse,writer,presets"
 
 
 def caps_for(cfg: dict) -> str:
@@ -2533,6 +2533,42 @@ MASTER_RANGES = {"bass": (-12.0, 12.0), "tone": (-6.0, 6.0), "treble": (-12.0, 1
 MASTER_DEFAULT = {"bass": 0.0, "tone": 0.0, "treble": 0.0, "soft": 2.0, "fade_in": 0.0}
 MASTER_LIMIT_DB = -1.5      # Spitzen-Grenze: auch ein MP3 bleibt beim Abspielen unter 0 dBFS
 MASTER_TARGET_LUFS = -14.0  # Lautheit wie bei den großen Streamingdiensten — lauter wird dort ohnehin leiser gedreht
+# 3.27: Lautheitsziel wählbar — Streaming −14, leise −16, Club −9 (wie ZIELE in mastering.js)
+ZIELE = {"streaming": -14.0, "leise": -16.0, "club": -9.0}
+EQ_BUTTER4 = (0.5411961, 1.3065630)        # Hoch-/Tiefpass 4. Ordnung = zwei Butterworth-Stufen
+MONO_BASS, BREITE = (60, 200), (50, 150)
+
+
+# 3.27: Equalizer — bis zu 8 Bänder hinter den Schnellreglern (wie eqClean in mastering.js)
+EQ_TYPES = {"lc": "highpass", "ls": "lowshelf", "pk": "peaking", "hs": "highshelf", "hc": "lowpass"}
+EQ_MAX, EQ_F, EQ_G, EQ_Q = 8, (20, 20000), (-12.0, 12.0), (0.3, 8.0)
+
+
+def clean_eq(raw) -> list:
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for b in raw[:EQ_MAX]:
+        if not isinstance(b, dict) or b.get("t") not in EQ_TYPES:
+            continue
+        f, g, q = b.get("f"), b.get("g", 0), b.get("q", 1)
+        if not isinstance(f, (int, float)) or isinstance(f, bool) or not math.isfinite(f):
+            continue
+        f = int(round(max(EQ_F[0], min(EQ_F[1], f))))
+        g = g if isinstance(g, (int, float)) and not isinstance(g, bool) and math.isfinite(g) else 0
+        q = q if isinstance(q, (int, float)) and not isinstance(q, bool) and math.isfinite(q) else 1
+        t = b["t"]
+        if t in ("lc", "hc"):
+            out.append({"t": t, "f": f})
+            continue
+        g = round(max(EQ_G[0], min(EQ_G[1], float(g))), 1)
+        if g == 0:
+            continue
+        if t == "pk":
+            out.append({"t": t, "f": f, "g": g, "q": round(max(EQ_Q[0], min(EQ_Q[1], float(q))), 2)})
+        else:
+            out.append({"t": t, "f": f, "g": g})
+    return out
 
 
 def clean_master(raw):
@@ -2547,9 +2583,80 @@ def clean_master(raw):
     for k in ("start", "end"):
         if num(raw.get(k)) and raw[k] >= 0:
             m[k] = round(float(raw[k]), 3)
+    eq = clean_eq(raw.get("eq"))
+    if eq:
+        m["eq"] = eq
+    mb, br = raw.get("mono_bass"), raw.get("breite")
+    if num(mb) and mb >= MONO_BASS[0]:
+        m["mono_bass"] = int(round(min(MONO_BASS[1], mb)))
+    if num(br) and int(round(br)) != 100:
+        m["breite"] = int(round(max(BREITE[0], min(BREITE[1], br))))
+    if raw.get("ziel") in ZIELE and raw.get("ziel") != "streaming":
+        m["ziel"] = raw["ziel"]
     if raw.get("off") is True:
         m["off"] = True
     return m
+
+
+# 3.27: Mastering-Presets — liegen hier (bridge.json), damit sie für jeden Browser und jeden Export ohne Browser gelten.
+# Ein Preset ist ein ganzer Klang: Schnellregler, EQ und Blenden — nie Ausschnitt oder Pegel (die gehören zum Track).
+PRESET_KEYS = ("bass", "tone", "treble", "soft", "fade_in", "fade_out", "eq", "mono_bass", "breite", "ziel")
+PRESET_MAX = 40
+
+
+def preset_klang(m) -> dict:
+    m = clean_master(m) or {}
+    return {k: m[k] for k in PRESET_KEYS if k in m}
+
+
+def clean_presets(raw) -> list:
+    out, ids = [], set()
+    for p in (raw if isinstance(raw, list) else [])[:PRESET_MAX]:
+        if not isinstance(p, dict):
+            continue
+        pid = str(p.get("id") or "")[:24]
+        name = re.sub(r"\s+", " ", str(p.get("name") or "")).strip()[:40]
+        if not re.fullmatch(r"[a-z0-9]{4,24}", pid) or not name or pid in ids:
+            continue
+        ids.add(pid)
+        out.append({"id": pid, "name": name, "fav": p.get("fav") is True, "m": preset_klang(p.get("m"))})
+    return out
+
+
+def master_vorgabe(cfg) -> dict:
+    """Der Klang, den neue Titel bekommen: das als Standard gewählte Preset, sonst nichts (= alte Vorgabe)."""
+    v = cfg.get("master_vorgabe") or ""
+    if v == "mein_sound":
+        return (mein_sound() or {}).get("m") or {}
+    return next((p["m"] for p in clean_presets(cfg.get("master_presets")) if p["id"] == v), {})
+
+
+_mein_sound_cache = {"at": 0.0, "wert": None}
+
+
+def mein_sound():
+    """„Mein Sound“: der Median deiner Mastering-Regler über alle Titel im Archiv, die du selbst gemastert hast."""
+    if time.time() - _mein_sound_cache["at"] < 300:
+        return _mein_sound_cache["wert"]
+    werte = {k: [] for k in ("bass", "tone", "treble", "soft", "fade_in", "fade_out")}
+    n = 0
+    for root, dirs, files in os.walk(RENDERS):
+        dirs[:] = [x for x in dirs if not x.startswith("_")]
+        for fn in files:
+            if not fn.endswith(".json"):
+                continue
+            m = clean_master(_read_json(os.path.join(root, fn)).get("master"))
+            if not m or m.get("off"):
+                continue
+            n += 1
+            for k in werte:
+                werte[k].append(m.get(k, 0.0))
+    wert = None
+    if n >= 3:
+        med = lambda xs: sorted(xs)[len(xs) // 2] if len(xs) % 2 else sum(sorted(xs)[len(xs) // 2 - 1:len(xs) // 2 + 1]) / 2  # noqa: E731
+        wert = {"n": n, "m": {k: round(med(v) * 2) / 2 for k, v in werte.items() if v and med(v) != 0}}
+    _mein_sound_cache.update(at=time.time(), wert=wert)
+    return wert
 
 
 def _wav_frames(path: str):
@@ -2590,7 +2697,7 @@ def master_settings(path: str, given) -> dict:
     sonst die Vorgabe (weich, Ende abschneiden, Lautheit automatisch)."""
     m = clean_master(given)
     if m is None:
-        m = clean_master((_read_json(path[:-4] + ".json")).get("master"))
+        m = clean_master((_read_json(path[:-4] + ".json")).get("master"))   # 3.27: auch die beim Entstehen gestempelte Vorgabe
     if m is None:
         m = dict(MASTER_DEFAULT)
         ae = auto_end(path)
@@ -2616,6 +2723,19 @@ def master_filters(m: dict, dur: float, gain=None) -> list:
         f.append("equalizer=f=3500:t=q:w=0.8:g=%.2f" % -m["soft"])
     if m.get("treble"):
         f.append("highshelf=f=8000:g=%.2f:t=s:w=1" % m["treble"])
+    for b in clean_eq(m.get("eq")):              # 3.27: Equalizer — gleiche RBJ-Biquads wie Web Audio
+        if b["t"] in ("lc", "hc"):                 # 4. Ordnung: zwei Butterworth-Stufen
+            f += ["%s=f=%d:poles=2:t=q:w=%.7f" % ("highpass" if b["t"] == "lc" else "lowpass", b["f"], q) for q in EQ_BUTTER4]
+        elif b["t"] == "pk":
+            f.append("equalizer=f=%d:t=q:w=%.2f:g=%.2f" % (b["f"], b["q"], b["g"]))
+        else:
+            f.append("%s=f=%d:g=%.2f:t=s:w=1" % ("lowshelf" if b["t"] == "ls" else "highshelf", b["f"], b["g"]))
+    mono, breite = m.get("mono_bass") or 0, (m.get("breite") or 100) / 100.0
+    if mono or breite != 1:                        # 3.27: Mitte/Seite — wie eqNodes im Browser (exakt linear)
+        f.append("pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0-0.5*c1")
+        if mono:
+            f += ["highpass=f=%d:poles=2:t=q:w=%.7f:c=FR" % (mono, q) for q in EQ_BUTTER4]
+        f.append("pan=stereo|c0=c0+%.6f*c1|c1=c0-%.6f*c1" % (breite, breite))
     if gain is not None:
         f.append("volume=%.2fdB" % gain)
         L = end - start
@@ -2672,7 +2792,7 @@ def export_track(cfg: dict, wav_path: str, fmt: str, rate: int, info: dict, tick
             if tick:
                 tick("Lautheit wird gemessen …")
             lufs = measure_lufs(ff, wav_path, master_filters(m, dur))
-            gain = max(MASTER_RANGES["gain"][0], min(MASTER_RANGES["gain"][1], MASTER_TARGET_LUFS - lufs))
+            gain = max(MASTER_RANGES["gain"][0], min(MASTER_RANGES["gain"][1], ZIELE.get(m.get("ziel"), MASTER_TARGET_LUFS) - lufs))
             mi["lufs_vorher"] = round(lufs, 1)
         chain = master_filters(m, dur, round(gain, 2))
         mi.update(gain=round(gain, 2), settings=m)
@@ -3837,9 +3957,18 @@ def archive(cfg, job, audio, meta) -> str:
     wav = os.path.join(folder, base + ".wav")
     with open(wav, "wb") as f:
         f.write(audio)
+    begleit = {"request": job.get("request"), "meta": job.get("meta"), "result": meta}
+    vorgabe = master_vorgabe(cfg)
+    if vorgabe:
+        m = dict(vorgabe)
+        ae = auto_end(wav)
+        if ae and "fade_out" not in m:
+            m["end"], m["fade_out"] = ae
+        elif ae:
+            m["end"] = ae[0]
+        begleit["master"] = m
     with open(os.path.join(folder, base + ".json"), "w", encoding="utf-8") as f:
-        json.dump({"request": job.get("request"), "meta": job.get("meta"), "result": meta},
-                  f, indent=2, ensure_ascii=False)
+        json.dump(begleit, f, indent=2, ensure_ascii=False)
     return wav
 
 
@@ -4788,6 +4917,8 @@ def delete_tracks(rels: list, cfg=None) -> dict:
 def settings_result(cfg: dict) -> dict:
     return {"rights": rights(cfg), "tools": tools_state(cfg), "version": BRIDGE_VERSION,
             "writer": writer_settings(cfg), "home": SHOWN_DIR,
+            "master": {"presets": clean_presets(cfg.get("master_presets")), "vorgabe": cfg.get("master_vorgabe") or "",
+                       "mein_sound": mein_sound()},
             "formats": [{"id": k, "name": v["name"], "ext": v["ext"], "lossless": k != "mp3"}
                         for k, v in FORMATS.items()]}
 
@@ -4818,6 +4949,14 @@ def tool_job(cfg: dict, srv, job: dict) -> None:
             log("Urheberangaben geändert")
         if "writer" in req:
             set_writer(cfg, req["writer"])
+        if isinstance(req.get("master_presets"), list):
+            with _cfg_lock:
+                cfg["master_presets"] = clean_presets(req["master_presets"])
+                v = str(req.get("master_vorgabe") or "")
+                ids = {p["id"] for p in cfg["master_presets"]} | {"mein_sound"}
+                cfg["master_vorgabe"] = v if v in ids else ""
+                save_config(cfg)
+            log("Mastering-Presets: %d, Standard: %s" % (len(cfg["master_presets"]), cfg["master_vorgabe"] or "—"))
         elif req.get("fresh"):
             writer_state(cfg, fresh=True)
         srv.result_json(jid, settings_result(cfg))

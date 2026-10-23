@@ -1,4 +1,5 @@
-import { MASTER_PRESETS, masterClean, masterKey, cutOf, autoEnd, masterDefault, decodeAudio, masterAudio } from "./mastering.js";
+import { MASTER_PRESETS, masterClean, masterKey, cutOf, autoEnd, masterDefault, decodeAudio, masterAudio, presetKlang, PRESET_KEYS, zielLufs } from "./mastering.js";
+import { eqWidget } from "./eq.js";
 import { GENRE_GROUPS, familyOf, roughOf, tempoOf, composeIdea, randomGenre } from "./genres.js";
 import { pickBox } from "./auswahl.js";
 /* Manuwave Studio 3 — eine Musik-App, nur lokale KI.
@@ -244,6 +245,7 @@ function renderBridge() {
     `🎵 Musik: <b>ACE-Step 1.5</b>, Sprachmodell ${esc(i.lm || "?")}, Modus ${esc(i.mode || "?")}.`;
   else t.innerHTML = "🟡 Gekoppelt, aber der Mac meldet sich gerade nicht (schläft? Dienst aus?). Aufträge warten, bis er wieder da ist.";
   $("#unpairBtn").hidden = !paired;
+  if (typeof presetsZeichnen === "function" && $("#msPresetList")) presetsZeichnen();
   // 3.26: Ordner und Brücke so, wie sie auf DIESEM Rechner heißen (Kunden: ~/ManuwaveStudio)
   if (i.home) $("#rendersDir").textContent = i.home.replace(/\\$/, "") + (i.home.includes("\\") ? "\\renders" : "/renders");
   if (i.script) $("#pairCmd").textContent = `${/\\/.test(i.script) ? "python" : "/usr/bin/python3"} ${i.script} --pair`;
@@ -1092,6 +1094,8 @@ async function collect(p, j) {
     peaks: await computePeaks(blob), folder: p.folder || "",
     wm: rm.wasserzeichen || "", coverState: rm.cover === "folgt" ? "pending" : "",
   };
+  const klang = vorgabeKlang();
+  if (klang) { try { rec.master = masterClean(masterDefault(await decodeAudio(await blob.arrayBuffer()), klang)); rec.masterVorgabe = mp.vorgabe; } catch (e) {} }
   // Das Cover kommt NACH dem Track (der Mac malt es, während man schon hört)
   if (j.has_cover) { try { Object.assign(rec, { cover: await fetchBlob(`/api/render/${p.id}/cover`), coverState: "done", coverAt: Date.now() }); } catch (e) {} }
   await libPut(rec);
@@ -2274,6 +2278,8 @@ function paintGain() {
   $("#msGain").value = msGain();
   $("#msGainV").textContent = sgnDb(msGain()) + (ms.m.gain == null ? " (auto)" : "");
   $("#msAuto").setAttribute("aria-pressed", String(ms.m.gain == null)); $("#msAuto").classList.toggle("on", ms.m.gain == null);
+  $("#msAuto").textContent = `Auto · ${String(zielLufs(ms.m.ziel)).replace("-", "−")} LUFS`;
+  $$(".ms-ziel [data-ziel]").forEach(b => { const on = (ms.m.ziel || "streaming") === b.dataset.ziel; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
 }
 function paintMaster() {
   const m = ms.m;
@@ -2284,14 +2290,24 @@ function paintMaster() {
   $("#msSoftV").textContent = (m.soft || 0) ? `−${(m.soft).toFixed(1).replace(".", ",")} dB` : "aus";
   paintGain();
   $("#msFadeInV").textContent = `${(m.fade_in || 0).toFixed(1).replace(".", ",")} s`;
+  $("#msMono").value = m.mono_bass >= 60 ? m.mono_bass : 40;
+  $("#msMonoV").textContent = m.mono_bass >= 60 ? `${m.mono_bass} Hz` : "aus";
+  $("#msBreite").value = m.breite || 100;
+  $("#msBreiteV").textContent = `${m.breite || 100} %`;
   $("#msFadeOutV").textContent = `${(m.fade_out || 0).toFixed(1).replace(".", ",")} s`;
   $("#msStartTxt").textContent = fmtCut(msStart());
   $("#msEndTxt").textContent = `${fmtCut(msEnd())}${msEnd() < msLen() - 0.05 ? ` (−${(msLen() - msEnd()).toFixed(1).replace(".", ",")} s)` : ""}`;
   $("#msA").classList.toggle("on", ms.ab === "A"); $("#msA").setAttribute("aria-pressed", String(ms.ab === "A"));
   $("#msB").classList.toggle("on", ms.ab === "B"); $("#msB").setAttribute("aria-pressed", String(ms.ab === "B"));
   if (!ms.playing) $("#msTime").textContent = `${fmtCut(ms.pos)} / ${fmtCut(msLen())}`;
+  const mc = masterClean(m);
   $$(".ms-presets [data-preset]").forEach(b => { const p = MASTER_PRESETS[b.dataset.preset];
-    b.classList.toggle("on", Object.keys(p).every(k => (m[k] || 0) === p[k])); });
+    const gleich = Object.keys(p).every(k => k === "eq" ? JSON.stringify(mc.eq || []) === JSON.stringify(p.eq) : k === "breite" ? (m.breite || 100) === p.breite : (m[k] || 0) === p[k]);
+    b.classList.toggle("on", gleich && (p.eq || !(mc.eq || []).length)); });
+  $$("#msOwnPresets [data-own]").forEach(b => { const p = eigenesPreset(b.dataset.own); b.classList.toggle("on", !!p && klangGleich(m, p.m)); });
+  const eqn = (masterClean(m).eq || []).length;
+  $("#msEqSum").textContent = eqn ? `· ${eqn} ${eqn === 1 ? "Band" : "Bänder"}` : "· aus";
+  if (msEq) msEq.zeichnen();
   paintMasterWave(ms.playing ? msNow() : ms.pos);
 }
 
@@ -2453,7 +2469,7 @@ async function loadMaster(id) {
     }
     if (run !== ms.run) return;
     ms.buf = buf;
-    ms.m = rec.master ? { ...MS_ZERO, ...rec.master } : masterDefault(buf);
+    ms.m = rec.master ? { ...MS_ZERO, ...rec.master } : masterDefault(buf, vorgabeKlang());
     if (rec.master) ms.savedJson = JSON.stringify(masterClean(rec.master, buf.duration));
     $("#msSavedTxt").textContent = rec.master ? "✓ deine Einstellungen — so klingt der Track auch in der Bibliothek und im Export"
       : "Vorschlag (weich, Ende gekürzt, Lautheit automatisch) — sobald du etwas änderst, gilt es auch in der Bibliothek";
@@ -2470,14 +2486,105 @@ function undoMaster() {
   $("#msUndo").disabled = !ms.hist.length;
   msChanged();
 }
+// Die Liste liegt auf dem Mac (bridge.json, Einstellungs-Auftrag); hier nur die zuletzt gelesene Kopie.
+const LS_PRESETS = "nf_master_presets";
+let msEq = null;
+const mp = (() => { try { return JSON.parse(localStorage.getItem(LS_PRESETS) || "null") || {}; } catch (e) { return {}; } })();
+mp.presets = Array.isArray(mp.presets) ? mp.presets : []; mp.vorgabe = mp.vorgabe || ""; mp.mein = mp.mein || null;
+function presetsUebernehmen(m) {
+  if (!m || !Array.isArray(m.presets)) return;
+  mp.presets = m.presets; mp.vorgabe = m.vorgabe || ""; mp.mein = m.mein_sound || null;
+  try { localStorage.setItem(LS_PRESETS, JSON.stringify(mp)); } catch (e) {}
+  presetsZeichnen(); paintMaster();
+}
+const MEIN = "mein_sound";
+function eigenesPreset(id) {
+  if (id === MEIN) return mp.mein ? { id: MEIN, name: `Mein Sound`, m: mp.mein.m, fav: true } : null;
+  return mp.presets.find(p => p.id === id) || null;
+}
+// Der Klang für neue Titel — null = alte Vorgabe (weich, wie bisher)
+function vorgabeKlang() { const p = mp.vorgabe ? eigenesPreset(mp.vorgabe) : null; return p ? p.m : null; }
+const klangGleich = (a, b) => JSON.stringify(presetKlang({ ...MS_ZERO, ...a })) === JSON.stringify(presetKlang({ ...MS_ZERO, ...b }));
+function presetAnwenden(p, eingebaut = false) {
+  if (!ms.m || !p) return;
+  msBefore(true);
+  for (const k of PRESET_KEYS) {
+    if (k === "eq") ms.m.eq = JSON.parse(JSON.stringify(p.m.eq || []));
+    else if (eingebaut && !(k in p.m)) continue;
+    else if (k === "ziel" || k === "mono_bass" || k === "breite") { if (p.m[k] == null || p.m[k] === 0 || (k === "breite" && p.m[k] === 100)) delete ms.m[k]; else ms.m[k] = p.m[k]; }
+    else ms.m[k] = p.m[k] || 0;
+  }
+  msChanged();
+}
+function presetsZeichnen() {
+  const own = [...(mp.mein ? [eigenesPreset(MEIN)] : []), ...mp.presets.filter(p => p.fav)];
+  $("#msOwnPresets").innerHTML = own.map(p => `<button class="ghost btn-s" type="button" data-own="${esc(p.id)}" title="${p.id === MEIN ? `Der Median deiner Regler aus ${mp.mein.n} gemasterten Titeln` : "Dein Preset"}">${p.id === MEIN ? "🎚" : "⭐"} <span translate="no">${esc(p.name)}</span></button>`).join("");
+  const sel = $("#msVorgabe");
+  sel.innerHTML = `<option value="">Vorschlag (weich, wie bisher)</option>` + (mp.mein ? `<option value="${MEIN}">🎚 Mein Sound (aus ${mp.mein.n} Titeln)</option>` : "") +
+    mp.presets.map(p => `<option value="${esc(p.id)}">${p.fav ? "⭐ " : ""}${esc(p.name)}</option>`).join("");
+  sel.value = eigenesPreset(mp.vorgabe) ? mp.vorgabe : "";
+  sel.disabled = !macCan("presets");
+  const v = eigenesPreset(mp.vorgabe);
+  $("#msVorgabeTxt").textContent = `Standard für neue Titel: ${v ? v.name : "Vorschlag"}`;
+  $("#msPresetList").innerHTML = mp.presets.length ? mp.presets.map(p => `<li data-id="${esc(p.id)}"><span class="ms-pname" translate="no">${esc(p.name)}</span>
+    <span class="sub small">${presetBeschreibung(p.m)}</span>
+    <button class="ghost btn-s" type="button" data-act="anwenden">Anwenden</button>
+    <button class="ghost btn-s${p.fav ? " on" : ""}" type="button" data-act="fav" aria-pressed="${p.fav}" title="Favorit — steht oben bei den Voreinstellungen">⭐</button>
+    <button class="ghost btn-s" type="button" data-act="weg" aria-label="Preset löschen">✕</button></li>`).join("")
+    : `<li class="sub small">Noch keine eigenen Presets — stell einen Klang ein und speichere ihn oben unter einem Namen.</li>`;
+  $("#msPresetSave").disabled = !macCan("presets");
+  const hinweis = state.bridge.connected ? "Presets kommen mit dem Update der Brücke auf deinem Mac." : "Presets liegen auf dem Mac — er ist gerade nicht verbunden.";
+  if (!macCan("presets")) setMsg($("#msPresetMsg"), hinweis, "");
+  else if (/^Presets (kommen|liegen)/.test($("#msPresetMsg").dataset.msg || "")) setMsg($("#msPresetMsg"), "", "");   // Mac ist (wieder) da
+}
+function presetBeschreibung(m) {
+  const t = [];
+  if (m.bass) t.push(`Bässe ${m.bass > 0 ? "+" : ""}${m.bass}`);
+  if (m.tone) t.push(`Ton ${m.tone > 0 ? "+" : ""}${m.tone}`);
+  if (m.treble) t.push(`Höhen ${m.treble > 0 ? "+" : ""}${m.treble}`);
+  if (m.soft) t.push(`Weich ${m.soft}`);
+  if ((m.eq || []).length) t.push(`EQ ${m.eq.length}`);
+  return t.length ? t.map(x => `<span>${esc(x)}</span>`).join(" · ") : "<span>neutral</span>";
+}
+async function presetsSenden(liste, vorgabe, ok) {
+  if (!macCan("presets")) return setMsg($("#msPresetMsg"), "Dafür muss dein Mac verbunden sein (Brücke 3.21).", "err");
+  setMsg($("#msPresetMsg"), "speichere auf dem Mac …", "busy");
+  try {
+    const j = await macJob("settings", { master_presets: liste, master_vorgabe: vorgabe }, { timeoutMs: 45000 });
+    presetsUebernehmen((j.result || {}).master);
+    setMsg($("#msPresetMsg"), ok || "✓ gespeichert", "ok");
+  } catch (e) { setMsg($("#msPresetMsg"), "✗ " + e.message, "err"); presetsZeichnen(); }
+}
+function presetSpeichern() {
+  if (!ms.m) return setMsg($("#msPresetMsg"), "Erst einen Track zum Mastern wählen.", "err");
+  const name = $("#msPresetName").value.replace(/\s+/g, " ").trim().slice(0, 40);
+  if (!name) { $("#msPresetName").focus(); return setMsg($("#msPresetMsg"), "Gib dem Preset einen Namen.", "err"); }
+  const alt = mp.presets.find(p => p.name.toLowerCase() === name.toLowerCase());
+  const neu = { id: alt ? alt.id : Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, fav: alt ? alt.fav : true, m: presetKlang(ms.m) };
+  const liste = alt ? mp.presets.map(p => p.id === alt.id ? neu : p) : [...mp.presets, neu];
+  $("#msPresetName").value = "";
+  presetsSenden(liste, mp.vorgabe, alt ? `✓ „${name}“ überschrieben` : `✓ „${name}“ gespeichert — steht als Favorit oben`);
+}
+function presetListeKlick(e) {
+  const b = e.target.closest("[data-act]"); if (!b) return;
+  const id = b.closest("li").dataset.id, p = eigenesPreset(id); if (!p) return;
+  if (b.dataset.act === "anwenden") return presetAnwenden(p);
+  if (b.dataset.act === "fav") return presetsSenden(mp.presets.map(x => x.id === id ? { ...x, fav: !x.fav } : x), mp.vorgabe);
+  if (b.dataset.act === "weg") return presetsSenden(mp.presets.filter(x => x.id !== id), mp.vorgabe === id ? "" : mp.vorgabe, `✓ „${p.name}“ gelöscht`);
+}
 function bindMaster() {
   Object.entries(MS_KNOBS).forEach(([id, k]) => $("#" + id).addEventListener("input", (e) => {
     if (!ms.m) return;
     msBefore(); ms.m[k] = +e.target.value; msChanged();
   }));
   $("#msGain").addEventListener("input", (e) => { if (!ms.m) return; msBefore(); ms.m.gain = +e.target.value; msChanged(); });
+  // 3.27: Bass mono, Stereobreite, Lautheitsziel
+  $("#msMono").addEventListener("input", (e) => { if (!ms.m) return; msBefore(); const v = +e.target.value; if (v < 60) delete ms.m.mono_bass; else ms.m.mono_bass = v; msChanged(); });
+  $("#msBreite").addEventListener("input", (e) => { if (!ms.m) return; msBefore(); const v = +e.target.value; if (v === 100) delete ms.m.breite; else ms.m.breite = v; msChanged(); });
+  $$(".ms-ziel [data-ziel]").forEach(b => b.onclick = (e) => { e.preventDefault(); if (!ms.m) return; msBefore(true);
+    if (b.dataset.ziel === "streaming") delete ms.m.ziel; else ms.m.ziel = b.dataset.ziel; msChanged(); });
   $("#msAuto").onclick = () => { if (!ms.m) return; msBefore(true); delete ms.m.gain; msChanged(); };
-  $$(".ms-presets [data-preset]").forEach(b => b.onclick = () => { if (!ms.m) return; msBefore(true); Object.assign(ms.m, MASTER_PRESETS[b.dataset.preset]); msChanged(); });
+  $$(".ms-presets [data-preset]").forEach(b => b.onclick = () => presetAnwenden({ m: MASTER_PRESETS[b.dataset.preset] }, true));
   $("#msPlay").onclick = () => { if (!ms.buf) return; if (ms.playing) msStop(); else msPlay(); };
   const ab = (v) => { if (!ms.buf) return; ms.ab = v; paintMaster(); if (ms.playing) msPlay(msNow()); };
   $("#msA").onclick = () => ab("A"); $("#msB").onclick = () => ab("B");
@@ -2487,7 +2594,19 @@ function bindMaster() {
     setMsg($("#msMsg"), `✂︎ Ende bei ${fmtCut(ae[0])} — dahinter nur noch Klangrest`, "ok");
     msChanged(); };
   $("#msFull").onclick = () => { if (!ms.m) return; msBefore(true); delete ms.m.start; delete ms.m.end; msChanged(); };
-  $("#msReset").onclick = () => { if (!ms.buf) return; msBefore(true); ms.m = masterDefault(ms.buf); msChanged(); setMsg($("#msMsg"), "Vorschlag wiederhergestellt", ""); };
+  $("#msReset").onclick = () => { if (!ms.buf) return; msBefore(true); ms.m = masterDefault(ms.buf, vorgabeKlang()); msChanged(); setMsg($("#msMsg"), "Vorschlag wiederhergestellt", ""); };
+  // 3.27: Equalizer und eigene Presets
+  msEq = eqWidget({ canvas: $("#msEqCurve"), liste: $("#msEqBands"), getM: () => ms.m, getBuf: () => ms.buf,
+    vorher: msBefore, geaendert: (render = true) => msChanged(render) });
+  $("#msEqAdd").onclick = () => { if (!msEq.neu()) setMsg($("#msMsg"), "Höchstens 8 Bänder.", ""); };
+  $("#msEqClear").onclick = () => msEq.leeren();
+  $("#msEqBox").addEventListener("toggle", () => msEq.zeichnen());
+  $("#msPresetSave").onclick = presetSpeichern;
+  $("#msPresetName").addEventListener("keydown", (e) => { if (e.key === "Enter") presetSpeichern(); });
+  $("#msVorgabe").onchange = (e) => presetsSenden(mp.presets, e.target.value, "✓ Gilt ab jetzt für jeden neuen Titel");
+  $("#msPresetList").addEventListener("click", presetListeKlick);
+  $("#msOwnPresets").addEventListener("click", (e) => { const b = e.target.closest("[data-own]"); if (b) presetAnwenden(eigenesPreset(b.dataset.own)); });
+  presetsZeichnen();
   $("#msUndo").onclick = undoMaster;
   pickBox($("#msPick"), { en: window.MWS_LANG === "en", title: "Track zum Mastern" });
   $("#msPick").onchange = (e) => loadMaster(e.target.value);
@@ -2627,6 +2746,7 @@ function applySettings(res, fromMac = true) {
   }
   renderRightsPreview();
   if (fromMac) renderWriter(res.writer);
+  if (fromMac) presetsUebernehmen(res.master);
   const t = res.tools || {};
   const ok = (v) => v ? "✓" : "✗";
   $("#toolsLine").textContent = `Auf dem Mac: ffmpeg ${ok(t.ffmpeg)} · audiowmark ${ok(t.audiowmark)} · Wasserzeichen-Schlüssel ${t.key ? "✓" : "entsteht beim ersten Track"} · Bildmodell ${t.image_model || "✗ fehlt — den Installer noch einmal ausführen"}`;

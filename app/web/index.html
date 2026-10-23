@@ -315,16 +315,53 @@
       <button class="ghost btn-s" type="button" data-preset="hell">Klar</button>
       <button class="ghost btn-s" type="button" data-preset="club">Club</button>
       <button class="ghost btn-s" type="button" data-preset="neutral">Neutral</button>
+      <span id="msOwnPresets" class="ms-own"></span>
     </div>
+    <div class="ms-presets ms-genre" role="group" aria-label="Startkurven">
+      <span class="sub small">Startkurven:</span>
+      <button class="ghost btn-s" type="button" data-preset="fundament" title="Dein Klang sauberer: Rumpelfilter, Fundament bei 55 Hz, Luft, Bass mono">Fundament &amp; Luft</button>
+      <button class="ghost btn-s" type="button" data-preset="techno">Melodic Techno</button>
+      <button class="ghost btn-s" type="button" data-preset="trance">Trance</button>
+      <button class="ghost btn-s" type="button" data-preset="deephouse">Deep House</button>
+      <button class="ghost btn-s" type="button" data-preset="vocalpop">Pop mit Gesang</button>
+    </div>
+    <details id="msPresetBox" class="ms-preset-box">
+      <summary>⭐ Meine Presets · <span id="msVorgabeTxt">Standard für neue Titel: Vorschlag</span></summary>
+      <div class="row wrap ms-preset-save">
+        <input id="msPresetName" type="text" maxlength="40" placeholder="Name, z. B. „Mein Club-Sound“" aria-label="Name für das neue Preset">
+        <button id="msPresetSave" class="primary btn-s" type="button">＋ Aktuellen Klang speichern</button>
+        <span id="msPresetMsg" class="status"></span>
+      </div>
+      <label class="lbl ms-vorgabe">Standard für neue Titel
+        <select id="msVorgabe" aria-label="Standard für neue Titel"></select>
+        <small class="sub">Jeder neu produzierte Titel bekommt diesen Klang sofort — in der Bibliothek, im Export und auf dem Mac. Bisherige Titel bleiben, wie sie sind.</small>
+      </label>
+      <ul id="msPresetList" class="ms-preset-list"></ul>
+    </details>
     <div class="ms-knobs">
       <label class="ms-k" for="msBass"><span>Bässe <b id="msBassV"></b></span><input id="msBass" type="range" min="-12" max="12" step="0.5"></label>
       <label class="ms-k" for="msTone"><span>Tonfarbe <b id="msToneV"></b></span><input id="msTone" type="range" min="-6" max="6" step="0.5"><small class="sub">warm ↔ hell</small></label>
       <label class="ms-k" for="msTreble"><span>Höhen <b id="msTrebleV"></b></span><input id="msTreble" type="range" min="-12" max="12" step="0.5"></label>
       <label class="ms-k" for="msSoft"><span>Weich <b id="msSoftV"></b></span><input id="msSoft" type="range" min="0" max="8" step="0.5"><small class="sub">nimmt die Härte bei 3,5 kHz</small></label>
       <label class="ms-k" for="msGain"><span>Lautheit <b id="msGainV"></b></span><input id="msGain" type="range" min="-24" max="12" step="0.5"><button id="msAuto" class="ghost btn-s" type="button" aria-pressed="true">Auto · −14 LUFS</button></label>
+      <div class="ms-k"><span>Lautheitsziel</span>
+        <span class="seg ms-ziel" role="group" aria-label="Lautheitsziel"><button type="button" data-ziel="streaming" title="die großen Streamingdienste">Streaming −14</button><button type="button" data-ziel="leise" title="Dienste, die leiser normalisieren">Leise −16</button><button type="button" data-ziel="club" title="DJ und Club — keine Normalisierung">Club −9</button></span>
+        <small class="sub">wohin der Titel geht — die Lautheit „Auto“ richtet sich danach</small></div>
+      <label class="ms-k" for="msMono"><span>Bass mono unter <b id="msMonoV"></b></span><input id="msMono" type="range" min="40" max="200" step="10"><small class="sub">macht tiefe Töne mittig — für Club und Lautsprecher</small></label>
+      <label class="ms-k" for="msBreite"><span>Stereobreite <b id="msBreiteV"></b></span><input id="msBreite" type="range" min="50" max="150" step="1"><small class="sub">schmaler ↔ breiter</small></label>
       <label class="ms-k" for="msFadeIn"><span>Einblenden <b id="msFadeInV"></b></span><input id="msFadeIn" type="range" min="0" max="10" step="0.1"></label>
       <label class="ms-k" for="msFadeOut"><span>Ausblenden <b id="msFadeOutV"></b></span><input id="msFadeOut" type="range" min="0" max="15" step="0.1"></label>
     </div>
+    <details id="msEqBox" class="ms-eq">
+      <summary>🎚 Equalizer <span id="msEqSum" class="sub small"></span></summary>
+      <p class="sub small">Punkte ziehen: links/rechts = Frequenz, hoch/runter = Pegel, Mausrad oder zwei Finger = Breite. Doppelklick auf die Kurve setzt ein neues Band. Grau dahinter: das Spektrum des Tracks.</p>
+      <canvas id="msEqCurve" class="ms-eq-curve" height="200" aria-label="Equalizer-Kurve"></canvas>
+      <div id="msEqBands" class="ms-eq-bands"></div>
+      <div class="row wrap">
+        <button id="msEqAdd" class="ghost btn-s" type="button">＋ Band</button>
+        <button id="msEqClear" class="ghost btn-s" type="button">Alle Bänder entfernen</button>
+      </div>
+    </details>
     <p class="sub small">Dein Mac rechnet beim Export genau diese Kette — dazu einen Limiter (−1,5 dB), damit auch ein MP3 nicht übersteuert. Ältere Tracks mit abgeschnittenen Spitzen repariert er von selbst, vor dem Wasserzeichen.</p>
     <div class="modal-actions">
       <span id="msMsg" class="status" role="status"></span>

@@ -297,6 +297,30 @@ body.has-now #app{padding-bottom:110px}
 .ms-k b{color:var(--ink);font-variant-numeric:tabular-nums;font-weight:600}
 .ms-k small{font-size:11.5px}
 .ms-k #msAuto{justify-self:start}
+/* 3.27: eigene Presets + Equalizer */
+.ms-own{display:contents}
+.ms-knobs .seg.ms-ziel{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) minmax(0,1fr);width:100%;flex-wrap:nowrap}
+.ms-knobs .seg.ms-ziel button{width:100%;padding:6px 2px;font-size:12px;white-space:nowrap;text-align:center;overflow:hidden;text-overflow:ellipsis}
+.ms-preset-box,.ms-eq{margin:0 0 12px;border:1px solid var(--line);border-radius:12px;background:var(--panel2);padding:8px 12px}
+.ms-preset-box>summary,.ms-eq>summary{cursor:pointer;color:var(--sub);font-size:13.5px;padding:2px 0}
+.ms-preset-box[open]>summary,.ms-eq[open]>summary{color:var(--ink);margin-bottom:8px}
+.ms-preset-save{gap:8px;margin-bottom:10px}
+.ms-preset-save input{flex:1 1 220px;min-width:0}
+.ms-vorgabe{display:grid;gap:4px;margin:0 0 10px;font-size:13px;color:var(--sub)}
+.ms-vorgabe select{max-width:420px}
+.ms-preset-list{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.ms-preset-list li{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--line);border-radius:10px;background:var(--bg2)}
+.ms-pname{font-weight:600;color:var(--ink);min-width:0;overflow-wrap:anywhere}
+.ms-preset-list li .sub{flex:1 1 160px;min-width:0}
+.ms-preset-list button.on{border-color:var(--neon);color:var(--ink)}
+.ms-eq-curve{display:block;width:100%;height:200px;border:1px solid var(--line);border-radius:10px;background:var(--bg2);touch-action:none;cursor:crosshair}
+.ms-eq-bands{display:grid;gap:6px;margin:10px 0}
+.ms-eq-band{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12.5px;color:var(--sub);padding:6px 8px;border:1px solid var(--line);border-radius:10px;background:var(--bg2)}
+.ms-eq-band>b{width:1.4em;height:1.4em;display:grid;place-items:center;border-radius:50%;background:var(--neon);color:#06121a;font-size:11px}
+.ms-eq-band label{display:inline-flex;align-items:center;gap:4px}
+.ms-eq-band input{width:5.6em;padding:4px 6px}
+.ms-eq-band select{width:auto;padding:4px 6px}
+.ms-eq-band [data-weg]{margin-left:auto}
 .exp-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .ms-view .modal-actions{flex-wrap:wrap;row-gap:8px}
 .ms-view .modal-actions .status{flex:1 1 100%;order:-1}
