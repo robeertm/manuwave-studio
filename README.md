@@ -124,7 +124,7 @@ when the tab is in the background, and the offline render is sample-identical to
 
 | | macOS | Windows / Linux |
 |---|---|---|
-| Hardware | Apple silicon (M1–M4), 16 GB RAM recommended (8 GB works with smaller models) | NVIDIA GPU, RTX 20xx or newer, 8 GB VRAM; driver ≥ 550 |
+| Hardware | Apple silicon, M1 or newer, 16 GB RAM recommended (8 GB works with smaller models) | NVIDIA GPU, RTX 20xx or newer, 8 GB VRAM; driver ≥ 550 |
 | System | macOS 14 or newer | Windows 10/11 · Ubuntu/Debian x86_64 |
 | Disk | about 25 GB (+1 GB for the optional quality check, +1.5 GB for the optional MIDI image, +2.6 GB — 5.3 GB with `--xl` — for the optional loop machine AI) | about 25 GB (+1 GB quality check, +1.5 GB MIDI image, +2.6/5.3 GB loop machine AI, all optional) |
 | Status | ✅ tested | ⚠️ experimental — built and checked in CI, not yet run on real NVIDIA hardware by the maintainer |
