@@ -2,7 +2,7 @@ name: CI
 on: [push, pull_request]
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04            # ubuntu-latest (26.04) no longer ships Python 3.9, which the bridge must keep supporting
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }      # the secret scan reads the whole pushed range; a shallow clone lacks its first commit
