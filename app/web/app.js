@@ -3264,7 +3264,8 @@ function continueFrom(rec) {
 }
 
 // ---- Würfel (3.8): schreibt eine ausführliche Idee passend zur Auswahl und erzeugt SOFORT ----
-// mit einem viel filigraneren Text, alles per Zufall". Gewählt bleibt gewählt (Richtungen, Gesang,
+// Der Würfel erstellt anhand der Vorauswahl neue Musik, mit einem deutlich ausführlicheren Text, alles per Zufall.
+// Gewählt bleibt gewählt (Richtungen, Gesang,
 // Sprache, Länge, Versionen, Stimmung); ist keine Richtung gewählt, zieht der Würfel eine — ohne die
 // Auswahl anzufassen, damit der nächste Wurf wieder frei ist.
 function rollDice() {

@@ -77,7 +77,7 @@ HOST = os.environ.get("HOST", "0.0.0.0")      # 3.11: local install → 127.0.0.
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, "web")
 
-APP_VERSION = "3.29.0"
+APP_VERSION = "3.29.1"
 BRIDGE_FILE = os.path.join(ROOT, "bridge", "manuwave_bridge.py")
 # Bridges installed by earlier versions fetch their update under the file name they were installed with.
 BRIDGE_PATHS = ("/bridge/manuwave_bridge.py", "/bridge/" + ("neon" + "forge") + "_bridge.py")   # names-ok
@@ -1562,7 +1562,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 class Server(socketserver.ThreadingTCPServer):
     # 🔴 3.24.1: on Windows SO_REUSEADDR does NOT mean "skip TIME_WAIT" (Windows does that anyway), but
-    #    "a second process may additionally bind the same port" — without error. Two servers on one port
+    #    lets a second process additionally bind the same port without any error. Two servers on one port
     #    split browser and bridge: jobs arrived at one, the bridge asked the other.
     allow_reuse_address = os.name != "nt"
     daemon_threads = True

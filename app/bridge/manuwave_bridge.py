@@ -533,7 +533,7 @@ def _collapse_repeats(brief: dict) -> None:
     brief["lyrics"] = "\n\n".join(parts)
 
 
-# "Sounds technical or oddly digital" (user feedback, 10.10.2026): briefs from the small model
+# Listening tests found the output sounding technical or oddly digital (10.10.2026): briefs from the small model
 # carried mix craft and harshness as sound wishes ("tape saturation, parallel drum
 # compression, distorted stab layers, loud club master"). The music AI takes that literally.
 # Unless something like that is explicitly in the task, it gets removed from the tags.
@@ -1050,7 +1050,7 @@ class Engine:
 # =============================================================================
 # Soft ending
 # =============================================================================
-# "ends of songs often cut off" (user feedback, 10.10.2026) — measured: on 7 of 13 tracks the level dropped
+# Song endings were often cut off (listening tests, 10.10.2026) — measured: on 7 of 13 tracks the level dropped
 # from full volume to silence within 0.1–0.2 s (often followed by seconds of silence,
 # because the music model's language model stops before the target length). Earlier songs,
 # by contrast, faded out over 2–10 s. A hard cut in the last 12 s is therefore faded out smoothly
@@ -1110,10 +1110,8 @@ def smooth_end(audio: bytes, fade_s: float = 4.0, tail_s: float = 0.8):
 # =============================================================================
 # Finishing (since 3.2): author, watermark, tags, cover, export
 # =============================================================================
-# "every generated song should get a cover … all songs must be tagged and get a copy-protection
-# watermark, every song generated on my machine must carry my copyright" — and: "at some point I want to
-# publish the program, so things like copyright etc. should be configurable"
-# (user feedback, 12.10.2026).
+# Every generated song gets a cover, tags, a copy-protection watermark and the owner's copyright notice.
+# Because the program is distributed, rights details (copyright etc.) must be configurable.
 #
 # 🔑 That is why there is NO name in the code. The details belong to THIS Mac (bridge.json →
 #    "rights"), can be set in Manuwave Studio under ⚙️, and on first run the bridge enters the
@@ -1130,8 +1128,8 @@ WM_KEY = os.path.join(DIR, "wasserzeichen.key")      # 0600 — without it no ma
 WM_REG = os.path.join(DIR, "wasserzeichen.json")     # ID → title, file, rights holder
 ORIG_DIR = os.path.join(RENDERS, "_original_vor_wasserzeichen")
 WM_MAGIC = "4e4601"                                  # "NF", version 1
-# 🔴 3.5: Strength 10 (audiowmark default) was only 22 dB below the music in the 1.5–3 kHz range — the user
-#    heard "crackling … sounds more like a decoding error, even in quiet passages". Strength 3: 32 dB below,
+# 🔴 3.5: Strength 10 (audiowmark default) was only 22 dB below the music in the 1.5–3 kHz range — audible
+#    as crackling that sounds like a decoding error, even in quiet passages. Strength 3: 32 dB below,
 #    and still readable as measured after MP3 320/128, after +10 dB bass/+9 dB treble + limiter + 44.1 kHz + MP3 192
 #    (value 2.4 at threshold 0.7). Changeable in bridge.json as "wm_strength".
 WM_STRENGTH = 3
@@ -2759,7 +2757,7 @@ def _wav_frames(path: str):
 
 def auto_end(path: str):
     """Where the music really ends. After the end, the music AI often still delivers seconds of quiet
-    sound garbage (measured: -28...-57 dB, hump at 150-400 Hz); user feedback: a sound artifact at the end
+    sound garbage (measured: -28...-57 dB, hump at 150-400 Hz), audible as a sound artifact at the end
     of the tracks. -> (end_s, fade_out_s) or None. Same calculation as autoEnd() in app.js."""
     try:
         params, frames = _wav_frames(path)
@@ -3410,7 +3408,7 @@ def release_package(cfg: dict, path: str, res: dict, info: dict, opts: dict, fin
 # =============================================================================
 # 3.10: 🌐 Publishing to the public listening site (public page, administration only inside the tailnet)
 # =============================================================================
-# The owner wants a public page for free listening — "only what I release".
+# Optional public page for free listening, limited to what the owner chooses to release.
 # The Mac sends the MASTERED version as a 24-bit WAV (the site converts exactly once to MP3 320),
 # plus cover and metadata, to the site's admin endpoint. It is reachable only via Tailscale
 # and checks the Tailscale login — there is no key that could get lost.
@@ -5051,7 +5049,7 @@ def midi_result(paths: list) -> bytes:
     return json.dumps({"items": items, "v": MIDI_V}, separators=(",", ":")).encode()
 
 
-# ---- 3.6: Deletion (user request: deleted songs must really be deleted) ----------------------------
+# ---- 3.6: Deletion (deleted songs must really be deleted) ----------------------------
 # Up to 3.5 the app only deleted its browser copy; the archive stayed and "📥 Fetch from Mac" offered the track again.
 # Now EVERYTHING of a track goes to the Mac's trash: WAV, .json, cover (.jpg + raw .roh.jpg) and the
 # unmarked original. Trash instead of immediate removal: recoverable until emptied. If moving fails
@@ -5206,7 +5204,7 @@ def tool_job(cfg: dict, srv, job: dict) -> None:
         path = job_source(cfg, srv, job)
         fin = veredeln(cfg, path, req, want_cover=False, tick=tick)
         if rights(cfg)["watermark"] and not fin["id"]:
-            # "all songs must get a watermark" — so none leaves without one either
+            # every song must carry a watermark, so none leaves without one either
             raise RuntimeError("Wasserzeichen fehlt (%s) — Export abgebrochen" % (fin.get("wm_error") or "unbekannt"))
         given = clean_master(req.get("master"))
         if given is not None:

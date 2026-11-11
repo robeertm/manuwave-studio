@@ -3,6 +3,17 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.29.1 — 2026-11-11 (bridge 3.23.0, unchanged)
+
+### Changed
+- Code comments that paraphrased or quoted feedback now state the technical reason instead (measurements and
+  constraints). No behaviour change; the bridge is functionally identical to 3.23.0.
+
+### Added
+- `scripts/check_comments.py`, run by CI on every push: fails when a comment contains a quotation that reads like a
+  spoken or written request (typographic quotes, long or first-person quotations, "user feedback"-style
+  attributions). A deliberate quotation can be marked with `quote-ok`.
+
 ## 3.29.0 — 2026-11-11 (bridge 3.23.0)
 
 ### Changed

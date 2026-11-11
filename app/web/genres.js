@@ -1,6 +1,7 @@
 // Manuwave Studio 3.8 — Richtungen und der Würfel.
 //
-// Richtungen, füge sie hinzu, will alles abdecken können". Jetzt ~90 Richtungen in Gruppen.
+// Bis 3.7 gab es 16 Genres, alle aus der Clubmusik. Das Angebot sollte alle gängigen Stilrichtungen abdecken:
+// jetzt ~90 Richtungen in Gruppen.
 // 🔑 Die 16 alten Namen bleiben WORTGLEICH — gespeicherte Eingaben (nf_form) wählen per Text.
 //
 // Jede Richtung bringt mit, was der Würfel zum Schreiben braucht:
