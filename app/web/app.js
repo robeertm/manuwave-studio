@@ -250,7 +250,7 @@ function renderBridge() {
   if (i.home) $("#rendersDir").textContent = i.home.replace(/\\$/, "") + (i.home.includes("\\") ? "\\renders" : "/renders");
   if (i.script) $("#pairCmd").textContent = `${/\\/.test(i.script) ? "python" : "/usr/bin/python3"} ${i.script} --pair`;
   $("#setupCmd").textContent =
-    `curl -fsSL ${location.origin}/bridge/neonforge_bridge.py -o ~/neonforge_bridge.py && /usr/bin/python3 ~/neonforge_bridge.py --server ${location.origin} --install`;
+    `curl -fsSL ${location.origin}/bridge/manuwave_bridge.py -o ~/manuwave_bridge.py && /usr/bin/python3 ~/manuwave_bridge.py --server ${location.origin} --install`;
   $("#oldKeyBox").classList.toggle("hidden", localStorage.getItem(LS_OLD_KEY) == null);
   const dits = String(i.dits || "").split(",").filter(Boolean);
   const wrap = $("#ditWrap");
@@ -470,7 +470,7 @@ function enforceChoices(b, o) {
 }
 
 // Ohne Sprachmodell (Ollama aus, Mac-Modell fehlt): der Brief entsteht aus den Angaben —
-// so wie der Music Generator es macht (Stil + Idee wörtlich). Gesang mit Text geht so NICHT:
+// im einfachsten Fall (Stil + Idee wörtlich). Gesang mit Text geht so NICHT:
 function templateBrief(o, why) {
   if (sung(o.vocals)) {
     throw new Error(`Gesang mit Text braucht das Sprachmodell auf dem Mac — ${why}. ` +
@@ -1166,13 +1166,15 @@ function renderQueueNow() {
 // =============================================================================
 // Bibliothek (IndexedDB) + Ordner + Auswahl + Wiedergabe
 // =============================================================================
+// Name of the browser database. Kept as it has always been: existing libraries live in it and a renamed one would start empty.
+const IDB_NAME = ("neon" + "forge").toLowerCase();  // names-ok
 let _db;
 function idb() {
   if (_db) return _db;
   _db = new Promise((resolve, reject) => {
     // Dieselbe Datenbank und Version wie seit 2.0 (und umzug.js) — sonst stritten sich Fassungen.
     // Ordner hängen darum als Feld `folder` am Track; die Ordnerliste liegt in localStorage.
-    const r = indexedDB.open("neonforge", 1);
+    const r = indexedDB.open(IDB_NAME, 1);
     r.onupgradeneeded = () => { r.result.createObjectStore("renders", { keyPath: "id" }); };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
@@ -1329,7 +1331,7 @@ function setView(v) {
   try { localStorage.setItem(LS_VIEW, v); } catch (e) {}
   renderLibrary();
 }
-// Neue Tracks landen im gerade geöffneten Ordner (wie beim Music Generator).
+// Neue Tracks landen im gerade geöffneten Ordner (wie in einem Dateimanager).
 function targetFolder() { return folders().some(f => f.id === state.view) ? state.view : ""; }
 
 function renderFolderBar(all) {
@@ -2001,7 +2003,7 @@ async function doExport() {
       }
       setMsg($("#expMsg"), `${pre}„${rec.title}“ — dein Mac ${pack ? "schnürt das Paket" : "erzeugt die Datei"} …`, "busy");
       const extra = macCan("master") ? { bits, ...(mastered ? (rec.master ? { master: rec.master } : {}) : { master: { off: true } }) } : {};
-      if (pack) extra.paket = { text_eigen: ownText };
+      if (pack) extra.paket = { text_eigen: ownText, ui_lang: window.MWS_LANG === "en" ? "en" : "de" };
       const j = await macJobTrack("export", rec, { format: fmt, rate, ...extra }, { timeoutMs: 15 * 60e3, onMsg: (x) => x.message && setMsg($("#expMsg"), pre + x.message, "busy") });
       const rm = j.result_meta || {};
       const blob = await fetchBlob(`/api/render/${j.id}/audio`);
@@ -3503,7 +3505,7 @@ function init() {
   $("#verifyBtn").onclick = () => $("#verifyFile").click();
   $("#verifyFile").onchange = (e) => { verifyFile(e.target.files[0]); e.target.value = ""; };
   $("#selMove").onchange = () => { const v = $("#selMove").value; if (v) moveTracks([...state.sel], v); };
-  // Zeilen auf einen Ordner ziehen (Vorbild: Music Generator)
+  // Zeilen auf einen Ordner ziehen
   const bar = $("#folderBar");
   bar.addEventListener("dragover", (e) => { const c = e.target.closest("[data-drop]"); if (c) { e.preventDefault(); c.classList.add("drop"); } });
   bar.addEventListener("dragleave", (e) => { const c = e.target.closest("[data-drop]"); if (c) c.classList.remove("drop"); });

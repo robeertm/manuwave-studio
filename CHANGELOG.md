@@ -3,6 +3,23 @@
 All notable changes to Manuwave Studio. Versions follow the app (`server.py`); the bridge that runs on your
 computer has its own number, given in brackets. Dates are ISO (YYYY-MM-DD).
 
+## 3.29.0 — 2026-11-11 (bridge 3.23.0)
+
+### Changed
+- **Neutral names throughout.** Earlier names of the project and of the installer it grew from are gone from code,
+  comments, texts and file names. Nothing that exists on your computer is renamed or moved: an install in its
+  previous folder, a background service registered under its previous label and a library in the browser keep
+  working exactly as before; new installs use `~/ManuwaveStudio` and a neutral service name. The bridge file is
+  `manuwave_bridge.py` everywhere (the server still serves the old file name, so older bridges update as usual).
+- **The comments and documentation inside the bridge and the server are English.**
+- **The release package follows the language of the app.** In English the metadata, the proof of origin, the
+  licence template and the read-me are English (file names too: `Metadata.txt`, `Provenance.pdf`,
+  `License_Template_Companies.docx`, `Read_me.txt`); in German everything stays as it was.
+
+### Added
+- `scripts/check_names.py`, run by CI on every push: fails when the tree names a third-party brand or an earlier
+  project name. The list holds only hashes, so the check does not spell what it forbids.
+
 ## 3.28.0 — 2026-10-23 (bridge 3.22.0)
 
 ### Added

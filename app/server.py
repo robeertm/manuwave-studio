@@ -1,59 +1,59 @@
 """Manuwave Studio — Musik-KI.
 
-Abhängigkeitsfreier Webserver (nur Python-Stdlib). Serviert die App aus ``web/`` und
-vermittelt zwischen Browser und Mac. Bindet 0.0.0.0:8080 (interner Port — MUSS mit dem
-Manifest übereinstimmen).
+Dependency-free web server (Python stdlib only). Serves the app from ``web/`` and
+relays between the browser and the Mac. Binds 0.0.0.0:8080 (internal port — MUST match the
+manifest).
 
-Seit 3.0.0: NUR NOCH LOKALE KI
-------------------------------
-Der Claude-Weiterleiter (/api/compose, API-Key, Abo-Token) und das Browser-Synth-Studio
-sind weg. Den Brief schreibt das Sprachmodell auf dem Mac (Ollama), die Musik rechnet
-ACE-Step auf dem Mac. Dieser Server spricht mit keinem Dienst außerhalb des eigenen Netzes.
-Klangqualität: der Browser schickt guidance_scale/inference_steps mit (Studio = 7,0 —
-bis 2.2 lief jeder Track ungeführt mit 1,0, siehe web/app.js QUALITY).
+Since 3.0.0: LOCAL AI ONLY
+--------------------------
+The Claude forwarder (/api/compose, API key, subscription token) and the browser synth studio
+are gone. The language model on the Mac (Ollama) writes the brief, ACE-Step on the Mac renders
+the music. This server talks to no service outside its own network.
+Sound quality: the browser sends guidance_scale/inference_steps along (Studio = 7.0 —
+up to 2.2 every track ran unguided at 1.0, see QUALITY in web/app.js).
 
-Seit 2.0.0: ECHTE MUSIK-KI ÜBER DEN MAC
----------------------------------------
-Ein Sprachmodell kann kein Audio ausgeben, und der Browser-Synth klingt nach Browser.
-ACE-Step 1.5 erzeugt echte Musik — braucht aber einen Grafikchip, den dieser Rechner
-nicht hat. Also rechnet der Mac, und dieser Server vermittelt nur:
+Since 2.0.0: REAL MUSIC AI VIA THE MAC
+--------------------------------------
+A language model cannot output audio, and the browser synth sounds like a browser.
+ACE-Step 1.5 produces real music — but needs a GPU, which this machine does not
+have. So the Mac does the computing, and this server only relays:
 
     Browser ──POST /api/render──▶ Server ◀──GET /api/bridge/next── Mac (Brücke)
                                    │                                  │ ace-server
     Browser ◀──GET …/audio──────── Server ◀──POST /api/bridge/result─┘ (127.0.0.1)
 
-🔑 Der Mac verbindet sich NACH AUSSEN (wie die DocuSort-Brücke) — er öffnet keinen
-   Port, sein ace-server bleibt auf 127.0.0.1.
+🔑 The Mac connects OUTWARD (like other bridge agents) — it opens no
+   port, its ace-server stays on 127.0.0.1.
 
-🔑 Der Server hält KEIN Geheimnis. Der Container hat kein Volume, alles Geschriebene
-   ist beim nächsten Deploy weg. Darum ist der Kopplungsschlüssel eine FÄHIGKEIT: wer
-   ihn kennt, darf in genau diesen Namensraum Aufträge legen und Ergebnisse abholen —
-   der Server kennt nur seinen Hash als Schlüssel einer Warteschlange im Speicher.
-   Ein fremder Schlüssel sieht eine leere Warteschlange und erreicht keinen Mac.
+🔑 The server holds NO secret. The container has no volume, everything written
+   is gone after the next deploy. That is why the pairing key is a CAPABILITY: whoever
+   knows it may queue jobs into exactly this namespace and fetch results —
+   the server only knows its hash, used as the key of an in-memory queue.
+   A foreign key sees an empty queue and reaches no Mac.
 
-Seit 2.1.0: DER MAC HAT VORRANG — AUCH BEIM BRIEF
--------------------------------------------------
-Läuft auf dem Mac ein Sprachmodell (Ollama), schreibt ER den Produktions-Brief
-(POST /api/brief). Briefe laufen auf
-einer eigenen Spur der Brücke (lane=brief), damit sie nie hinter einem minutenlangen
-Track warten. Ohne Spurangabe bekommt eine Brücke nur Tracks und Analysen.
+Since 2.1.0: THE MAC TAKES PRECEDENCE — ALSO FOR THE BRIEF
+----------------------------------------------------------
+If a language model (Ollama) runs on the Mac, IT writes the production brief
+(POST /api/brief). Briefs run on
+a lane of their own on the bridge (lane=brief), so they never wait behind a track that
+takes minutes. Without a lane parameter a bridge only gets tracks and analyses.
 
-Seit 3.2.0: COVER, TAGS, WASSERZEICHEN, EXPORT
----------------------------------------------
-Der Mac veredelt jeden Track (unhörbares Wasserzeichen, Tags mit dem Copyright aus SEINEN
-Einstellungen, KI-Cover) und exportiert ihn als MP3 oder verlustfrei. Neue Auftragsarten:
-settings/export/verify laufen auf der Brief-Spur (schnell, ohne Grafikchip), cover/
-nachruesten auf der Render-Spur (das Bildmodell teilt sich den Grafikchip mit der Musik-KI).
-Eine Brücke bekommt nur Arten, die sie in x-nf-agent unter "caps" nennt — eine 3.1-Brücke
-sähe sonst einen Export als Brief. Cover liegen am Auftrag (GET /api/render/<id>/cover).
+Since 3.2.0: COVER, TAGS, WATERMARK, EXPORT
+-------------------------------------------
+The Mac polishes every track (inaudible watermark, tags with the copyright from ITS OWN
+settings, AI cover) and exports it as MP3 or lossless. New job kinds:
+settings/export/verify run on the brief lane (fast, no GPU), cover/
+nachruesten (retrofit) on the render lane (the image model shares the GPU with the music AI).
+A bridge only gets kinds it lists in x-nf-agent under "caps" — a 3.1 bridge
+would otherwise see an export as a brief. Covers are attached to the job (GET /api/render/<id>/cover).
 
-Seit 2.2.0: SICHERE ADRESSE + UMZUG
------------------------------------
-eine https-Adresse (z. B. tailscale serve, echtes Zertifikat; site.json → secure_origin). Die
-Startseite leitet alte http-Adressen dorthin um (nur Browser-Seiten, erkannt an
-X-Forwarded-Proto). Ausnahme ?nf-umzug=1: über dieses Fenster holt web/umzug.js
-Kopplung, Brief und Bibliothek von der alten Adresse ab — für den Browser ist die
-neue Adresse eine neue Seite mit leerem Speicher.
+Since 2.2.0: SECURE ADDRESS + MOVE
+----------------------------------
+an https address (e.g. tailscale serve, real certificate; site.json → secure_origin). The
+start page redirects old http addresses there (browser pages only, detected via
+X-Forwarded-Proto). Exception ?nf-umzug=1: through that window web/umzug.js fetches
+pairing, brief and library from the old address — for the browser the
+new address is a new site with empty storage.
 """
 import hashlib
 import http.server
@@ -73,17 +73,18 @@ import urllib.request
 import uuid
 
 PORT = int(os.environ.get("PORT", "8080"))
-HOST = os.environ.get("HOST", "0.0.0.0")      # 3.11: lokale Installation → 127.0.0.1 (der Starter setzt das)
+HOST = os.environ.get("HOST", "0.0.0.0")      # 3.11: local install → 127.0.0.1 (the starter sets this)
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(ROOT, "web")
 
-APP_VERSION = "3.28.0"
-BRIDGE_FILE = next((p for p in (os.path.join(ROOT, "bridge", n) for n in ("neonforge_bridge.py", "manuwave_bridge.py"))
-                    if os.path.isfile(p)), os.path.join(ROOT, "bridge", "manuwave_bridge.py"))
+APP_VERSION = "3.29.0"
+BRIDGE_FILE = os.path.join(ROOT, "bridge", "manuwave_bridge.py")
+# Bridges installed by earlier versions fetch their update under the file name they were installed with.
+BRIDGE_PATHS = ("/bridge/manuwave_bridge.py", "/bridge/" + ("neon" + "forge") + "_bridge.py")   # names-ok
 BUILD_INFO_FILE = os.path.join(WEB, "build-info.json")
 INDEX_FILE = os.path.join(WEB, "index.html")
-# Sichere Adresse (z. B. tailscale serve) — siehe web/umzug.js. 3.11: aus der Umgebung oder site.json neben
-# server.py; leer = keine Umleitung (lokale Installationen brauchen keine).
+# Secure address (e.g. tailscale serve) — see web/umzug.js. 3.11: from the environment or site.json next to
+# server.py; empty = no redirect (local installs need none).
 def _site_cfg() -> dict:
     try:
         with open(os.path.join(ROOT, "site.json"), encoding="utf-8") as f:
@@ -95,7 +96,7 @@ def _site_cfg() -> dict:
 SECURE_ORIGIN = (os.environ.get("NF_SECURE_ORIGIN") or _site_cfg().get("secure_origin") or "").rstrip("/")
 
 def _git_head() -> str:
-    """Kurzer Commit-Hash direkt aus ``.git`` (ohne git-Binary). '' wenn nicht möglich."""
+    """Short commit hash read directly from ``.git`` (no git binary). '' if not possible."""
     try:
         with open(os.path.join(ROOT, ".git", "HEAD")) as f:
             ref = f.read().strip()
@@ -108,12 +109,12 @@ def _git_head() -> str:
 
 
 def write_build_stamp() -> dict:
-    """Schreibt ``web/build-info.json`` mit Commit + Build-Zeit UND backt die Version
-    direkt in ``index.html`` (Footer + ``window.__BUILD__``). Beim Docker-Build
-    aufgerufen (``RUN python -c "import server; server.write_build_stamp()"``), damit
-    jeder Deploy einen frischen, **cache-festen** Stempel erhält: Der Footer zeigt die
-    Version dann ohne Umweg über eine (evtl. gecachte) ``/api/config``-Anfrage, und
-    JS/CSS bekommen einen Build-abhängigen Query-String, den kein Proxy alt ausliefert."""
+    """Writes ``web/build-info.json`` with commit + build time AND bakes the version
+    directly into ``index.html`` (footer + ``window.__BUILD__``). Called during the Docker build
+    (``RUN python -c "import server; server.write_build_stamp()"``) so that
+    every deploy gets a fresh, **cache-proof** stamp: the footer then shows the
+    version without a detour through a (possibly cached) ``/api/config`` request, and
+    JS/CSS get a build-dependent query string that no proxy serves stale."""
     import datetime
     commit = os.environ.get("GIT_COMMIT", "").strip()[:7] or _git_head() or "unknown"
     built = (datetime.datetime.now(datetime.timezone.utc)
@@ -126,7 +127,7 @@ def write_build_stamp() -> dict:
 
 
 def _version_label(info: dict) -> str:
-    """Kompakte, immer sichtbare Kennung, z. B. ``v1.3.0 · abc1234 · 2026-08-05``."""
+    """Compact, always visible identifier, e.g. ``v1.3.0 · abc1234 · 2026-08-05``."""
     parts = ["v" + info["version"]]
     if info.get("commit") and info["commit"] != "unknown":
         parts.append(info["commit"])
@@ -136,8 +137,8 @@ def _version_label(info: dict) -> str:
 
 
 def _bake_index(info: dict) -> None:
-    """Version sichtbar in ``index.html`` verankern und statische Assets cache-busten.
-    Idempotent — mehrfaches Aufrufen ändert nichts weiter."""
+    """Anchor the version visibly in ``index.html`` and cache-bust static assets.
+    Idempotent — calling it repeatedly changes nothing further."""
     buster = "".join(c for c in (info.get("builtAt") or "") if c.isdigit()) or info.get("commit") or "0"
     try:
         with open(INDEX_FILE, encoding="utf-8") as f:
@@ -145,16 +146,16 @@ def _bake_index(info: dict) -> None:
     except Exception:
         return
     label = _version_label(info)
-    # 1) Version fest in den Footer backen — unabhängig von JS/Config sofort sichtbar.
+    # 1) Bake the version into the footer — visible immediately, independent of JS/config.
     html = re.sub(r'<span id="ver"[^>]*>.*?</span>',
                   f'<span id="ver" data-baked="1">{label}</span>', html, count=1, flags=re.S)
-    # 2) Build-Info als globales Objekt (Diagnose in der Browser-Konsole).
+    # 2) Build info as a global object (diagnostics in the browser console).
     script = "<script>window.__BUILD__=" + json.dumps({**info, "source": "build"}) + ";</script>"
     if "window.__BUILD__" in html:
         html = re.sub(r"<script>window\.__BUILD__=.*?</script>", script, html, count=1, flags=re.S)
     else:
         html = html.replace("</head>", script + "\n</head>", 1)
-    # 3) JS/CSS cache-busten (Query-String ändert die URL → Proxys laden neu).
+    # 3) Cache-bust JS/CSS (the query string changes the URL → proxies reload).
     html = re.sub(r'(href="style\.css)(\?b=[^"]*)?(")', rf"\1?b={buster}\3", html, count=1)
     html = re.sub(r'(src="app\.js)(\?b=[^"]*)?(")', rf"\1?b={buster}\3", html, count=1)
     html = re.sub(r'(src="umzug\.js)(\?b=[^"]*)?(")', rf"\1?b={buster}\3", html, count=1)
@@ -164,8 +165,8 @@ def _bake_index(info: dict) -> None:
 
 
 def _build_info() -> dict:
-    """Version + Build-Herkunft für die UI/Diagnose. Bevorzugt den Docker-Build-Stempel;
-    fällt lokal (ohne Stempel) auf den Live-Commit aus ``.git`` zurück."""
+    """Version + build origin for the UI/diagnostics. Prefers the Docker build stamp;
+    falls back locally (without a stamp) to the live commit from ``.git``."""
     info = {"version": APP_VERSION, "commit": "", "builtAt": None, "source": "dev"}
     try:
         with open(BUILD_INFO_FILE) as f:
@@ -174,30 +175,30 @@ def _build_info() -> dict:
         info["builtAt"] = data.get("builtAt")
         info["source"] = "build"
     except Exception:
-        info["commit"] = _git_head()  # lokale Entwicklung
+        info["commit"] = _git_head()  # local development
     return info
 
 
 # =============================================================================
-# Echte Musik-KI: Vermittler zwischen Browser und Mac-Brücke
+# Real music AI: relay between browser and Mac bridge
 # =============================================================================
 
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{24,128}$")
-MAX_JOBS_PER_NS = 24                      # offen + fertig je Kopplung
-RESULT_TTL = 45 * 60                      # fertige Ergebnisse so lange abholbar
-MAX_AUDIO_BYTES = 128 * 1024 * 1024       # eine Datei (3.4: 5 min WAV/AIFF in 24 Bit ≈ 86 MB)
-AUDIO_BUDGET = 512 * 1024 * 1024          # alles zusammen im Speicher
-MAX_UPLOAD_BYTES = 60 * 1024 * 1024       # Referenz-Track
-BRIDGE_SEEN_S = 45                        # so lange gilt der Mac als verbunden
-RUNNING_STALE_S = 15 * 60                 # ohne Lebenszeichen → als verloren werten
-QUEUED_TTL = 2 * 3600                     # 3.2: ein nie abgeholter Auftrag verfällt (sonst hält er Upload + Platz ewig)
-NS_UPLOAD_CAP = 192 * 1024 * 1024         # 3.2: wartende Uploads je Kopplung
-FILE_JSON = "application/vnd.manuwave.file+json"   # 3.16: ein JSON-ERGEBNIS als Datei (MIDI-Abbilder ~100 KB je Track)
-MAX_JSON_BODY = 256 * 1024                # JSON-Körper — Briefe/Texte sind weit kleiner
-DURATION_RANGE = (10.0, 600.0)   # 3.14: über 240 s baut die Brücke in Abschnitten an
+MAX_JOBS_PER_NS = 24                      # open + finished per pairing
+RESULT_TTL = 45 * 60                      # finished results stay fetchable this long
+MAX_AUDIO_BYTES = 128 * 1024 * 1024       # one file (3.4: 5 min WAV/AIFF at 24 bit ≈ 86 MB)
+AUDIO_BUDGET = 512 * 1024 * 1024          # everything combined in memory
+MAX_UPLOAD_BYTES = 60 * 1024 * 1024       # reference track
+BRIDGE_SEEN_S = 45                        # the Mac counts as connected for this long
+RUNNING_STALE_S = 15 * 60                 # no sign of life → treat as lost
+QUEUED_TTL = 2 * 3600                     # 3.2: a job that is never picked up expires (otherwise it holds upload + slot forever)
+NS_UPLOAD_CAP = 192 * 1024 * 1024         # 3.2: waiting uploads per pairing
+FILE_JSON = "application/vnd.manuwave.file+json"   # 3.16: a JSON RESULT as a file (MIDI images ~100 KB per track)
+MAX_JSON_BODY = 256 * 1024                # JSON body — briefs/texts are far smaller
+DURATION_RANGE = (10.0, 600.0)   # 3.14: beyond 240 s the bridge builds in sections
 
-# Was an den Mac durchgereicht werden darf — alles andere fällt weg. Der Browser
-# bestimmt die Felder, der Mac rechnet sie: hier wird geklemmt, nicht vertraut.
+# What may be passed through to the Mac — everything else is dropped. The browser
+# decides the fields, the Mac computes them: values are clamped here, not trusted.
 def clean_render_request(raw: dict) -> dict:
     if not isinstance(raw, dict):
         raise ValueError("Auftrag fehlt")
@@ -232,21 +233,23 @@ def clean_render_request(raw: dict) -> dict:
         "guidance_scale": num("guidance_scale", 1.0, 15.0, 0),
         "lm_temperature": num("lm_temperature", 0.1, 2.0, 0),
         "use_cot_caption": bool(raw.get("use_cot_caption", False)),
-        # 3.1: Klangmodell (Kurzname, die Brücke prüft, ob es auf dem Mac liegt) und weiches Ende
+        # 3.1: sound model (short name, the bridge checks whether it exists on the Mac) and soft ending
         "dit": text("dit", 24) if re.fullmatch(r"[a-z0-9][a-z0-9-]{1,23}", text("dit", 24) or "") else "",
         "smooth_end": bool(raw.get("smooth_end", True)),
-        # 3.14: Klangprüfung — so oft darf die Brücke eine schwach bewertete Fassung neu würfeln (0 = aus)
+        # 3.14: sound check — how often the bridge may re-roll a poorly rated version (0 = off)
         "qa_reroll": num("qa_reroll", 0, 3, 2, int),
     }
-    #    use_cot_caption=False fiele dann still weg.
+    # For these fields 0 means "the model decides" → don't send it at all.
+    # 🔴 Not a blanket "everything that == 0": in Python False == 0, and
+    #    use_cot_caption=False would silently drop out.
     auto_bei_null = {"bpm", "inference_steps", "guidance_scale", "lm_temperature"}
     return {k: v for k, v in out.items()
             if v not in ("", None) and not (k in auto_bei_null and v == 0)}
 
 
-# Den Produktions-Brief schreibt — wenn er kann — der Mac selbst (lokales Sprachmodell).
-# Der Browser schickt dafür nur die Aufgabe als Text; Anweisung und Antwortformat
-# liegen fest in der Brücke, der Server reicht nichts anderes durch.
+# The production brief is written — if it can — by the Mac itself (local language model).
+# The browser only sends the task as text; instruction and response format
+# are fixed in the bridge, the server passes nothing else through.
 MAX_BRIEF_TEXT = 24000
 
 
@@ -257,35 +260,37 @@ def clean_brief_request(raw: dict) -> dict:
     if not isinstance(user, str) or not user.strip():
         raise ValueError("Aufgabe für den Brief fehlt")
     out = {"user": user.strip()[:MAX_BRIEF_TEXT]}
-    # 3.12: Sprache der Oberfläche — die Brücke schreibt die Notiz dann englisch statt deutsch
+    # 3.12: UI language — the bridge then writes the note in English instead of German
     if raw.get("ui_lang") in ("de", "en"):
         out["ui_lang"] = raw["ui_lang"]
     return out
 
 
 BRIEF_LANE = {"brief", "settings", "export", "verify", "archiv", "loeschen", "web", "web_weg", "master_merken", "midi"}
+# Kinds since 3.2 — only for bridges that know them (x-nf-agent "caps")
 NEW_KINDS = {"settings", "export", "verify", "cover", "nachruesten", "archiv", "loeschen", "web", "web_weg", "master_merken", "midi", "weiter", "analyse"}
-KIND_SINCE = {"loeschen": "3.6", "web": "3.10", "web_weg": "3.10", "master_merken": "3.12.3", "midi": "3.16", "weiter": "3.17", "analyse": "3.19"}     # ab welcher Brücke eine Art geht (für die Meldung)
+KIND_SINCE = {"loeschen": "3.6", "web": "3.10", "web_weg": "3.10", "master_merken": "3.12.3", "midi": "3.16", "weiter": "3.17", "analyse": "3.19"}     # from which bridge version a kind works (for the message)
 
 
 def lane_of(kind: str) -> str:
-    """Zwei Spuren: Briefe sind in Sekunden fertig und sollen nicht hinter
-    minutenlangen Renderings warten — die Brücke holt sie auf einer eigenen Spur.
-    Seit 3.2 auch Einstellungen, Export und Prüfen (schnell, ohne Grafikchip)."""
+    """Two lanes: briefs finish in seconds and must not wait behind
+    renderings that take minutes — the bridge fetches them on a lane of their own.
+    Since 3.2 also settings, export and verify (fast, no GPU)."""
     return "brief" if kind in BRIEF_LANE else "render"
 
 
-# ---- 3.2: Angaben zu einem Track der Bibliothek (Tags, Cover, Archiv auf dem Mac) ----
+# ---- 3.2: details of a library track (tags, cover, archive on the Mac) ----
 FORMATS = ("mp3", "flac", "alac", "wav", "aiff", "wavpack", "tta")
 RATES = (0, 44100, 48000)
-#         Die Brücke prüft ohnehin selbst, dass die Datei in IHREM renders/ liegt.
+# 3.11.1: free choice of location (up to 3 levels below ~, no dot at the start of a level → no "..", nothing hidden).
+#         The bridge checks anyway that the file lies in ITS renders/.
 ARCHIVED_RE = re.compile(r"^(?:[^/\x00.][^/\x00]{0,59}/){1,3}renders/[^/\x00.][^/\x00]{0,39}/[^/\x00]{1,200}\.wav$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def clean_track(raw) -> dict:
-    """Der Mac sucht den Track in SEINEM Archiv — der Pfad ist nur ein Hinweis, die Brücke
-    prüft selbst, dass er in ~/NeonForge/renders liegt. Hier wird geklemmt, nicht vertraut."""
+    """The Mac looks for the track in ITS archive — the path is only a hint, the bridge
+    itself checks that it lies in the previous install folder's renders directory. Clamped here, not trusted."""
     if not isinstance(raw, dict):
         raise ValueError("Track-Angaben fehlen")
     out = {}
@@ -307,7 +312,7 @@ def clean_track(raw) -> dict:
                 out[k] = v
         except (TypeError, ValueError, OverflowError):
             pass
-    if raw.get("source") == "eigen":
+    if raw.get("source") == "eigen":          # 3.15: played in the "Make it yourself" tab
         out["source"] = "eigen"
     if not out.get("title"):
         raise ValueError("Titel fehlt")
@@ -318,7 +323,7 @@ WEITER_TRACKS = ("drums", "bass", "keyboard", "synth", "guitar", "strings", "per
 
 
 def clean_weiter(raw) -> dict:
-    """3.17: Loop-Maschine → Musik-KI. Nur bekannte Felder in ihren Grenzen (die Brücke prüft noch einmal)."""
+    """3.17: loop machine → music AI. Only known fields within their limits (the bridge checks again)."""
     raw = raw if isinstance(raw, dict) else {}
     mode = raw.get("mode")
     if mode not in ("fortsetzen", "gesang"):
@@ -352,11 +357,11 @@ def clean_job(kind: str, raw) -> dict:
         return clean_weiter(raw)
     if kind == "settings":
         raw = raw if isinstance(raw, dict) else {}
-        # 3.26: Wahl des Brief-Schreibers (Name + Ollama-Adresse; die Brücke nimmt nur, was sie selbst anbietet)
+        # 3.26: choice of brief writer (name + Ollama address; the bridge only accepts what it offers itself)
         w = raw.get("writer")
         if isinstance(w, dict):
             return {"writer": {"model": str(w.get("model") or "")[:120], "url": str(w.get("url") or "")[:80]}}
-        # 3.27: Mastering-Presets (die Brücke prüft jedes Preset noch einmal selbst)
+        # 3.27: mastering presets (the bridge checks each preset again itself)
         if isinstance(raw.get("master_presets"), list):
             ps = []
             for p in raw["master_presets"][:40]:
@@ -372,6 +377,7 @@ def clean_job(kind: str, raw) -> dict:
         for k in ("owner", "artist", "copyright", "album", "label", "website"):
             if isinstance(s.get(k), str):
                 keep[k] = s[k].strip()[:200]
+        # 🔴 3.4: "cover_artist" (3.3) was missing here — switching it off never reached the Mac
         for k in ("ai_note", "watermark", "cover", "cover_title", "cover_artist"):
             if isinstance(s.get(k), bool):
                 keep[k] = s[k]
@@ -379,7 +385,7 @@ def clean_job(kind: str, raw) -> dict:
     if kind in ("verify", "archiv"):
         return {}
     if kind == "master_merken":
-        # 3.12.3: Mastering-Regler je Archivpfad an den Mac — nur Zahlen in ihren Grenzen (die Brücke prüft noch einmal)
+        # 3.12.3: mastering controls per archive path to the Mac — only numbers in range (the bridge checks again)
         lst = (raw or {}).get("items") if isinstance(raw, dict) else None
         keep = []
         for it in (lst if isinstance(lst, list) else [])[:500]:
@@ -391,14 +397,14 @@ def clean_job(kind: str, raw) -> dict:
             raise ValueError("Keine Regler")
         return {"items": keep}
     if kind == "midi":
-        # 3.16: MIDI-Abbilder abholen — nur Archivpfade in der erwarteten Form (die Brücke prüft selbst noch einmal)
+        # 3.16: fetch MIDI images — only archive paths in the expected form (the bridge checks again itself)
         lst = (raw or {}).get("archived") if isinstance(raw, dict) else None
         keep = [a for a in (lst if isinstance(lst, list) else []) if isinstance(a, str) and ARCHIVED_RE.match(a) and ".." not in a]
         if not keep:
             raise ValueError("Keine Tracks")
         return {"archived": keep[:40]}
     if kind == "loeschen":
-        # 3.6: nur Archivpfade in der erwarteten Form — die Brücke prüft selbst noch einmal, dass sie in renders/ liegen
+        # 3.6: only archive paths in the expected form — the bridge checks again itself that they lie in renders/
         lst = (raw or {}).get("archived") if isinstance(raw, dict) else None
         keep = [a for a in (lst if isinstance(lst, list) else [])
                 if isinstance(a, str) and ARCHIVED_RE.match(a) and ".." not in a]
@@ -416,22 +422,25 @@ def clean_job(kind: str, raw) -> dict:
         except (TypeError, ValueError, OverflowError):
             rate = 0
         out["rate"] = rate if rate in RATES else 0
-        # 3.4: Bittiefe und Mastering-Regler — nur Zahlen in ihren Grenzen (die Brücke prüft noch einmal)
+        # 3.4: bit depth and mastering controls — only numbers within their limits (the bridge checks again)
         out["bits"] = 16 if (raw or {}).get("bits") in (16, "16") else 24
         m = clean_master((raw or {}).get("master"))
         if m is not None:
             out["master"] = m
-        # 3.9: Veröffentlichungspaket — nur bekannte Schalter (die Brücke prüft noch einmal)
+        # 3.9: release package — only known switches (the bridge checks again)
         pk = (raw or {}).get("paket")
         if isinstance(pk, dict):
             out["paket"] = {"text_eigen": pk.get("text_eigen") is True}
+            if pk.get("ui_lang") in ("de", "en"):      # 3.29: language of the texts inside the package
+                out["paket"]["ui_lang"] = pk["ui_lang"]
     if kind == "web":
-        # 3.10: Veröffentlichen — die Regler gehören dazu (die Seite bekommt die gemasterte Fassung)
+        # 3.10: publishing — the controls are part of it (the page gets the mastered version)
         m = clean_master((raw or {}).get("master"))
         if m is not None:
             out["master"] = m
     if kind == "nachruesten":
-        # bleibt seine Kopie, sonst ginge jeder Track (40 MB) noch einmal durch den Tunnel.
+        # Audio only if the browser gets the track NEW ("Fetch from Mac") — when retrofitting
+        # it keeps its own copy, otherwise every track (40 MB) would go through the tunnel again.
         out["audio"] = (raw or {}).get("audio") is True
     return out
 
@@ -440,7 +449,7 @@ MASTER_KEYS = {"bass": (-12, 12), "tone": (-6, 6), "treble": (-12, 12), "soft": 
                "fade_in": (0, 10), "fade_out": (0, 15), "start": (0, 3600), "end": (0, 3600)}
 
 
-# 3.27: Equalizer — bis zu 8 Bänder hinter den Schnellreglern (wie eqClean in mastering.js)
+# 3.27: equalizer — up to 8 bands behind the quick controls (like eqClean in mastering.js)
 EQ_TYPES = {"lc": "highpass", "ls": "lowshelf", "pk": "peaking", "hs": "highshelf", "hc": "lowpass"}
 EQ_MAX, EQ_F, EQ_G, EQ_Q = 8, (20, 20000), (-12.0, 12.0), (0.3, 8.0)
 
@@ -489,7 +498,7 @@ def clean_master(raw):
             out[k] = int(round(v))
     if raw.get("ziel") in ("leise", "club"):
         out["ziel"] = raw["ziel"]
-    for k in ("haerte", "zisch", "komp"):            # 3.28: Dynamik-Stärken 0–10 (die Brücke rundet auf halbe Schritte)
+    for k in ("haerte", "zisch", "komp"):            # 3.28: dynamics strengths 0–10 (the bridge rounds to half steps)
         v = raw.get(k)
         if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and 0 < v <= 10:
             out[k] = float(v)
@@ -499,7 +508,7 @@ def clean_master(raw):
 
 
 def clean_meta(raw) -> dict:
-    """Begleitinfos fürs Wiederfinden (Titel, Notiz des Produzenten, Gruppe)."""
+    """Accompanying info for finding it again (title, producer's note, group)."""
     if not isinstance(raw, dict):
         return {}
     keep = {}
@@ -511,7 +520,7 @@ def clean_meta(raw) -> dict:
 
 
 def clean_agent(raw: str) -> dict:
-    """Was die Brücke über sich sagt (Kopfzeile x-nf-agent) — kurz und nur Bekanntes."""
+    """What the bridge says about itself (x-nf-agent header) — short and known fields only."""
     try:
         data = json.loads(urllib.parse.unquote(raw or "{}"))
     except Exception:
@@ -528,14 +537,14 @@ def clean_agent(raw: str) -> dict:
 
 
 class Broker:
-    """Warteschlangen im Speicher, je Kopplung ein Namensraum (Hash des Schlüssels)."""
+    """In-memory queues, one namespace per pairing (hash of the key)."""
 
     def __init__(self):
         self.cv = threading.Condition()
-        self.jobs: dict = {}          # id -> Auftrag
+        self.jobs: dict = {}          # id -> job
         self.bridges: dict = {}       # ns -> {"seen": t, "info": {...}}
 
-    # ---- Hilfen -----------------------------------------------------------
+    # ---- Helpers ----------------------------------------------------------
     @staticmethod
     def ns_for(token: str):
         token = (token or "").strip()
@@ -544,7 +553,7 @@ class Broker:
         return hashlib.sha256(token.encode()).hexdigest()[:32]
 
     def _sweep(self, now: float) -> None:
-        """Alte Ergebnisse vergessen, verwaiste Läufe beenden, Speicher deckeln."""
+        """Forget old results, end orphaned runs, cap memory."""
         for jid, j in list(self.jobs.items()):
             if j["status"] in ("done", "error", "cancelled") and now - j["updated"] > RESULT_TTL:
                 del self.jobs[jid]
@@ -554,9 +563,9 @@ class Broker:
             elif j["status"] == "queued" and now - j["created"] > QUEUED_TTL:
                 j.update(status="error", message="Der Mac hat den Auftrag zwei Stunden nicht abgeholt.",
                          updated=now, upload=None)
-        # Speicherbudget: älteste fertige Audios und Cover zuerst loslassen.
-        # 🔴 3.2 (Audit): Cover zählten mit, wurden aber nie freigegeben — dann räumte jedes Aufräumen
-        #    die Audios ALLER Kopplungen weg und kam trotzdem nie unters Budget.
+        # Memory budget: release the oldest finished audios and covers first.
+        # 🔴 3.2 (audit): covers counted but were never released — so every sweep
+        #    cleared the audios of ALL pairings and still never got under budget.
         total = self.bytes_held()
         if total > AUDIO_BUDGET:
             for j in sorted(self.jobs.values(), key=lambda x: x["updated"]):
@@ -571,7 +580,7 @@ class Broker:
                         j["expired"] = True
 
     def busy(self) -> bool:
-        """3.23: läuft oder wartet irgendein Auftrag? Dann kein Update — die Warteschlange liegt nur im Speicher."""
+        """3.23: is any job running or waiting? Then no update — the queue lives in memory only."""
         with self.cv:
             return any(j["status"] in ("queued", "running") for j in self.jobs.values())
 
@@ -581,7 +590,7 @@ class Broker:
 
     @staticmethod
     def public(j: dict) -> dict:
-        """Was der Browser über einen Auftrag erfährt — ohne Bytes."""
+        """What the browser learns about a job — without bytes."""
         out = {k: j.get(k) for k in ("id", "kind", "status", "message", "created", "updated",
                                     "request", "meta", "result_meta", "result", "expired")}
         out["has_audio"] = bool(j.get("audio"))
@@ -605,7 +614,7 @@ class Broker:
                 waiting = sum(len(j.get("upload") or b"") for j in mine)
                 if waiting + len(upload) > NS_UPLOAD_CAP or self.bytes_held() + len(upload) > AUDIO_BUDGET:
                     raise OverflowError("Zu viele Dateien unterwegs — warte, bis der Mac sie abgeholt hat.")
-            # Ältestes Fertiges verdrängen, damit der Namensraum nicht volläuft
+            # Evict the oldest finished job so the namespace does not fill up
             if len(mine) >= MAX_JOBS_PER_NS:
                 done = sorted((j for j in mine if j["status"] not in ("queued", "running")),
                               key=lambda x: x["updated"])
@@ -649,7 +658,7 @@ class Broker:
             if j["status"] == "queued":
                 j["status"] = "cancelled"
                 j["upload"] = None
-            j["cancel"] = True             # läuft er schon, erfährt es der Mac beim nächsten Lebenszeichen
+            j["cancel"] = True             # if it is already running, the Mac learns of it at the next sign of life
             j["updated"] = time.time()
             self.cv.notify_all()
             return True
@@ -666,18 +675,20 @@ class Broker:
                     "queued": sum(1 for j in mine if j["status"] == "queued"),
                     "running": sum(1 for j in mine if j["status"] == "running")}
 
-    # ---- Mac-Brücke -------------------------------------------------------
+    # ---- Mac bridge -------------------------------------------------------
     def next_for_bridge(self, ns: str, info: dict, wait: float, lane: str = "render"):
         deadline = time.time() + wait
         taker = str(info.get("host") or "?")
         with self.cv:
-            # 🔑 Wer nach Arbeit fragt, arbeitet an nichts — die Brücke holt strikt einen
-            #    diesem Mac, ist die Brücke dabei gestorben (Neustart, Schlaf, kill).
-            #    einmal. Wirft er die Brücke ein zweites Mal um, ist er ein Fehler.
+            # 🔑 Whoever asks for work is working on nothing — the bridge strictly takes one
+            #    job at a time. So if one is still "running" on EXACTLY
+            #    this Mac, the bridge died along the way (restart, sleep, kill).
+            #    Instead of leaving it as "running" for 15 minutes: requeue it —
+            #    once. If it takes the bridge down a second time, it is an error.
             now = time.time()
             for j in self.jobs.values():
-                # 🔴 nur in DER Spur, die gerade fragt: die Brief-Spur arbeitet parallel zur
-                #    Render-Spur, ihr Fragen sagt über einen laufenden Track nichts.
+                # 🔴 only in THE lane that is asking: the brief lane works in parallel to the
+                #    render lane, its asking says nothing about a running track.
                 if (j["ns"] == ns and j["status"] == "running" and j.get("taken_by") == taker
                         and lane_of(j["kind"]) == lane):
                     if j.get("attempts", 1) >= 2:
@@ -690,8 +701,8 @@ class Broker:
                 self.bridges[ns] = {"seen": now, "info": info}
                 self._sweep(now)
                 caps = set(str(info.get("caps") or "").split(","))
-                # 🔴 3.2 (Audit): eine Brücke, die eine Art nicht kann, holte sie nie ab — der Auftrag
-                #    wartete ewig und belegte einen Platz. Jetzt sagt er, woran es liegt.
+                # 🔴 3.2 (audit): a bridge that cannot handle a kind never picked it up — the job
+                #    waited forever and held a slot. Now it says what the cause is.
                 for j in self.jobs.values():
                     if (j["ns"] == ns and j["status"] == "queued" and lane_of(j["kind"]) == lane
                             and j["kind"] in NEW_KINDS and j["kind"] not in caps):
@@ -718,9 +729,9 @@ class Broker:
         return j if j and j["ns"] == ns else None
 
     def adopt(self, ns: str, jid: str, kind: str, request: dict, meta: dict, taker: str) -> bool:
-        """3.13: Die Brücke meldet einen Auftrag wieder an, den sie gerade rechnet, den dieser Server aber nach einem
-        Neustart nicht mehr kennt (die Warteschlange liegt nur im Speicher). Gleiche Kennung — der Browser fragt
-        weiter nach ihr und bekommt das Ergebnis, als wäre nichts gewesen."""
+        """3.13: The bridge re-registers a job it is currently computing but that this server no longer knows after a
+        restart (the queue lives in memory only). Same id — the browser keeps polling for it and
+        gets the result as if nothing had happened."""
         with self.cv:
             now = time.time()
             j = self.jobs.get(jid)
@@ -742,8 +753,8 @@ class Broker:
             self.bridges.setdefault(ns, {"seen": now, "info": {}})["seen"] = now
             j = self._bridge_job(ns, jid)
             if not j:
-                # 3.13: bis hier hieß unbekannt: abbrechen. Nach jedem Neustart dieses Servers starb so ein laufender
-                #    Render mitten in der Rechnung. Jetzt meldet die Brücke ihn wieder an (adopt).
+                # 3.13: until now unknown meant: cancel. After every restart of this server a running
+                #    render died mid-computation. Now the bridge re-registers it (adopt).
                 return {"cancel": False, "unknown": True}
             if j["status"] == "running":
                 j["message"] = (message or "")[:120]
@@ -751,7 +762,7 @@ class Broker:
             return {"cancel": bool(j["cancel"])}
 
     def set_cover(self, ns: str, jid: str, data: bytes = None, error: str = "") -> bool:
-        """Das Cover kommt nach dem Track — darum auch an einen schon fertigen Auftrag."""
+        """The cover arrives after the track — hence also for an already finished job."""
         with self.cv:
             j = self._bridge_job(ns, jid)
             if not j or j["status"] not in ("running", "done"):
@@ -760,7 +771,7 @@ class Broker:
                 j.update(cover=data, cover_state="done", cover_error=None)
             else:
                 j.update(cover_state="failed", cover_error=(error or "kein Cover")[:200])
-            # Ein fertiger Auftrag altert weiter (sonst hielte ein nachgereichtes Cover ihn ewig am Leben)
+            # A finished job keeps aging (otherwise a late-delivered cover would keep it alive forever)
             if j["status"] == "running":
                 j["updated"] = time.time()
             self._sweep(time.time())
@@ -797,20 +808,21 @@ class Broker:
 BROKER = Broker()
 
 
-# ---- 3.23: Ein-Klick-Update (nur lokale Installation) ----------------------
-# Die lokale Installation (Starter setzt MWS_HOME, daneben bridge.json, die App liegt in MWS_HOME/app) fragt — nur wenn
-# der Browser es will — GitHub nach dem neuesten Release. Ein Klick lädt das Release-ZIP, prüft es (übersetzt, Probestart
-# auf einem freien Port meldet die neue Version), sichert die alte App nach app.prev, tauscht die Dateien und startet
-# den Server neu (POSIX: execv, dieselbe Prozessnummer — der Starter merkt nichts; Windows: Ende mit 75, der Starter
-# startet neu). Die Brücke merkt ihren geänderten Code selbst und startet neu, sobald sie nichts zu tun hat.
-# Braucht eine Fassung neue Bausteine (INSTALL_REV höher als der installierte Stand), geht es nur über den Installer.
+# ---- 3.23: one-click update (local install only) ---------------------------
+# The local install (the starter sets MWS_HOME, next to it bridge.json, the app lives in MWS_HOME/app) asks GitHub for
+# the latest release — only when the browser wants it. One click downloads the release ZIP, verifies it (compiled, a test
+# start on a free port reports the new version), backs up the old app to app.prev, swaps the files and restarts
+# the server (POSIX: execv, same process id — the starter notices nothing; Windows: exit with 75, the starter
+# restarts it). The bridge notices its changed code by itself and restarts as soon as it has nothing to do.
+# If a version needs new building blocks (INSTALL_REV higher than the installed state), only the installer can do it.
+# In the container (Pi) all of this is off: there is no MWS_HOME there, rollout goes through the workshop broker.
 UPDATE_REPO = "robeertm/manuwave-studio"
-UPDATE_API = (os.environ.get("MWS_UPDATE_API") or "https://api.github.com").rstrip("/")             # Prüfstand: nachgestellt
+UPDATE_API = (os.environ.get("MWS_UPDATE_API") or "https://api.github.com").rstrip("/")             # test bench: simulated
 UPDATE_RAW = (os.environ.get("MWS_UPDATE_RAW") or "https://raw.githubusercontent.com").rstrip("/")
 UPDATE_HOSTS = {"api.github.com", "codeload.github.com", "github.com", "raw.githubusercontent.com",
                 urllib.parse.urlparse(UPDATE_API).hostname, urllib.parse.urlparse(UPDATE_RAW).hostname}
-INSTALL_REV = 1                 # Installer-Stand, den diese Fassung braucht (der Installer schreibt MWS_HOME/install_rev)
-UPDATE_CACHE_S = 6 * 3600       # GitHub höchstens alle 6 Stunden fragen
+INSTALL_REV = 1                 # installer revision this version needs (the installer writes MWS_HOME/install_rev)
+UPDATE_CACHE_S = 6 * 3600       # ask GitHub at most every 6 hours
 UPDATE_MAX_BYTES = 300 * 1024 * 1024
 TAG_RE = re.compile(r"^v(\d{1,4})\.(\d{1,4})\.(\d{1,4})$")
 
@@ -821,7 +833,7 @@ def _vtuple(v: str):
 
 
 def mws_home() -> str:
-    """Die lokale Installation, zu der DIESER Server gehört — sonst "" (Container, Entwicklung, git-Klon)."""
+    """The local install THIS server belongs to — otherwise "" (container, development, git clone)."""
     home = os.environ.get("MWS_HOME") or ""
     if not home or not os.path.isfile(os.path.join(home, "bridge.json")):
         return ""
@@ -834,16 +846,17 @@ def mws_home() -> str:
 
 
 def respawn_needed() -> bool:
-    """3.24.1: Windows-Starter bis 3.24.0 erkannten Code 75 nie (Start-Process -PassThru ohne gemerkten Handle →
-    ExitCode bleibt leer) — Server und Brücke blieben nach Update oder neuem Code einfach aus. Erst der Starter ab
-    3.24.1 setzt MWS_SUPERVISED=1 und startet zuverlässig neu; unter einem älteren startet sich das Programm selbst."""
-    if os.environ.get("MWS_TEST_RESPAWN") == "1":          # Prüfstand: diesen Weg auch auf POSIX gehen
+    """3.24.1: Windows starters up to 3.24.0 never recognised exit code 75 (Start-Process -PassThru
+    without a kept handle → ExitCode stays empty) — server and bridge simply stayed down after an update or
+    new code. Only the starter from 3.24.1 on sets MWS_SUPERVISED=1 and restarts reliably; under an older
+    one the program restarts itself."""
+    if os.environ.get("MWS_TEST_RESPAWN") == "1":          # test bench: take this path on POSIX too
         return True
     return os.name == "nt" and os.environ.get("MWS_SUPERVISED") != "1"
 
 
 def spawn_detached(argv: list, cwd: str, log_name: str) -> None:
-    """Den Nachfolger losgelöst starten — er überlebt das Ende dieses Prozesses und des alten Starters."""
+    """Start the successor detached — it survives the end of this process and of the old starter."""
     home = mws_home() or cwd
     try:
         err = open(os.path.join(home, log_name), "ab")
@@ -857,8 +870,8 @@ def spawn_detached(argv: list, cwd: str, log_name: str) -> None:
 
 
 def restart_self(code: int = 75) -> None:
-    """Neu starten mit dem Code auf der Platte. POSIX: execv (dieselbe Prozessnummer, der Starter behält sie);
-    Windows mit Starter ab 3.24.1: beenden mit 75 — der Starter startet neu; unter einem älteren: selbst neu starten."""
+    """Restart with the code on disk. POSIX: execv (same process id, the starter keeps it);
+    Windows with starter 3.24.1+: exit with 75 — the starter restarts; under an older one: restart itself."""
     try:
         sys.stdout.flush()
         sys.stderr.flush()
@@ -897,7 +910,7 @@ def _free_port() -> int:
 class Updater:
     def __init__(self):
         self.lock = threading.Lock()
-        self.cache = None              # (zeit, angaben)
+        self.cache = None              # (time, data)
         self.state = {"phase": "idle", "message": "", "tag": ""}
 
     def installed_rev(self, home: str) -> int:
@@ -920,7 +933,7 @@ class Updater:
                 if not TAG_RE.match(tag):
                     raise ValueError("unbekannte Fassung %r" % tag[:20])
                 rev = INSTALL_REV
-                try:            # braucht die neue Fassung den Installer? Steht in ihrer server.py
+                try:            # does the new version need the installer? It says so in its server.py
                     src = _fetch("%s/%s/%s/app/server.py" % (UPDATE_RAW, UPDATE_REPO, tag), 4 * 1024 * 1024, 15).decode("utf-8", "replace")
                     m = re.search(r"^INSTALL_REV = (\d+)", src, re.M)
                     rev = int(m.group(1)) if m else rev
@@ -933,7 +946,7 @@ class Updater:
             except Exception as e:  # noqa: BLE001
                 data = dict(self.cache[1]) if self.cache else {}
                 data["error"] = "GitHub nicht erreichbar (%s)" % type(e).__name__
-                self.cache = (now - UPDATE_CACHE_S + 600, data)        # in 10 Minuten wieder versuchen
+                self.cache = (now - UPDATE_CACHE_S + 600, data)        # try again in 10 minutes
         if self.cache:
             out.update(self.cache[1])
         newer = bool(out.get("latest")) and (_vtuple(out["latest"]) or (0,)) > (_vtuple(APP_VERSION) or (0,))
@@ -1006,7 +1019,7 @@ class Updater:
                             py_compile.compile(os.path.join(d, fn), doraise=True)
                         except py_compile.PyCompileError:
                             raise ValueError("Die neue Fassung lässt sich nicht übersetzen (%s)" % fn)
-            # Probestart: die neue Fassung muss auf einem freien Port antworten, bevor sie die alte ersetzt
+            # Trial start: the new version must answer on a free port before it replaces the old one
             port = _free_port()
             env = {k: v for k, v in os.environ.items() if k != "MWS_HOME"}
             env.update(HOST="127.0.0.1", PORT=str(port))
@@ -1039,7 +1052,7 @@ class Updater:
             try:
                 _sync_tree(new_app, ROOT)
             except Exception:
-                _sync_tree(prev, ROOT)        # halb getauscht: die alte App zurück
+                _sync_tree(prev, ROOT)        # half swapped: restore the old app
                 raise
             _copy_launchers(src, home)
             shutil.rmtree(work, ignore_errors=True)
@@ -1051,9 +1064,9 @@ class Updater:
 
 
 def _sync_tree(src: str, dst: str) -> None:
-    """dst wird zu src: neue und geänderte Dateien kopieren, verschwundene löschen (Zwischenspeicher und der
-    Build-Stempel bleiben). Kopiert in die bestehenden Ordner — unter Windows lässt sich der Ordner des
-    laufenden Servers nicht umbenennen."""
+    """dst becomes src: copy new and changed files, delete vanished ones (caches and the
+    build stamp stay). Copies into the existing folders — on Windows the folder of the
+    running server cannot be renamed."""
     import shutil
     keep = {"build-info.json"}
     for d, dirs, fs in os.walk(src):
@@ -1074,7 +1087,7 @@ def _sync_tree(src: str, dst: str) -> None:
 
 
 def _copy_launchers(src: str, home: str) -> None:
-    """Die Starter liegen neben der App (der Installer legte sie dort ab) — gelten ab dem nächsten Start."""
+    """The starters sit next to the app (the installer put them there) — they take effect from the next start."""
     import shutil
     pairs = {"darwin": [("install/macos/Manuwave Studio.command", "Manuwave Studio.command")],
              "linux": [("install/linux/manuwave-studio.sh", "manuwave-studio.sh")],
@@ -1091,24 +1104,25 @@ def _copy_launchers(src: str, home: str) -> None:
 UPDATER = Updater()
 
 
-# ---- Kopplung per Code ------------------------------------------------------
-#    unter dem man sie selbst geöffnet hat — ein Kopplungslink für die eine Adresse
-#    ist unter einer anderen unsichtbar, und auf dem Handy ist sie ohnehin anders.
-#    Darum: die Brücke bietet einen kurzen Code an, jedes Gerät tippt ihn ein.
-#    Der Code lebt 10 Minuten im Speicher; Raten ist gedrosselt (31^6 ≈ 887 Mio.
-#    Codes gegen 20 Versuche je 10 min).
-#    Hinter Dockers Portweiterleitung sehen alle Absender gleich aus — die Drossel
-#    wirkt dann für alle zusammen. Das ist strenger, nicht lockerer.
-PAIR_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # ohne 0/O, 1/I/L
+# ---- Pairing by code --------------------------------------------------------
+# 🔴 localStorage is per ADDRESS. The workshop links apps with the hostname
+#    under which one opened them oneself — a pairing link for one address
+#    is invisible under another, and on a phone it is different anyway.
+#    Hence: the bridge offers a short code, every device types it in.
+#    The code lives 10 minutes in memory; guessing is throttled (31^6 ≈ 887 million
+#    codes against 20 attempts per 10 min).
+#    Behind Docker's port forwarding all senders look the same — the throttle
+#    then applies to all of them together. That is stricter, not looser.
+PAIR_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"   # without 0/O, 1/I/L
 PAIR_TTL = 10 * 60
-PAIR_TRIES = 20                                      # je Absender und Zeitfenster
+PAIR_TRIES = 20                                      # per sender and time window
 
 
 class Pairing:
     def __init__(self):
         self.lock = threading.Lock()
         self.codes: dict = {}      # code -> (token, expires)
-        self.tries: dict = {}      # ip -> [zeitpunkte]
+        self.tries: dict = {}      # ip -> [timestamps]
 
     def offer(self, token: str) -> str:
         with self.lock:
@@ -1121,7 +1135,7 @@ class Pairing:
             return code[:3] + "-" + code[3:]
 
     def claim(self, ip: str, code: str):
-        """Token zum Code — oder None. Drosselt je Absender."""
+        """Token for the code — or None. Throttles per sender."""
         with self.lock:
             now = time.time()
             recent = [t for t in self.tries.get(ip, []) if now - t < PAIR_TTL]
@@ -1143,20 +1157,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *a, **k):
         super().__init__(*a, directory=WEB, **k)
 
-    def log_message(self, fmt, *args):  # ruhiger Log, Fehler stehen im Body
+    def log_message(self, fmt, *args):  # quiet log, errors are in the body
         pass
 
     def end_headers(self):
-        # Statische Assets nie hart cachen: ``no-cache`` erzwingt eine Revalidierung,
-        # sodass ein neuer Deploy garantiert frische index.html/app.js ausliefert und
-        # der Browser keine alte Version (z. B. v1.0.0) festhält. JSON-Antworten setzen
-        # ihren eigenen ``no-store``-Header (Flag ``_cc``) und werden hier übersprungen.
+        # Never cache static assets hard: ``no-cache`` forces revalidation,
+        # so a new deploy is guaranteed to serve a fresh index.html/app.js and
+        # the browser does not hold on to an old version (e.g. v1.0.0). JSON responses set
+        # their own ``no-store`` header (flag ``_cc``) and are skipped here.
         if not getattr(self, "_cc", False):
             self.send_header("Cache-Control", "no-cache")
         self._cc = False
         super().end_headers()
 
-    # ---- Helfer -----------------------------------------------------------
+    # ---- Helpers ----------------------------------------------------------
     def _json(self, code, payload):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(code)
@@ -1168,7 +1182,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def _read_body(self):
-        # 🔴 3.2 (Audit): ohne Grenze las auch /api/pair/claim (ohne Schlüssel) jeden Körper in den Speicher
+        # 🔴 3.2 (audit): without a limit /api/pair/claim (no key) also read every body into memory
         try:
             length = int(self.headers.get("Content-Length", "0") or "0")
         except ValueError:
@@ -1183,7 +1197,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return data if isinstance(data, dict) else {}
 
     def _raw_body(self, limit: int):
-        """Rohe Bytes (Audio). None, wenn zu groß — dann wird gar nicht erst gelesen."""
+        """Raw bytes (audio). None if too large — then nothing is read at all."""
         try:
             length = int(self.headers.get("Content-Length", "0") or "0")
         except ValueError:
@@ -1204,7 +1218,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
     def _ns(self):
-        """Namensraum aus dem Kopplungsschlüssel — oder 401 und None."""
+        """Namespace from the pairing key — or 401 and None."""
         ns = Broker.ns_for(self.headers.get("x-nf-bridge", ""))
         if not ns:
             self._json(401, {"error": "no_bridge",
@@ -1212,8 +1226,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return ns
 
     def _update_apply(self):
-        """3.23: nur aus der eigenen Seite (Host und Origin = 127.0.0.1/localhost) und nur mit dem Schlüssel aus
-        bridge.json — eine fremde Webseite kann weder den Schlüssel noch den Kopf x-nf-bridge mitschicken."""
+        """3.23: only from the app's own page (Host and Origin = 127.0.0.1/localhost) and only with the key from
+        bridge.json — a foreign web page can send neither the key nor the x-nf-bridge header."""
         home = mws_home()
         host = (self.headers.get("Host") or "").rsplit(":", 1)[0].lower()
         origin = (self.headers.get("Origin") or "").lower()
@@ -1246,9 +1260,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             self._json(200, UPDATER.info(net=q.get("net") != ["0"], force=q.get("force") == ["1"]))
             return
-        if path in ("/bridge/neonforge_bridge.py", "/bridge/manuwave_bridge.py"):
-            # Die Mac-Brücke gehört zur App und hat dieselbe Version — so holt der Mac
-            # sich immer genau das Gegenstück zum laufenden Server.
+        if path in BRIDGE_PATHS:
+            # The Mac bridge is part of the app and has the same version — so the Mac
+            # always fetches exactly the counterpart of the running server.
             try:
                 with open(BRIDGE_FILE, "rb") as f:
                     data = f.read()
@@ -1271,14 +1285,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def _zur_sicheren_adresse(self):
-        """Seit 2.2: wer die Startseite über eine alte http-Adresse im Browser öffnet, landet
-        auf der https-Adresse (tailscale serve). Erkannt an X-Forwarded-Proto — den setzt
-        tailscale serve NUR auf dem https-Weg (gemessen 10.10.2026), also keine Schleife.
+        """Since 2.2: whoever opens the start page in the browser via an old http address lands
+        on the https address (tailscale serve). Detected via X-Forwarded-Proto — tailscale serve sets it
+        ONLY on the https path (measured 10.10.2026), so no loop.
 
-        🔴 Ausnahme ?nf-umzug=1: das ist das Umzugsfenster, das die Daten von der ALTEN
-           Adresse holt (web/umzug.js). Leitete es um, käme niemand mehr an sie heran.
-        Nur Browser-Seiten (Accept: text/html), nie /api, nie die Brücke, nie vom Pi selbst.
-        302 statt 301 — eine 301 merkt sich der Browser dauerhaft."""
+        🔴 Exception ?nf-umzug=1: that is the move window that fetches the data from the OLD
+           address (web/umzug.js). If it were redirected, nobody could reach that data any more.
+        Browser pages only (Accept: text/html), never /api, never the bridge, never from the Pi itself.
+        302 instead of 301 — a 301 is remembered by the browser permanently."""
         if not SECURE_ORIGIN or self.headers.get("X-Forwarded-Proto", "").lower() == "https":
             return None
         if "text/html" not in (self.headers.get("Accept") or ""):
@@ -1308,7 +1322,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except ValueError:
                 wait = 25.0
             info = clean_agent(self.headers.get("x-nf-agent", ""))
-            # Ohne Angabe: Render-Spur — eine Brücke von 2.0 kennt keine Briefe und bekommt keine.
+            # Without a parameter: render lane — a 2.0 bridge knows no briefs and gets none.
             lane = "brief" if q.get("lane", [""])[0] == "brief" else "render"
             j = BROKER.next_for_bridge(ns, info, wait, lane)
             if not j:
@@ -1358,7 +1372,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/update/apply":
             return self._update_apply()
         if path == "/api/pair/claim":
-            # Ohne Schlüssel — genau dafür ist der Code da.
+            # Without a key — that is exactly what the code is for.
             try:
                 token = PAIRING.claim(self.client_address[0], str(self._read_body().get("code", "")))
             except PermissionError as e:
@@ -1414,15 +1428,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._json(200, job)
             return
         if path in ("/api/job", "/api/job/upload"):
-            # 3.2: Einstellungen, Export, Cover, Nachrüsten, Wasserzeichen prüfen.
-            # Mit Datei: Rohdaten im Körper, die Angaben in x-nf-job (URL-kodiertes JSON).
+            # 3.2: settings, export, cover, retrofit, check watermark.
+            # With a file: raw data in the body, the details in x-nf-job (URL-encoded JSON).
             if path == "/api/job":
                 data = self._read_body()
                 upload = None
             else:
                 try:
                     data = json.loads(urllib.parse.unquote(self.headers.get("x-nf-job", "") or "{}"))
-                except Exception:      # auch RecursionError bei absurd verschachteltem JSON
+                except Exception:      # also RecursionError with absurdly nested JSON
                     data = {}
                 if not isinstance(data, dict) or data.get("kind") not in ("verify", "export", "nachruesten", "weiter"):
                     self._json(400, {"error": "bad_request", "message": "Unbekannte Auftragsart."})
@@ -1459,6 +1473,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return
             name = urllib.parse.unquote(self.headers.get("x-nf-filename", "upload"))[:120]
             name = re.sub(r"[^\w.\- ]+", "_", name) or "upload"
+            # 3.24: "analyse" = music AI listens AND the Mac measures (tempo, key, chords, structure …) — from bridge 3.19
             q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             kind = "analyse" if q.get("kind") == ["analyse"] else "understand"
             try:
@@ -1472,7 +1487,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if m:
             self._json(200, {"ok": BROKER.cancel(ns, m.group(1))})
             return
-        # ---- Mac-Brücke ----
+        # ---- Mac bridge ----
         m = re.match(r"^/api/bridge/adopt/([0-9a-f]{16})$", path)
         if m:
             data = self._read_body()
@@ -1525,8 +1540,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     j["pending_meta"] = data if isinstance(data, dict) else None
             self._json(200 if j else 404, {"ok": bool(j)})
             return
-        # result: Audio-Bytes (render, export), ZIP (3.9: Veröffentlichungspaket), JSON-Datei (3.16: MIDI-Abbilder,
-        #         größer als ein JSON-Körper) oder JSON (understand, settings …)
+        # result: audio bytes (render, export), ZIP (3.9: release package), JSON file (3.16: MIDI images,
+        #         larger than a JSON body) or JSON (understand, settings …)
         ctype = (self.headers.get("Content-Type") or "").lower()
         if ctype.startswith("audio/") or ctype.split(";")[0].strip() in ("application/zip", FILE_JSON):
             audio = self._raw_body(MAX_AUDIO_BYTES)
@@ -1546,16 +1561,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 
 class Server(socketserver.ThreadingTCPServer):
-    #    teilten Browser und Brücke auf: Aufträge kamen bei dem einen an, die Brücke fragte beim anderen.
+    # 🔴 3.24.1: on Windows SO_REUSEADDR does NOT mean "skip TIME_WAIT" (Windows does that anyway), but
+    #    "a second process may additionally bind the same port" — without error. Two servers on one port
+    #    split browser and bridge: jobs arrived at one, the bridge asked the other.
     allow_reuse_address = os.name != "nt"
     daemon_threads = True
-    # 3.22: Warteschlange statt 5 (Standard) — beim Laden holt der Browser ~20 Dateien auf einmal; unter Last setzte
-    # der Server überzählige Verbindungen zurück (60 gleichzeitig: 25 Abbrüche), eine fehlende Moduldatei legte die App lahm
+    # 3.22: queue instead of 5 (default) — on load the browser fetches ~20 files at once; under load
+    # the server reset surplus connections (60 simultaneous: 25 aborts), a missing module file crippled the app
     request_queue_size = 256
 
 
 def _bind() -> "Server":
-    """Ein Nachfolger startet, während sein Vorgänger den Port noch hält — kurz warten statt aufgeben."""
+    """A successor starts while its predecessor still holds the port — wait briefly instead of giving up."""
     for i in range(60):
         try:
             return Server((HOST, PORT), Handler)

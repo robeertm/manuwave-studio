@@ -9,7 +9,7 @@
 # except Homebrew (installed if missing — macOS asks for your password once) and its packages.
 #
 # Credits: the engine build and model layout follow acestep.cpp's own scripts and the approach of
-# the MIT-licensed "music-generator" installer (Apple CLT, uv/cmake, resumable curl, pinned revision).
+# an MIT-licensed community installer, see THIRD_PARTY.md (Apple CLT, uv/cmake, resumable curl, pinned revision).
 set -u
 MWS_HOME="${MWS_HOME:-$HOME/ManuwaveStudio}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -103,10 +103,10 @@ fi
 eval "$("$BREW" shellenv)"
 PKGS="ffmpeg fftw libsndfile libgcrypt mpg123 pkg-config libtool zstd"
 MISSING=$(for p in $PKGS; do brew list --formula "$p" >/dev/null 2>&1 || printf "%s " "$p"; done)
-# Ollama: ein vorhandenes (z. B. die Ollama-App) wird benutzt — ein zweites würde ändern, welches „ollama"
-# andere Programme auf diesem Mac aufrufen. Nur wenn gar keins da ist, kommt es aus Homebrew.
+# Ollama: an existing one (e.g. the Ollama app) is used — a second one would change which "ollama"
+# other programs on this Mac call. Only if there is none at all does it come from Homebrew.
 command -v ollama >/dev/null 2>&1 || MISSING="$MISSING ollama"
-# cmake: ein vorhandenes genügt (auch das von uv unter ~/.local/bin)
+# cmake: an existing one is enough (also the one uv puts in ~/.local/bin)
 export PATH="$HOME/.local/bin:$PATH"
 command -v cmake >/dev/null 2>&1 || MISSING="$MISSING cmake"
 [ -n "$MISSING" ] && { brew install $MISSING || die "brew install failed: $MISSING"; }

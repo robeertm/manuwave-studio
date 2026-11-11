@@ -1,4 +1,4 @@
-// NeonForge 3.8 — Richtungen und der Würfel.
+// Manuwave Studio 3.8 — Richtungen und der Würfel.
 //
 // Richtungen, füge sie hinzu, will alles abdecken können". Jetzt ~90 Richtungen in Gruppen.
 // 🔑 Die 16 alten Namen bleiben WORTGLEICH — gespeicherte Eingaben (nf_form) wählen per Text.

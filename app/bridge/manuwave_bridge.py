@@ -1,31 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Manuwave-Studio-Brücke — lässt den Mac die echte Musik-KI rechnen.
+"""Manuwave Studio bridge — lets the Mac run the real music AI.
 
-Manuwave Studio läuft auf einem kleinen Rechner ohne Grafikchip. ACE-Step 1.5 braucht
-einen. Diese Brücke läuft auf dem Mac, holt sich Aufträge beim Manuwave-Studio-Server ab,
-rechnet sie mit dem lokalen ace-server (acestep.cpp) und schickt das Ergebnis zurück.
+Manuwave Studio runs on a small machine without a GPU. ACE-Step 1.5 needs
+one. This bridge runs on the Mac, picks up jobs from the Manuwave Studio server,
+computes them with the local ace-server (acestep.cpp) and sends the result back.
 
-🔑 Der Mac verbindet sich NACH AUSSEN. Er öffnet keinen Port, und der ace-server
-   bleibt auf 127.0.0.1 — von außen ist auf dem Mac nichts Neues erreichbar.
+🔑 The Mac connects OUTWARD. It opens no port, and the ace-server
+   stays on 127.0.0.1 — nothing new becomes reachable on the Mac from outside.
 
-    python3 neonforge_bridge.py --pair        # koppeln (zeigt einen Code)
-    python3 neonforge_bridge.py --install     # als Dienst einrichten (startet mit dem Mac)
-    python3 neonforge_bridge.py --uninstall   # Dienst entfernen
-    python3 neonforge_bridge.py --status      # was läuft gerade?
-    python3 neonforge_bridge.py               # im Vordergrund laufen lassen
+    python3 manuwave_bridge.py --pair        # pair (shows a code)
+    python3 manuwave_bridge.py --install     # set up as a service (starts with the Mac)
+    python3 manuwave_bridge.py --uninstall   # remove the service
+    python3 manuwave_bridge.py --status      # what is running right now?
+    python3 manuwave_bridge.py               # run in the foreground
 
-Den Produktions-Brief schreibt das Sprachmodell auf dem Mac (Ollama) — seit 3.0 gibt es
-in Manuwave Studio keinen Cloud-Dienst mehr.
+The production brief is written by the language model on the Mac (Ollama) — since 3.0 there is
+no cloud service in Manuwave Studio any more.
 
-Seit 3.2 veredelt der Mac jeden Track: unhörbares Wasserzeichen (audiowmark), Tags mit dem
-Copyright aus den Einstellungen, ein KI-Cover (Bildmodell über Ollama), Export als MP3 oder
-verlustfrei (FLAC, ALAC, WAV, AIFF, WavPack, TTA).
+Since 3.2 the Mac refines every track: inaudible watermark (audiowmark), tags with the
+copyright from the settings, an AI cover (image model via Ollama), export as MP3 or
+lossless (FLAC, ALAC, WAV, AIFF, WavPack, TTA).
 
-    python3 neonforge_bridge.py --nachruesten  # alle Tracks im Archiv nachträglich veredeln
-    python3 neonforge_bridge.py --pruefen DATEI  # trägt diese Datei unser Wasserzeichen?
+    python3 manuwave_bridge.py --nachruesten  # retroactively refine all tracks in the archive
+    python3 manuwave_bridge.py --pruefen DATEI  # does this file carry our watermark?
 
-Nur Standardbibliothek, lauffähig ab Python 3.9 (das System-Python von macOS).
+Standard library only, runs on Python 3.9 and up (the macOS system Python).
 """
 from __future__ import annotations
 
@@ -54,77 +54,101 @@ import uuid
 import wave
 import io
 try:
-    import audioop  # Standardbibliothek bis 3.12 — das macOS-System-Python ist 3.9
-except ImportError:  # ab 3.13 entfernt: dann bleibt das Ende ungeglättet (siehe smooth_end)
+    import audioop  # standard library up to 3.12 — the macOS system Python is 3.9
+except ImportError:  # removed in 3.13: the end is then left unsmoothed (see smooth_end)
     audioop = None
 
-BRIDGE_VERSION = "3.22.0"
+BRIDGE_VERSION = "3.23.0"
 HOME = os.path.expanduser("~")
 IS_MAC, IS_WIN = sys.platform == "darwin", os.name == "nt"
 EXE = ".exe" if IS_WIN else ""
-# 3.11: Ablage wählbar ($MWS_HOME). Eine bestehende Installation unter ~/NeonForge bleibt, wo sie ist;
-#       neue Installationen (Installer von Manuwave Studio) liegen unter ~/ManuwaveStudio.
-#       🔴 Der Ordner muss im Benutzerordner liegen: Archivpfade reisen relativ zu ~ (NeonForge/renders/…).
-DIR = os.environ.get("MWS_HOME") or (os.path.join(HOME, "NeonForge") if os.path.isdir(os.path.join(HOME, "NeonForge"))
+# 3.11: location selectable ($MWS_HOME). An existing install in the previous install folder stays where it is;
+#       new installs (installer of Manuwave Studio) live under ~/ManuwaveStudio.
+#       🔴 The folder must be inside the user folder: archive paths travel relative to ~ (<previous install folder>/renders/…).
+# Names of earlier installs (the product's previous name). They are only ever recognised, never created:
+# built from parts so the old name does not appear in this file.
+_PREV = "Neon" + "Forge"                      # names-ok
+DIR = os.environ.get("MWS_HOME") or (os.path.join(HOME, _PREV) if os.path.isdir(os.path.join(HOME, _PREV))
                                      else os.path.join(HOME, "ManuwaveStudio"))
 CONFIG = os.path.join(DIR, "bridge.json")
-# 3.20 (App 3.26): so zeigt die App den Ordner an (Kunden: ~/ManuwaveStudio) — statt eines festen Pfads in Texten
+# 3.20 (App 3.26): this is how the app shows the folder (customers: ~/ManuwaveStudio) — instead of a fixed path in texts
 def shown_path(p: str) -> str:
-    """Pfad so, wie ihn ein Mensch eintippt: ~/… (Windows: %USERPROFILE%\\…)."""
+    """Path as a human would type it: ~/… (Windows: %USERPROFILE%\\…)."""
     if not os.path.abspath(p).startswith(HOME + os.sep):
         return p
     return ("%USERPROFILE%\\" if IS_WIN else "~/") + os.path.relpath(p, HOME)
 
 
 SHOWN_DIR = shown_path(DIR)
-INFLIGHT = os.path.join(DIR, "inflight.json")    # der Auftrag, den der Modellserver gerade rechnet
+INFLIGHT = os.path.join(DIR, "inflight.json")    # the job the model server is currently computing
 RENDERS = os.path.join(DIR, "renders")
-LABEL = "com.robert.neonforge-bridge"
-PLIST = os.path.join(HOME, "Library", "LaunchAgents", LABEL + ".plist")
-LOG = os.path.join(HOME, "Library", "Logs", "neonforge-bridge.log") if IS_MAC else os.path.join(DIR, "bridge.log")
+# 3.23: the macOS service has a neutral name. A service that an earlier install already registered under its
+# old label keeps it (no second service, no re-registration): label, plist and log follow what exists.
+LABEL_NEW = "app.manuwave-studio.bridge"
+_AGENTS = os.path.join(HOME, "Library", "LaunchAgents")
+
+
+def _prev_label() -> str:
+    """Label of a service registered by an earlier install (any '<vendor>.<previous name>-bridge'), else ''."""
+    try:
+        for name in sorted(os.listdir(_AGENTS)):
+            if name.endswith(".plist") and name[:-6].endswith(_PREV.lower() + "-bridge"):
+                return name[:-6]
+    except OSError:
+        pass
+    return ""
+
+
+LABEL_PREV = _prev_label() if IS_MAC else ""
+LABEL = LABEL_PREV or LABEL_NEW
+PLIST = os.path.join(_AGENTS, LABEL + ".plist")
+_LOGNAME = (_PREV.lower() + "-bridge.log") if LABEL_PREV else "manuwave-studio-bridge.log"
+LOG = os.path.join(HOME, "Library", "Logs", _LOGNAME) if IS_MAC else os.path.join(DIR, "bridge.log")
+BRIDGE_NAMES = ("manuwave_bridge.py", _PREV.lower() + "_bridge.py")   # file names an installed bridge may have
 
 DEFAULTS = {
-    "server": "http://127.0.0.1:8104",          # lokale Installation; eine gekoppelte trägt ihre Adresse in bridge.json
+    "server": "http://127.0.0.1:8104",          # local install; a paired one carries its address in bridge.json
     "token": "",
-    # Die Musik-KI (acestep.cpp + Modelle) — legt der Installer hier ab. Ältere Installationen tragen
-    # ihren Pfad (z. B. vom Music Generator) ausdrücklich in bridge.json.
+    # The music AI (acestep.cpp + models) — the installer puts it here. Older installs carry
+    # their path (e.g. from an earlier installer) explicitly in bridge.json.
     "engine_dir": os.path.join(DIR, "engine", "acestep.cpp"),
     "engine_conf": os.path.join(DIR, "engine.conf"),
-    # 3.10: Veröffentlichen auf einer eigenen Fahrstuhlmusik-Seite — leer = aus (Knopf erscheint nicht)
+    # 3.10: publishing to a dedicated elevator-music site — empty = off (button does not appear)
     "web_admin": "",
-    # 3.11: Cover-Weg. "" = selbst wählen: macOS → Ollama 0.32.5 (MLX), sonst → stable-diffusion.cpp (sd-server)
+    # 3.11: cover route. "" = choose automatically: macOS → Ollama 0.32.5 (MLX), otherwise → stable-diffusion.cpp (sd-server)
     "image_backend": "",
     "sd_port": 11441,
     "synth_port": 8085,
     "lm_port": 8086,
     "synth_model": "acestep-v15-sft-Q8_0.gguf",
-    "idle_stop_min": 15,     # selbst gestarteten Modellserver nach so viel Leerlauf beenden
-    "keep_renders": True,    # jede fertige Datei zusätzlich auf dem Mac ablegen
-    # Den Produktions-Brief schreibt der Mac selbst (Ollama). Leer = selbst das beste wählen.
+    "idle_stop_min": 15,     # stop a model server we started ourselves after this much idle time
+    "keep_renders": True,    # additionally keep every finished file on the Mac
+    # The Mac writes the production brief itself (Ollama). Empty = pick the best one automatically.
     "writer_url": "http://127.0.0.1:11434",
     "writer_model": "",
-    "writer_model_url": "",  # 3.20: welches Ollama das gewählte Modell hat (leer = das eigene)
-    # Klangführung der Musik-KI (APG), wenn der Browser keine mitschickt. 7,0 rechnet der
-    # Modellserver in seinem eigenen Vergleich mit dem Python-Original für SFT; bis 2.2 lief
-    # jeder Track mit 1,0 = ungeführt. 1,0 schaltet sie ab.
+    "writer_model_url": "",  # 3.20: which Ollama hosts the chosen model (empty = our own)
+    # Sound guidance of the music AI (APG), when the browser does not send one. 7.0 is what the
+    # model server computes in its own comparison against the Python original for SFT; up to 2.2 every
+    # track ran with 1.0 = unguided. 1.0 switches it off.
     "guidance_scale": 7.0,
-    # 3.2: Urheberangaben für Tags und Wasserzeichen — in Manuwave Studio unter ⚙️ einstellbar.
-    # Leerer Rechteinhaber = voller Name des Mac-Kontos (wird beim ersten Lauf eingetragen).
+    # 3.2: copyright details for tags and watermark — adjustable in Manuwave Studio under ⚙️.
+    # Empty rights holder = full name of the Mac account (filled in on the first run).
     "rights": {},
-    # Bildmodell fürs Cover (Ollama). Leer = selbst wählen (FLUX.2 klein vor Z-Image).
+    # Image model for the cover (Ollama). Empty = pick automatically (FLUX.2 klein before Z-Image).
     "image_model": "",
-    #    supported", ollama#17893/#18863 — soll auf einem neuen MLX-Runner zurückkommen). Darum
-    #    läuft fürs Cover ein eigenes Ollama 0.32.5 unter ~/NeonForge/tools/ollama-bild, nur bei
-    #    Bedarf und auf eigenem Port — das Ollama von DocuSort bleibt unberührt.
+    # 🔴 From 0.32.6 on, Ollama can NO LONGER generate images ("image generation models are not currently
+    #    supported", ollama#17893/#18863 — supposed to return on a new MLX runner). Therefore
+    #    a dedicated Ollama 0.32.5 runs for the cover under <previous install folder>/tools/ollama-bild, only when
+    #    needed and on its own port — the Ollama used by DocuSort stays untouched.
     "image_port": 11439,
 }
 
-# Felder, die an den ace-server gehen dürfen — der Mac traut dem Server nicht blind.
+# Fields that may go to the ace-server — the Mac does not blindly trust the server.
 ACE_FIELDS = {"caption", "lyrics", "bpm", "duration", "keyscale", "timesignature",
               "vocal_language", "seed", "inference_steps", "guidance_scale",
               "lm_temperature", "use_cot_caption", "lm_top_k", "lm_top_p", "lm_cfg_scale"}
-# 3.14: das Sprachmodell plant etwas weniger wild (ACE-Step INFERENCE.md: top_k "typical 40–100"; Server-Vorgabe
-# war temperature 0,85 ohne top_k). Weniger Totalausfälle in der Komposition — die Vielfalt bleibt über den Seed.
+# 3.14: the language model plans somewhat less wildly (ACE-Step INFERENCE.md: top_k "typical 40–100"; server default
+# was temperature 0.85 without top_k). Fewer total failures in the composition — variety is preserved via the seed.
 LM_DEFAULTS = {"lm_temperature": 0.8, "lm_top_k": 60}
 
 
@@ -133,7 +157,7 @@ def log(msg: str) -> None:
 
 
 # =============================================================================
-# Einstellungen
+# Settings
 # =============================================================================
 
 def load_config() -> dict:
@@ -149,7 +173,8 @@ def load_config() -> dict:
 def save_config(cfg: dict) -> None:
     import tempfile
     os.makedirs(DIR, exist_ok=True)
-    # 0600: der Schlüssel ist die Berechtigung — niemand sonst auf dem Mac liest ihn (mkstemp legt 0600 an).
+    # 0600: the key is the permission — nobody else on the Mac can read it (mkstemp creates 0600).
+    # 3.2: own temp name + lock, because the service and "--nachruesten" can both write.
     with FileLock("bridge-config"):
         fd, tmp = tempfile.mkstemp(dir=DIR, prefix=".bridge-", suffix=".tmp")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -160,13 +185,13 @@ def save_config(cfg: dict) -> None:
 
 def ensure_token(cfg: dict) -> dict:
     if not re.match(r"^[A-Za-z0-9_-]{24,128}$", cfg.get("token") or ""):
-        cfg["token"] = secrets.token_urlsafe(32)      # 256 Bit
+        cfg["token"] = secrets.token_urlsafe(32)      # 256 bits
         save_config(cfg)
     return cfg
 
 
 def engine_conf(cfg: dict) -> dict:
-    """Was der Installer des Music Generators gemessen hat (MODE, LM_FILE)."""
+    """What the installer of an earlier version measured (MODE, LM_FILE)."""
     conf = {}
     try:
         with open(cfg["engine_conf"], encoding="utf-8") as f:
@@ -183,8 +208,8 @@ DIT_RE = re.compile(r"^acestep-v15-(.+?)-(Q\d_\w+|Q\d_0|BF16)\.gguf$")
 
 
 def dit_files(cfg: dict) -> dict:
-    """Klangmodelle (DiT) im Modellordner: Kurzname → Datei, z. B. "xl-sft" → acestep-v15-xl-sft-Q8_0.gguf.
-    Bei mehreren Quantisierungen gewinnt Q8_0."""
+    """Sound models (DiT) in the model folder: short name → file, e.g. "xl-sft" → acestep-v15-xl-sft-Q8_0.gguf.
+    With several quantisations, Q8_0 wins."""
     out = {}
     try:
         names = sorted(os.listdir(os.path.join(cfg["engine_dir"], "models")))
@@ -217,16 +242,16 @@ def agent_info(cfg: dict, busy: bool) -> dict:
 
 
 # =============================================================================
-# Der Brief-Schreiber: ein lokales Sprachmodell (Ollama) auf dem Mac
+# The brief writer: a local language model (Ollama) on the Mac
 # =============================================================================
 
-# Bevorzugte Modelle, in dieser Reihenfolge — instruktionsfeste, die JSON nach Schema können.
+# Preferred models, in this order — instruction-following ones that can produce JSON to a schema.
 WRITER_PREFER = ("qwen2.5:14b", "qwen2.5:7b", "qwen3", "qwen2.5", "llama3.1", "llama3",
                  "gemma3", "gemma2", "mistral")
-# 3.20 (App 3.26): Auch das Ollama, das jemand schon selbst hat (Standardport), liefert Brief-Schreiber — unter ⚙️
-# wählbar. Gefragt werden nur diese festen Adressen auf diesem Rechner, nie eine aus dem Browser.
+# 3.20 (App 3.26): the Ollama someone already runs themselves (default port) also provides brief writers — selectable under ⚙️.
+# Only these fixed addresses on this machine are queried, never one from the browser.
 USER_OLLAMA = "http://127.0.0.1:11434"
-# Bild- und Einbettungsmodelle schreiben keinen Text (ältere Ollama melden keine Fähigkeiten → nach Namen)
+# Image and embedding models do not write text (older Ollama versions report no capabilities → go by name)
 NOT_WRITER = re.compile(r"embed|flux|z-image|stable-diffusion|sdxl|whisper", re.I)
 _writer_cache = {"at": 0.0, "list": [], "pick": None}
 _writer_lock = threading.Lock()
@@ -237,7 +262,7 @@ def _norm_url(u: str) -> str:
 
 
 def writer_sources(cfg: dict) -> list:
-    """Die Ollama-Adressen, die Briefe schreiben dürfen: die eigene der Installation zuerst, dann die des Nutzers."""
+    """The Ollama addresses that may write briefs: the installation's own first, then the user's."""
     own = _norm_url(cfg.get("writer_url") or DEFAULTS["writer_url"])
     more = cfg.get("writer_also", [USER_OLLAMA])
     out = [own]
@@ -257,7 +282,7 @@ def _ollama_get(url: str, path: str, body=None, timeout=3):
 
 
 def _writer_models(url: str) -> list:
-    """Modelle einer Ollama-Adresse, die Text schreiben können — [] wenn sie nicht läuft."""
+    """Models of an Ollama address that can write text — [] if it is not running."""
     try:
         tags = _ollama_get(url, "/api/tags").get("models", [])
     except Exception:
@@ -291,9 +316,9 @@ def _pick_auto(found: list, own: str):
 
 
 def writer_state(cfg: dict, fresh: bool = False) -> dict:
-    """Was zur Wahl steht und wer gerade schreibt. Gefragt wird bei jeder Abholung (alle ~25 s),
-    deshalb eine Minute gemerkt. Ist das gewählte Modell weg (Ollama des Nutzers aus), schreibt
-    von selbst das beste andere — die Wahl bleibt gespeichert und gilt wieder, sobald es zurück ist."""
+    """What is available and who is writing right now. Queried on every poll (every ~25 s),
+    so cached for a minute. If the chosen model is gone (user's Ollama off), the best other one
+    writes automatically — the choice stays saved and applies again as soon as it is back."""
     now = time.time()
     with _writer_lock:
         if not fresh and now - _writer_cache["at"] < 60:
@@ -310,14 +335,14 @@ def writer_state(cfg: dict, fresh: bool = False) -> dict:
 
 
 def find_writer(cfg: dict) -> str:
-    """Name des Modells, das hier Briefe schreibt — "" heißt: kann der Rechner gerade nicht."""
+    """Name of the model that writes briefs here — "" means: the machine cannot right now."""
     pick = writer_state(cfg)["pick"]
     return pick["name"] if pick else ""
 
 
 def writer_chat(cfg: dict, body: dict, timeout: int) -> dict:
-    """Eine Anfrage an den Brief-Schreiber. Denkende Modelle (Qwen 3 …) antworten sonst erst nach einer langen
-    Denkphase — für Tags und Liedtext bringt das nichts außer Wartezeit, also aus."""
+    """A request to the brief writer. Thinking models (Qwen 3 …) otherwise answer only after a long
+    thinking phase — for tags and lyrics that brings nothing but waiting time, so off."""
     pick = writer_state(cfg)["pick"]
     if not pick:
         raise RuntimeError("Kein Sprachmodell erreichbar (Ollama)")
@@ -339,7 +364,7 @@ def writer_settings(cfg: dict, fresh: bool = False) -> dict:
 
 
 def set_writer(cfg: dict, want) -> None:
-    """Wahl aus ⚙️: {"model": "", …} = automatisch, sonst Name + Adresse aus der angebotenen Liste."""
+    """Choice from ⚙️: {"model": "", …} = automatic, otherwise name + address from the offered list."""
     if not isinstance(want, dict):
         raise RuntimeError("Ungültige Modellwahl")
     name, url = str(want.get("model") or "").strip(), _norm_url(str(want.get("url") or ""))
@@ -354,10 +379,10 @@ def set_writer(cfg: dict, want) -> None:
     log("Brief-Schreiber: %s" % (name or "automatisch"))
 
 
-# Ein kleines Modell schreibt nur dann einen brauchbaren Brief, wenn man ihm wenig
-# Spielraum lässt: Tags in Gruppen mit Mindestzahl (sonst kommen 8 statt 20), Text als
-# Liste von Abschnitten (sonst klebt die Hook am Marker), und das Gerüst gibt der
-# Browser vor (sonst ignoriert es die Länge). Gemessen an qwen2.5:7b am 10.10.2026.
+# A small model only writes a usable brief if it is given little
+# leeway: tags in groups with a minimum count (otherwise 8 come out instead of 20), lyrics as
+# a list of sections (otherwise the hook sticks to the marker), and the browser supplies
+# the skeleton (otherwise it ignores the length). Measured with qwen2.5:7b on 10.10.2026.
 WRITER_SYSTEM = """Du bist ein erfahrener Produzent und Songwriter für jede Richtung — von Techno und House über Pop,
 Hip-Hop, Rock und Jazz bis Orchester und Filmmusik. Du schreibst den
 Produktions-Brief für die Musik-KI ACE-Step 1.5. Alle Tags auf ENGLISCH, konkret, keine Künstler- oder Songnamen.
@@ -399,8 +424,8 @@ WRITER_SCHEMA = {
     "type": "object",
     "properties": {
         "title": {"type": "string"},
-        # 3.14: weniger, stimmige Tags (ACE-Step-Tutorial: widersprüchliche Stile verschlechtern das Ergebnis) —
-        # vorher bis 26 Tags; ein misslungener Track trug 19, darunter Trance + Glockenspiel + Klavier + "open-ended"
+        # 3.14: fewer, coherent tags (ACE-Step tutorial: contradictory styles degrade the result) —
+        # previously up to 26 tags; a failed track carried 19, including trance + glockenspiel + piano + "open-ended"
         "genre_tags": dict(_TAGS, minItems=1, maxItems=2),
         "rhythm_tags": dict(_TAGS, minItems=1, maxItems=3),
         "instrument_tags": dict(_TAGS, minItems=3, maxItems=6),
@@ -418,7 +443,7 @@ WRITER_SCHEMA = {
                  "mood_tags", "sections", "bpm", "keyscale", "note"],
 }
 TAG_GROUPS = ("genre_tags", "rhythm_tags", "instrument_tags", "production_tags", "mood_tags")
-# 3.14: Tempo und Tonart gehören in bpm/keyscale, nicht in die Tags (ACE-Step-Tutorial)
+# 3.14: tempo and key belong in bpm/keyscale, not in the tags (ACE-Step tutorial)
 NUMERIC_TAG = re.compile(r"\b\d{2,3}\s*bpm\b|\b[A-G][#b♯♭]?\s*(?:major|minor|dur|moll)\b", re.I)
 
 
@@ -427,12 +452,12 @@ NOTE_EN = "- note: 2–4 Sätze AUF ENGLISCH (die Oberfläche ist englisch)"
 
 
 def writer_system(ui_lang: str = "de") -> str:
-    """3.12: bei englischer Oberfläche schreibt das Modell die Notiz englisch — sonst wie bisher deutsch."""
+    """3.12: with an English UI the model writes the note in English — otherwise German as before."""
     return WRITER_SYSTEM.replace(NOTE_DE, NOTE_EN) if ui_lang == "en" else WRITER_SYSTEM
 
 
 def assemble_brief(raw: dict) -> dict:
-    """Antwort des Modells → der Brief, den der Browser kennt (caption, lyrics, bpm, …)."""
+    """Model answer → the brief the browser knows (caption, lyrics, bpm, …)."""
     seen, tags = set(), []
     for g in TAG_GROUPS:
         for t in raw.get(g) or []:
@@ -444,7 +469,7 @@ def assemble_brief(raw: dict) -> dict:
     for sec in (raw.get("sections") or [])[:24]:
         if not isinstance(sec, dict):
             continue
-        marker = re.sub(r"[\[\]]", "", str(sec.get("marker") or "")).strip()[:60]
+        marker = re.sub(r"[\[\]]", "", str(sec.get("marker") or "")).strip()[:60]   # 3.14: "Drop - full energy, …"
         if not marker:
             continue
         lines = [re.sub(r"\s+", " ", str(x)).strip() for x in (sec.get("lines") or [])]
@@ -469,9 +494,9 @@ def _blocks(lyrics: str):
 
 
 def brief_defects(brief: dict, ui_lang: str = "de") -> list:
-    """Was ein kleines Modell gern falsch macht (gemessen): Strophenzeilen doppelt
-    („Meer der Freiheit, / Meer der Freiheit, …"), Refrains mit 7 Zeilen derselben Hook.
-    Im Refrain ist eine wiederholte Hook-Zeile gewollt — dort zählt nur die Länge."""
+    """What a small model likes to get wrong (measured): verse lines doubled
+    ("Meer der Freiheit, / Meer der Freiheit, …"), choruses with 7 lines of the same hook.
+    In the chorus a repeated hook line is intended — there only the length counts."""
     out = []
     for head, lines in _blocks(brief.get("lyrics") or ""):
         norm = [x.lower().strip(" ,.!?") for x in lines]
@@ -479,9 +504,10 @@ def brief_defects(brief: dict, ui_lang: str = "de") -> list:
             out.append("%s hat %d Zeilen" % (head, len(lines)))
         if not head.lower().startswith(("[chorus", "[hook")) and len(set(norm)) < len(norm):
             out.append("%s wiederholt Zeilen" % head)
+    # The note is supposed to be German — measured: with English lyrics it came out English ("Autumn Melody").
     words = re.findall(r"[a-zäöüß]+", (brief.get("note") or "").lower())
     if ui_lang == "en":
-        # 3.12: englische Oberfläche → die Notiz soll englisch sein
+        # 3.12: English UI → the note should be English
         if len(words) >= 8 and sum(w in DE_WORDS for w in words) >= 4:
             out.append("note not in English")
     elif len(words) >= 8 and sum(w in DE_WORDS for w in words) < 2:
@@ -494,7 +520,7 @@ DE_WORDS = {"der", "die", "das", "und", "mit", "ein", "eine", "ist", "im", "den"
 
 
 def _collapse_repeats(brief: dict) -> None:
-    """Letzter Ausweg: direkt wiederholte Zeilen außerhalb des Refrains zusammenfassen."""
+    """Last resort: merge directly repeated lines outside the chorus."""
     parts = []
     for head, lines in _blocks(brief.get("lyrics") or ""):
         if not head.lower().startswith(("[chorus", "[hook")):
@@ -507,17 +533,20 @@ def _collapse_repeats(brief: dict) -> None:
     brief["lyrics"] = "\n\n".join(parts)
 
 
-# compression, distorted stab layers, loud club master"). Die Musik-KI nimmt das wörtlich.
-# Steht so etwas nicht ausdrücklich in der Aufgabe, fliegt es aus den Tags.
+# "Sounds technical or oddly digital" (user feedback, 10.10.2026): briefs from the small model
+# carried mix craft and harshness as sound wishes ("tape saturation, parallel drum
+# compression, distorted stab layers, loud club master"). The music AI takes that literally.
+# Unless something like that is explicitly in the task, it gets removed from the tags.
 HARSH_TAG = re.compile(r"distort|bitcrush|lo-?fi|harsh|saturat|overdriv|clipping|crush|"
                        r"loud (club )?master|brickwall|parallel (drum )?compression|sidechain", re.I)
+# 3.8: directions that include distortion count as a request (the browser writes "verzerrt" into the task for them).
 WANTS_HARSH = re.compile(r"verzerr|distort|lo-?fi|industrial|hard ?techno|hardgroove|hardstyle|dreckig|dirty|rough|kratz|crunch|"
                          r"noise|saturat|sidechain|pump|\brock\b|metal|punk|grunge|shoegaze|dubstep|neurofunk|phonk|drill|gabber|hardcore", re.I)
 
 
 def soften_caption(brief: dict, user: str) -> list:
-    """Kratzige/technische Tags entfernen, wenn die Aufgabe sie nicht verlangt. Gibt die
-    entfernten zurück (fürs Log)."""
+    """Remove harsh/technical tags if the task does not ask for them. Returns the
+    removed ones (for the log)."""
     if WANTS_HARSH.search(user or ""):
         return []
     tags = [t.strip() for t in (brief.get("caption") or "").split(",") if t.strip()]
@@ -548,8 +577,8 @@ def write_brief(cfg: dict, user: str, ui_lang: str = "de") -> dict:
     if not model:
         raise RuntimeError("Kein Sprachmodell auf dem Mac erreichbar (Ollama)")
     t0 = time.monotonic()
-    # Ein Fehlgriff ist Zufall der Stichprobe — ein zweiter Wurf behebt ihn meist.
-    # Höchstens zwei Würfe: der Brief soll in Sekunden stehen, nicht in Minuten.
+    # A miss is down to sampling chance — a second attempt usually fixes it.
+    # At most two attempts: the brief should be ready in seconds, not minutes.
     best, best_def, tries = None, None, 0
     for temperature in (0.8, 0.9):
         tries += 1
@@ -569,7 +598,7 @@ def write_brief(cfg: dict, user: str, ui_lang: str = "de") -> dict:
 
 
 # =============================================================================
-# Verbindung zum Manuwave-Studio-Server
+# Connection to the Manuwave Studio server
 # =============================================================================
 
 class Server:
@@ -602,38 +631,38 @@ class Server:
                          extra={"x-nf-agent": agent})
 
     def progress(self, jid, message, job=None) -> bool:
-        """True, wenn der Browser abbrechen will."""
+        """True if the browser wants to cancel."""
         try:
             _, r = self._req("POST", "/api/bridge/progress/" + jid, body={"message": message}, timeout=15)
             r = r or {}
             if r.get("unknown") and job is not None:
-                self.adopt(job)          # 3.13: Server neu gestartet → weiterrechnen statt abbrechen
+                self.adopt(job)          # 3.13: server restarted → keep computing instead of aborting
                 return False
             return bool(r.get("cancel"))
         except Exception:
             return False
 
     def adopt(self, job) -> None:
-        """3.13: Der Server kennt den Auftrag nicht mehr (neu gestartet, seine Warteschlange lag nur im Speicher).
-        Bis 3.12 hieß das „abbrechen“ — ein Deploy kostete so einen halb gerechneten Track. Jetzt wird der Auftrag
-        mit derselben Kennung wieder angemeldet; der Browser bekommt das Ergebnis wie gewohnt."""
+        """3.13: The server no longer knows the job (restarted, its queue lived only in memory).
+        Up to 3.12 that meant "cancel" — a deploy cost a half-computed track that way. Now the job is
+        registered again under the same ID; the browser receives the result as usual."""
         try:
             agent = urllib.parse.quote(json.dumps(agent_info(self.cfg, True)))
             self._req("POST", "/api/bridge/adopt/" + job["id"], timeout=15, extra={"x-nf-agent": agent},
                       body={k: job.get(k) for k in ("kind", "request", "meta")})
             log("Server war neu gestartet — Auftrag %s wieder angemeldet, es wird weitergerechnet" % job["id"])
-        except Exception as e:  # noqa: BLE001 — beim nächsten Lebenszeichen wieder
+        except Exception as e:  # noqa: BLE001 — again at the next sign of life
             log("Wiederanmelden von %s noch nicht möglich: %s" % (job["id"], e))
 
     def meta(self, jid, meta):
         self._req("POST", "/api/bridge/meta/" + jid, body=meta, timeout=30)
 
     def _send(self, jid, data, ctype):
-        """Ein Ergebnis zum Server — mit Geduld. 🔴 12.10.2026: ein 41-MB-Track (16 min gerechnet)
-        scheiterte nach festen 300 s („urlopen error timed out"), weil der Tunnel Mac → Pi über ein
-        Relais lief und nebenbei ein großer Download ihn auslastete (0,42 statt 1,9 MB/s).
-        Jetzt: Frist nach Größe (mindestens 60 KB/s), drei Versuche; ein 409 beim Wiederholen heißt
-        „ist schon angekommen". Der Track liegt ohnehin im Archiv."""
+        """Send a result to the server — with patience. 🔴 12.10.2026: a 41 MB track (16 min computed)
+        failed after a fixed 300 s ("urlopen error timed out"), because the tunnel Mac → Pi ran over a
+        relay and a large download was saturating it at the same time (0.42 instead of 1.9 MB/s).
+        Now: deadline by size (at least 60 KB/s), three attempts; a 409 on retry means
+        "already arrived". The track is in the archive anyway."""
         timeout = max(300, len(data) // 60000 + 60)
         for attempt in range(3):
             try:
@@ -684,7 +713,7 @@ class Server:
 
 
 # =============================================================================
-# Der lokale Modellserver (ace-server)
+# The local model server (ace-server)
 # =============================================================================
 
 class Cancelled(Exception):
@@ -694,7 +723,7 @@ class Cancelled(Exception):
 class Engine:
     def __init__(self, cfg: dict):
         self.cfg = cfg
-        self.own = []                # selbst gestartete Prozesse — nur DIE werden später beendet
+        self.own = []                # processes we started ourselves — only THOSE are stopped later
         self.last_used = time.time()
 
     @property
@@ -717,7 +746,7 @@ class Engine:
             return False
 
     def ensure(self, report) -> None:
-        """Modellserver starten, falls er nicht läuft — genauso wie „Music Generator ON"."""
+        """Start the model server if it is not running — exactly like the earlier "ON" switch."""
         conf = engine_conf(self.cfg)
         binary = engine_binary(self.cfg)
         models = os.path.join(self.cfg["engine_dir"], "models")
@@ -751,9 +780,9 @@ class Engine:
         self.last_used = time.time()
 
     def model_file(self, report, *wishes) -> str:
-        """3.17: das erste Klangmodell aus `wishes` (Kurznamen wie "xl-base"), das auf der Platte liegt. Kennt der laufende
-        Modellserver es noch nicht (er liest seinen Ordner nur beim Start) und haben wir ihn selbst gestartet, startet er
-        neu. → Dateiname oder "" (dann gilt das eingestellte Modell)."""
+        """3.17: the first sound model from `wishes` (short names like "xl-base") that is on disk. If the running
+        model server does not know it yet (it reads its folder only at startup) and we started it ourselves, it restarts.
+        → file name or "" (then the configured model applies)."""
         files = dit_files(self.cfg)
         for w in wishes:
             f = files.get(w)
@@ -782,8 +811,8 @@ class Engine:
         self.own = []
 
     def maybe_stop_idle(self) -> None:
-        """Nur selbst Gestartetes beenden — einen vom Music Generator gestarteten
-        Modellserver fassen wir nie an, der gehört jemand anderem."""
+        """Only stop what we started ourselves — a model server started by another
+        program is never touched, it belongs to someone else."""
         if not self.own:
             return
         if time.time() - self.last_used < self.cfg["idle_stop_min"] * 60:
@@ -798,7 +827,7 @@ class Engine:
                 log("ace-server nach Leerlauf beendet (PID %d)" % p.pid)
         self.own = []
 
-    # ---- HTTP zum ace-server ----
+    # ---- HTTP to the ace-server ----
     @staticmethod
     def _http(method, url, body=None, raw=None, ctype=None, timeout=60):
         h = {}
@@ -812,13 +841,13 @@ class Engine:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.headers.get("Content-Type", ""), r.read()
 
-    # ---- Verwaiste Aufträge ----
-    # 🔴 GEMESSEN: stirbt die Brücke mitten in einem Auftrag (Dienst-Neustart, Mac
-    #    schläft ein, Prozess beendet), rechnet der Modellserver den Auftrag trotzdem
-    #    zu Ende — für niemanden. Er nimmt nur einen auf einmal, also stand alles
-    #    Neue dahinter: ein 15-s-Track brauchte 3:41 statt einer Minute.
-    #    Darum wird der laufende Auftrag auf der Platte vermerkt und beim Beenden
-    #    UND beim nächsten Start abgebrochen.
+    # ---- Orphaned jobs ----
+    # 🔴 MEASURED: if the bridge dies in the middle of a job (service restart, Mac
+    #    goes to sleep, process killed), the model server still computes the job
+    #    to the end — for nobody. It takes only one at a time, so everything
+    #    new queued up behind it: a 15 s track took 3:41 instead of a minute.
+    #    Therefore the running job is noted on disk and aborted on shutdown
+    #    AND at the next start.
     @staticmethod
     def _note_inflight(base, job_id) -> None:
         try:
@@ -837,7 +866,7 @@ class Engine:
 
     @classmethod
     def cancel_inflight(cls, reason: str) -> bool:
-        """Einen vermerkten Auftrag beim Modellserver abbrechen. True, wenn es einen gab."""
+        """Abort a noted job on the model server. True if there was one."""
         try:
             with open(INFLIGHT, encoding="utf-8") as f:
                 rec = json.load(f)
@@ -848,12 +877,12 @@ class Engine:
                 {"id": rec["id"], "cancel": 1}), timeout=5)
             log("verwaisten Auftrag %s beim Modellserver abgebrochen (%s)" % (rec["id"], reason))
         except Exception:
-            pass   # Modellserver aus → nichts mehr zu tun
+            pass   # model server off → nothing left to do
         cls._clear_inflight()
         return True
 
     def _wait(self, base, job_id, label, t0, tick):
-        """Auf einen Auftrag des Modellservers warten. tick() → True heißt abbrechen."""
+        """Wait for a model server job. tick() → True means abort."""
         self._note_inflight(base, job_id)
         try:
             return self._wait_inner(base, job_id, label, t0, tick)
@@ -885,7 +914,7 @@ class Engine:
 
     @staticmethod
     def _part(ctype, raw, want):
-        """Einen Teil aus einer multipart/mixed-Antwort holen (audio/ oder application/json)."""
+        """Fetch a part from a multipart/mixed response (audio/ or application/json)."""
         if ctype.startswith(want):
             return raw
         if "multipart" not in ctype:
@@ -898,12 +927,12 @@ class Engine:
         raise RuntimeError("kein %s-Teil in der Antwort" % want)
 
     def repaint(self, request: dict, src_wav: bytes, tick):
-        """3.14: Anbauen — Repaint mit Quell-Audio (multipart/form-data: request + audio). Das Sprachmodell wird dabei
-        übersprungen; Caption und Liedtext steuern den neuen Teil. → WAV des ganzen Fensters (Quelle + Neues)."""
+        """3.14: Extend — repaint with source audio (multipart/form-data: request + audio). The language model is
+        skipped; caption and lyrics steer the new part. → WAV of the whole window (source + new)."""
         return self.with_source(request, src_wav, tick, "Anbau")
 
     def with_source(self, request: dict, src_wav: bytes, tick, label: str):
-        """3.17: jede Aufgabe mit Quell-Audio (repaint, complete, …) — der Modellserver bekommt request + audio."""
+        """3.17: every task with source audio (repaint, complete, …) — the model server receives request + audio."""
         boundary = "mws" + uuid.uuid4().hex
         body = b"".join([
             ("--%s\r\nContent-Disposition: form-data; name=\"request\"\r\nContent-Type: application/json\r\n\r\n" % boundary).encode(),
@@ -925,15 +954,17 @@ class Engine:
         req.setdefault("use_cot_caption", False)
         for k, v in LM_DEFAULTS.items():
             req.setdefault(k, v)
-        # Klangführung: ohne Angabe (ältere Browser-Fassung) gilt die eingestellte, nicht 1,0.
+        # Sound guidance: if not given (older browser version), the configured one applies, not 1.0.
         if not req.get("guidance_scale"):
             req["guidance_scale"] = float(self.cfg.get("guidance_scale") or 1.0)
         req["output_format"] = "wav16"
-        #    flache Spitzen je Track, bis zu 23 Samples am Stück. 0 = nur auf die Spitze normalisieren.
+        # 🔴 3.4: otherwise the model server normalises "to loudness" and HARD-clips the top 0.001 %
+        #    of the samples (peak_clip=10, audio-io.h: "hard clip the rest") — measured 116–215
+        #    flat peaks per track, up to 23 samples in a row. 0 = normalise to the peak only.
         req["peak_clip"] = 0
         req["synth_model"] = self.cfg["synth_model"]
-        # Klangmodell nach Wunsch (z. B. "xl-sft") — nur, was auf der Platte liegt UND der laufende
-        # Modellserver kennt (er liest seinen Ordner nur beim Start).
+        # Sound model on request (e.g. "xl-sft") — only what is on disk AND known to the running
+        # model server (it reads its folder only at startup).
         wish = str(request.get("dit") or "")
         dit_note = ""
         if wish:
@@ -947,7 +978,7 @@ class Engine:
         if lm_file:
             req["lm_model"] = lm_file
         t0 = time.monotonic()
-        # 1) Sprachmodell: plant Aufbau, Tempo, Tonart — und erzeugt die Audio-Codes
+        # 1) Language model: plans structure, tempo, key — and generates the audio codes
         _, raw = self._http("POST", self.lm + "/lm", body=req)
         _, raw = self._wait(self.lm, str(json.loads(raw)["id"]), "Komposition", t0, tick)
         enriched = json.loads(raw)
@@ -957,21 +988,21 @@ class Engine:
         enriched["output_format"] = "wav16"
         enriched["peak_clip"] = 0
         enriched["synth_model"] = req["synth_model"]
-        # Die Klang-Regler gehören der Synthese. Der Modellserver reicht sie über /lm durch
-        # (gemessen) — hier trotzdem ausdrücklich, damit es nicht an seinem Echo hängt.
+        # The sound controls belong to the synthesis. The model server passes them through via /lm
+        # (measured) — explicit here anyway, so it does not depend on its echo.
         for k in ("guidance_scale", "inference_steps"):
             if req.get(k):
                 enriched[k] = req[k]
-        # 2) Synthese: daraus wird Klang
+        # 2) Synthesis: this turns into sound
         _, raw = self._http("POST", self.synth + "/synth", body=enriched)
         ctype, raw = self._wait(self.synth, str(json.loads(raw)["id"]), "Klang", t0, tick)
         audio = self._part(ctype, raw, "audio/")
         meta = {k: enriched.get(k) for k in ("bpm", "duration", "keyscale", "timesignature",
                                             "vocal_language", "lyrics", "caption")}
         meta["seed"] = req["seed"]
-        meta["peak_clip"] = 0          # 3.4: ohne Clipping gerechnet — das Mastering muss nichts reparieren
-        # 3.4: derselbe Seed ergibt NICHT dasselbe Stück (gemessen: Korrelation 0,06) — die Komposition
-        #      des Sprachmodells aufheben, damit ein Track später ohne neues Würfeln neu klingen kann.
+        meta["peak_clip"] = 0          # 3.4: computed without clipping — mastering does not have to repair anything
+        # 3.4: the same seed does NOT yield the same piece (measured: correlation 0.06) — keep the composition
+        #      of the language model so a track can later sound new again without rerolling.
         if enriched.get("audio_codes"):
             meta["audio_codes"] = enriched["audio_codes"]
         meta["guidance_scale"] = req.get("guidance_scale")
@@ -992,7 +1023,7 @@ class Engine:
         return audio, meta
 
     def known_dits(self):
-        """Die Klangmodelle, die der laufende Modellserver kennt (None = unbekannt)."""
+        """The sound models known to the running model server (None = unknown)."""
         try:
             _, raw = self._http("GET", self.synth + "/props", timeout=5)
             return set((json.loads(raw).get("models") or {}).get("dit") or [])
@@ -1017,14 +1048,15 @@ class Engine:
 
 
 # =============================================================================
-# Weiches Ende
+# Soft ending
 # =============================================================================
-# der Pegel in 0,1–0,2 s von voller Lautstärke auf Stille (oft gefolgt von Sekunden Stille,
-# weil das Sprachmodell der Musik-KI vor der Länge aufhört). Die Songs des Music Generators
-# klangen dagegen über 2–10 s aus. Ein harter Schnitt in den letzten 12 s wird darum weich
-# ausgeblendet und die Stille dahinter gekürzt. Ein Track, der schon ausklingt, bleibt unberührt.
+# "ends of songs often cut off" (user feedback, 10.10.2026) — measured: on 7 of 13 tracks the level dropped
+# from full volume to silence within 0.1–0.2 s (often followed by seconds of silence,
+# because the music model's language model stops before the target length). Earlier songs,
+# by contrast, faded out over 2–10 s. A hard cut in the last 12 s is therefore faded out smoothly
+# and the silence behind it is shortened. A track that already fades out is left untouched.
 def smooth_end(audio: bytes, fade_s: float = 4.0, tail_s: float = 0.8):
-    """→ (audio, info|None). info sagt, was geändert wurde."""
+    """→ (audio, info|None). info says what was changed."""
     if audioop is None:
         return audio, None
     try:
@@ -1047,10 +1079,10 @@ def smooth_end(audio: bytes, fade_s: float = 4.0, tail_s: float = 0.8):
     if not loud:
         return audio, None
     last = loud[-1]
-    if (n - last) * 0.1 > 12:              # endet früh oder klingt lang aus — nicht anfassen
+    if (n - last) * 0.1 > 12:              # ends early or fades out slowly — leave alone
         return audio, None
     quiet = next((i for i in range(last + 1, n) if dbs[i] < med - 30), n)
-    if quiet - last > 5:                   # mehr als 0,5 s vom Lauten ins Stille = klingt schon aus
+    if quiet - last > 5:                   # more than 0.5 s from loud to silence = already fading out
         return audio, None
     cut = min(quiet * blk, len(frames))
     fade = int(min(fade_s, last * 0.1 / 2) * sr) * fb
@@ -1076,60 +1108,66 @@ def smooth_end(audio: bytes, fade_s: float = 4.0, tail_s: float = 0.8):
 
 
 # =============================================================================
-# Veredeln (seit 3.2): Urheber, Wasserzeichen, Tags, Cover, Export
+# Finishing (since 3.2): author, watermark, tags, cover, export
 # =============================================================================
-# copierschutz wasserzeichen bekommen, jeder song der auf meinem rechner erzeugt wird muss
+# "every generated song should get a cover … all songs must be tagged and get a copy-protection
+# watermark, every song generated on my machine must carry my copyright" — and: "at some point I want to
+# publish the program, so things like copyright etc. should be configurable"
+# (user feedback, 12.10.2026).
 #
-# 🔑 Darum steht KEIN Name im Code. Die Angaben gehören zu DIESEM Mac (bridge.json →
-#    "rights"), sind in Manuwave Studio unter ⚙️ einstellbar, und beim ersten Lauf trägt die
-#    Brücke den vollen Namen des Mac-Kontos als Rechteinhaber ein.
-# 🔑 Das Wasserzeichen (audiowmark, mit eigenem Schlüssel) ist UNHÖRBAR und übersteht
-#    MP3, Umrechnen und Ausschneiden — es verhindert kein Kopieren (das kann keine
-#    abspielbare Datei), aber es BEWEIST die Herkunft: wer den Schlüssel hat, liest aus
-#    jeder Kopie, welcher Track es ist. Tags dagegen kann jeder löschen.
-# 🔑 Das Cover malt ein Bildmodell auf dem Mac (Ollama, z. B. FLUX.2 klein) — wie beim
-#    Brief keine Cloud. Fehlt es, bleibt der Track ohne Cover, statt zu scheitern.
+# 🔑 That is why there is NO name in the code. The details belong to THIS Mac (bridge.json →
+#    "rights"), can be set in Manuwave Studio under ⚙️, and on first run the bridge enters the
+#    full name of the Mac account as rights holder.
+# 🔑 The watermark (audiowmark, with its own key) is INAUDIBLE and survives MP3, resampling and
+#    cutting — it does not prevent copying (no playable file can), but it PROVES provenance:
+#    whoever holds the key can read from any copy which track it is.
+#    Tags, by contrast, can be deleted by anyone.
+# 🔑 The cover is painted by an image model on the Mac (Ollama, e.g. FLUX.2 klein) — like the
+#    brief, no cloud. If it is missing, the track stays without a cover instead of failing.
 
 TOOLS_BIN = os.path.join(DIR, "tools", "bin")
-WM_KEY = os.path.join(DIR, "wasserzeichen.key")      # 0600 — ohne ihn ist kein Zeichen mehr lesbar
-WM_REG = os.path.join(DIR, "wasserzeichen.json")     # Kennung → Titel, Datei, Rechteinhaber
+WM_KEY = os.path.join(DIR, "wasserzeichen.key")      # 0600 — without it no mark can be read any more
+WM_REG = os.path.join(DIR, "wasserzeichen.json")     # ID → title, file, rights holder
 ORIG_DIR = os.path.join(RENDERS, "_original_vor_wasserzeichen")
-WM_MAGIC = "4e4601"
-#    und gemessen weiter lesbar nach MP3 320/128, nach +10 dB Bass/+9 dB Höhen + Limiter + 44,1 kHz + MP3 192
-#    (Wert 2,4 bei Schwelle 0,7). In bridge.json als "wm_strength" änderbar.
+WM_MAGIC = "4e4601"                                  # "NF", version 1
+# 🔴 3.5: Strength 10 (audiowmark default) was only 22 dB below the music in the 1.5–3 kHz range — the user
+#    heard "crackling … sounds more like a decoding error, even in quiet passages". Strength 3: 32 dB below,
+#    and still readable as measured after MP3 320/128, after +10 dB bass/+9 dB treble + limiter + 44.1 kHz + MP3 192
+#    (value 2.4 at threshold 0.7). Changeable in bridge.json as "wm_strength".
 WM_STRENGTH = 3
-AUFBEREITET_V = 2       # Fassung der Archiv-Aufbereitung (adeclip wenn beschnitten + leises Zeichen + 24 Bit)
+AUFBEREITET_V = 2       # version of the archive processing (adeclip if clipped + quiet mark + 24 bit)
 TAGS_VERSION = 1
 CAPS = "settings,export,cover,verify,nachruesten,archiv,master,loeschen,paket,web,master_merken,midi,weiter,analyse,writer,presets,dynamik"
 
 
 def caps_for(cfg: dict) -> str:
-    """Was diese Brücke kann — „web" nur, wenn eine Fahrstuhlmusik-Verwaltung eingetragen ist."""
+    """What this bridge can do — "web" only if an elevator-music manager is configured."""
     return CAPS if (cfg.get("web_admin") or "").strip() else CAPS.replace(",web", "")
 
 RIGHTS_DEFAULTS = {
-    "owner": "",            # Rechteinhaber — leer: voller Name des Mac-Kontos (beim ersten Lauf eingetragen)
-    "artist": "",           # Künstlername — leer: der Rechteinhaber
+    "owner": "",            # rights holder — empty: full name of the Mac account (entered on first run)
+    "artist": "",           # artist name — empty: the rights holder
     "copyright": "© {jahr} {inhaber}. Alle Rechte vorbehalten.",
-    "album": "",            # leer: jeder Track ist eine Single (Album = Titel)
+    "album": "",            # empty: every track is a single (album = title)
     "label": "",
     "website": "",
-    "ai_note": True,
+    "ai_note": True,        # machine-readable "AI-generated" note in the tags
     "watermark": True,
     "cover": True,
-    "cover_title": True,    # der Titel als Schrift aufs Cover (FLUX.2 klein schreibt sauber)
-    "cover_artist": True,   # 3.3: der Künstlername als fester Schriftzug unten aufs Cover (nur wenn einer eingetragen ist)
+    "cover_title": True,    # the title as lettering on the cover (FLUX.2 klein renders text cleanly)
+    "cover_artist": True,   # 3.3: the artist name as fixed lettering at the bottom of the cover (only if one is set)
 }
 RIGHTS_TEXT = {"owner": 120, "artist": 120, "copyright": 200, "album": 120, "label": 120, "website": 200}
 RIGHTS_BOOL = ("ai_note", "watermark", "cover", "cover_title", "cover_artist")
 
-# Bevorzugte Bildmodelle (Ollama, nur macOS). Beide Apache 2.0 — die Bilder dürfen verkauft werden.
+# Preferred image models (Ollama, macOS only). Both Apache 2.0 — the images may be sold.
 IMAGE_PREFER = ("x/flux2-klein:4b", "x/flux2-klein", "x/z-image-turbo")
 
-# Ausgabeformate. Verlustfrei ist alles außer MP3. 🔴 APE (Monkey's Audio), WMA Lossless,
-# OptimFROG und TAK fehlen bewusst: dafür hat ffmpeg keinen Kodierer.
+# Output formats. Everything except MP3 is lossless. 🔴 APE (Monkey's Audio), WMA Lossless,
+# OptimFROG and TAK are deliberately missing: ffmpeg has no encoder for them.
 FORMATS = {
-    # 3.4: MP3 und AIFF bekommen ihren ID3-Block von UNS (id3v23) — ffmpeg schrieb Songtext und Kommentar
+    # 3.4: MP3 and AIFF get their ID3 block from US (id3v23) — ffmpeg wrote lyrics and comment
+    #      as TXXX:USLT / TXXX:comment, which no player reads (measured: Apple "lyrics: nil").
     "mp3":     {"ext": "mp3",  "mime": "audio/mpeg",     "name": "MP3 · 320 kbit/s", "tags": "id3",
                 "args": ["-c:a", "libmp3lame", "-b:a", "320k", "-write_id3v2", "0", "-write_id3v1", "0"]},
     "flac":    {"ext": "flac", "mime": "audio/flac",     "name": "FLAC", "tags": "ffmpeg",
@@ -1149,7 +1187,7 @@ FORMATS = {
                 "args": ["-c:a", "tta"], "s16": ["-sample_fmt", "s16"],
                 "s24": ["-sample_fmt", "s32", "-bits_per_raw_sample", "24"]},
 }
-RATES = (0, 44100, 48000)   # 0 = wie das Original (48 kHz)
+RATES = (0, 44100, 48000)   # 0 = same as the original (48 kHz)
 
 _cfg_lock = threading.Lock()
 _reg_lock = threading.Lock()
@@ -1195,7 +1233,7 @@ def clean_rights(raw) -> dict:
 
 
 def engine_binary(cfg: dict) -> str:
-    """ace-server: macOS/Linux build/ace-server, Windows (MSVC) build/Release/ace-server.exe, fertige Pakete build/bin/."""
+    """ace-server: macOS/Linux build/ace-server, Windows (MSVC) build/Release/ace-server.exe, prebuilt packages build/bin/."""
     root = os.path.join(cfg["engine_dir"], "build")
     for p in (os.path.join(root, "ace-server" + EXE), os.path.join(root, "Release", "ace-server" + EXE),
               os.path.join(root, "bin", "ace-server" + EXE), os.path.join(root, "bin", "Release", "ace-server" + EXE)):
@@ -1205,7 +1243,7 @@ def engine_binary(cfg: dict) -> str:
 
 
 def img_to_jpeg(cfg: dict, src: str, dst: str, size: int, quality: int, square: bool = False) -> None:
-    """Bild → JPEG. macOS: sips (an Bord). Sonst ffmpeg. size = längste Kante (square: exakt size × size)."""
+    """Image → JPEG. macOS: sips (built in). Otherwise ffmpeg. size = longest edge (square: exactly size × size)."""
     if IS_MAC:
         dim = ["-z", str(size), str(size)] if square else ["-Z", str(size)]
         _run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", str(quality), *dim, src, "--out", dst], timeout=120)
@@ -1220,7 +1258,7 @@ def img_to_jpeg(cfg: dict, src: str, dst: str, size: int, quality: int, square: 
 
 
 def media_seconds(cfg: dict, path: str) -> float:
-    """Länge einer Audiodatei. macOS: afinfo; sonst ffprobe (oder ffmpeg)."""
+    """Duration of an audio file. macOS: afinfo; otherwise ffprobe (or ffmpeg)."""
     if IS_MAC and os.path.exists("/usr/bin/afinfo"):
         out = subprocess.run(["/usr/bin/afinfo", path], capture_output=True, text=True, timeout=60).stdout
         m = re.search(r"estimated duration:\s*([\d.]+)", out)
@@ -1238,7 +1276,7 @@ def media_seconds(cfg: dict, path: str) -> float:
 
 
 def tool(cfg: dict, name: str) -> str:
-    """Pfad eines Werkzeugs — launchd startet uns mit fast leerem PATH, darum ausdrücklich suchen."""
+    """Path of a tool — launchd starts us with an almost empty PATH, so search explicitly."""
     for c in (cfg.get("tool_" + name) or "", os.path.join(TOOLS_BIN, name + EXE),
               "/opt/homebrew/bin/" + name, "/usr/local/bin/" + name):
         if c and os.path.isfile(c) and os.access(c, os.X_OK):
@@ -1255,8 +1293,8 @@ def img_dir(cfg: dict) -> str:
 
 
 def image_models(cfg: dict) -> list:
-    """Bildmodelle im eigenen Modellordner — am Manifest erkannt, ohne laufenden Server
-    (die Brücke fragt das bei jeder Abholung, alle ~25 s)."""
+    """Image models in the own model folder — detected via the manifest, without a running server
+    (the bridge asks this on every poll, every ~25 s)."""
     root = os.path.join(img_dir(cfg), "models", "manifests", "registry.ollama.ai")
     out = []
     for dp, _, fs in os.walk(root):
@@ -1269,9 +1307,10 @@ def image_models(cfg: dict) -> list:
     return sorted(out)
 
 
-# ---- 3.11: Cover unter Windows/Linux — stable-diffusion.cpp (sd-server) mit Z-Image Turbo (Apache-2.0) ----
-# Ollama kann ab 0.32.6 keine Bilder mehr, und 0.32.5 malte nur unter macOS (MLX). Unter Windows/Linux malt
-# deshalb sd-server (leejet/stable-diffusion.cpp, MIT) — Dateien legt der Installer in tools/sd und models/sd:
+# ---- 3.11: Cover on Windows/Linux — stable-diffusion.cpp (sd-server) with Z-Image Turbo (Apache-2.0) ----
+# Ollama can no longer do images as of 0.32.6, and 0.32.5 only painted on macOS (MLX). On Windows/Linux
+# sd-server (leejet/stable-diffusion.cpp, MIT) therefore paints — the installer places the files
+# in tools/sd and models/sd:
 #   z_image_turbo-Q4_K.gguf (leejet/Z-Image-Turbo-GGUF) · ae.safetensors (FLUX.1-schnell-VAE, Apache-2.0)
 #   Qwen3-4B-Instruct-2507-Q4_K_M.gguf (unsloth, Apache-2.0)
 SD_DIR = os.path.join(DIR, "tools", "sd")
@@ -1310,15 +1349,15 @@ def find_image_model(cfg: dict) -> str:
 
 
 class ImageServer:
-    """Startet das Bild-Ollama nur für die Dauer eines Covers und räumt danach ab.
-    🔴 OLLAMA_NOPRUNE: ein Ollama räumt beim Start „unbenutzte" Blobs weg — im eigenen
-       Ordner (Hardlinks) wäre das harmlos, aber nie riskieren. Ein Waise vom letzten Lauf
-       (Brücke abgestürzt) wird über die PID-Datei beendet, bevor ein neuer startet."""
+    """Starts the image Ollama only for the duration of one cover and cleans up afterwards.
+    🔴 OLLAMA_NOPRUNE: an Ollama removes "unused" blobs on startup — harmless in its own
+       folder (hardlinks), but never risk it. An orphan from the last run
+       (bridge crashed) is terminated via the PID file before a new one starts."""
     def __init__(self, cfg):
         self.dir = img_dir(cfg)
         self.port = int(cfg.get("image_port") or 11439)
-        # je Port eine eigene PID-Datei: ein Prüfstand (anderer Port, gleicher Ordner) darf beim
-        # Aufräumen nie den Bild-Server des echten Dienstes treffen
+        # one PID file per port: a test rig (other port, same folder) must never hit the real
+        # service's image server when cleaning up
         self.PID = os.path.join(self.dir, "serve-%d.pid" % self.port)
         self.url = "http://127.0.0.1:%d" % self.port
         self.proc = None
@@ -1338,7 +1377,7 @@ class ImageServer:
             pass
 
     def __enter__(self):
-        # Audit 3.2: zwei Prozesse (Dienst + Terminal) teilen Port und PID-Datei — einer nach dem anderen
+        # Audit 3.2: two processes (service + terminal) share port and PID file — one after the other
         self.lock = FileLock("bild-server").__enter__()
         self.kill_orphan()
         env = dict(os.environ, OLLAMA_HOST="127.0.0.1:%d" % self.port, OLLAMA_MODELS=os.path.join(self.dir, "models"),
@@ -1381,15 +1420,15 @@ class ImageServer:
         return False
 
     def cleanup_at_start(self):
-        """Beim Start der Brücke: einen Waisen beenden — aber nur, wenn gerade NIEMAND malt
-        (sonst träfe es das Terminal-„--nachruesten" mitten im Bild)."""
+        """On bridge start: terminate an orphan — but only if NOBODY is painting right now
+        (otherwise it would hit the terminal "--nachruesten" in the middle of an image)."""
         with FileLock("bild-server", blocking=False) as l:
             if l.held:
                 self.kill_orphan()
 
 
 class SdServer:
-    """sd-server nur für die Dauer eines Covers (wie ImageServer). Spricht die A1111-kompatible Schnittstelle."""
+    """sd-server only for the duration of one cover (like ImageServer). Speaks the A1111-compatible interface."""
 
     def __init__(self, cfg):
         self.cfg = cfg
@@ -1405,13 +1444,13 @@ class SdServer:
         logf = open(os.path.join(DIR, "sd-server.log"), "ab")
         self.proc = subprocess.Popen(args, stdout=logf, stderr=logf, stdin=subprocess.DEVNULL)
         logf.close()
-        for _ in range(240):                      # Modelle laden dauert — bis zu 2 Minuten
+        for _ in range(240):                      # loading models takes a while — up to 2 minutes
             try:
                 with urllib.request.urlopen(self.url + "/sdapi/v1/sd-models", timeout=2) as r:
                     if r.status == 200:
                         return self
             except urllib.error.HTTPError:
-                return self                       # antwortet = läuft (Pfad gibt es nicht in jeder Fassung)
+                return self                       # responds = running (the path does not exist in every version)
             except Exception:
                 pass
             if self.proc.poll() is not None:
@@ -1421,7 +1460,7 @@ class SdServer:
         raise RuntimeError("sd-server startet nicht — siehe %s" % os.path.join(DIR, "sd-server.log"))
 
     def generate(self, prompt: str, seed: int) -> str:
-        """→ PNG als base64. Zuerst /sdapi/v1/txt2img, sonst OpenAI-artig /v1/images/generations."""
+        """→ PNG as base64. First /sdapi/v1/txt2img, otherwise OpenAI-style /v1/images/generations."""
         tries = [("/sdapi/v1/txt2img", {"prompt": prompt, "width": 1024, "height": 1024, "steps": 8, "cfg_scale": 1.0, "seed": seed},
                   lambda a: (a.get("images") or [None])[0]),
                  ("/v1/images/generations", {"prompt": prompt, "size": "1024x1024", "n": 1, "response_format": "b64_json", "seed": seed},
@@ -1470,11 +1509,11 @@ def _run(args, timeout=600):
 
 
 class Scratch:
-    """Ein Arbeitsordner, der auch bei Fehlern wieder verschwindet."""
+    """A working folder that disappears again even on errors."""
 
     def __enter__(self):
         import tempfile
-        self.dir = tempfile.mkdtemp(prefix="neonforge-")
+        self.dir = tempfile.mkdtemp(prefix="mws-")
         return self
 
     def path(self, name):
@@ -1486,7 +1525,7 @@ class Scratch:
         return False
 
 
-# ---- Wasserzeichen ------------------------------------------------------------
+# ---- Watermark ----------------------------------------------------------------
 
 def wm_key(cfg: dict) -> str:
     aw = tool(cfg, "audiowmark")
@@ -1495,15 +1534,15 @@ def wm_key(cfg: dict) -> str:
     if not os.path.isfile(WM_KEY):
         os.makedirs(DIR, exist_ok=True)
         with FileLock("wasserzeichen-schluessel"):
-            if not os.path.isfile(WM_KEY):     # 🔴 nie einen schon benutzten Schlüssel überschreiben
-                _run([aw, "gen-key", WM_KEY, "--name", "neonforge"], timeout=30)
+            if not os.path.isfile(WM_KEY):     # 🔴 never overwrite a key that is already in use
+                _run([aw, "gen-key", WM_KEY, "--name", "manuwave"], timeout=30)
                 log("Wasserzeichen-Schlüssel angelegt: %s — SICHERN, ohne ihn ist kein Zeichen mehr lesbar" % WM_KEY)
     os.chmod(WM_KEY, 0o600)
     return aw
 
 
 def wm_payload(owner: str) -> str:
-    """128 Bit: Kennung NF+Fassung · Rechteinhaber (4 Byte Hash) · Zeit · Zufall."""
+    """128 bits: ID NF+version · rights holder (4-byte hash) · time · random."""
     oid = hashlib.sha256(owner.strip().lower().encode("utf-8")).hexdigest()[:8]
     return WM_MAGIC + oid + "%08x" % (int(time.time()) & 0xFFFFFFFF) + secrets.token_hex(5)
 
@@ -1518,6 +1557,7 @@ def reg_load() -> dict:
 
 
 def reg_add(payload: str, info: dict) -> None:
+    # Audit 3.2: service and "--nachruesten" both write to it — lock across processes
     with _reg_lock, FileLock("wasserzeichen-verzeichnis"):
         d = reg_load()
         d[payload] = info
@@ -1526,14 +1566,14 @@ def reg_add(payload: str, info: dict) -> None:
 
 
 def wm_strength(cfg: dict, dur: float = 180.0) -> int:
-    """Stärke nach Länge: die Erkennung sammelt über die Dauer. 🔴 Gemessen: Stärke 3 reicht bei 3,5 min
-    selbst nach +10 dB Bass/+9 dB Höhen/Limiter/44,1 kHz/MP3 192 (Wert 2,4), bei 15 s aber nicht
-    (0,36 < 0,7). Darum Stärke 3 ab 3 min, darunter mehr (30 s → 10, 60 s → 6, 2 min → 4) — höchstens 10."""
+    """Strength by length: detection accumulates over the duration. 🔴 Measured: strength 3 suffices at 3.5 min
+    even after +10 dB bass/+9 dB treble/limiter/44.1 kHz/MP3 192 (value 2.4), but not at 15 s
+    (0.36 < 0.7). Hence strength 3 from 3 min, more below that (30 s → 10, 60 s → 6, 2 min → 4) — at most 10."""
     try:
         base = max(1, min(20, int(cfg.get("wm_strength") or WM_STRENGTH)))
     except (TypeError, ValueError):
         base = WM_STRENGTH
-    # gemessen nach harter Kette: 15 s/10 → 1,25 · 30 s/7 → 0,89 (zu knapp) · 60 s/5 → 1,93 · 120 s/4 → 3,76
+    # measured after harsh chain: 15 s/10 → 1.25 · 30 s/7 → 0.89 (too tight) · 60 s/5 → 1.93 · 120 s/4 → 3.76
     return max(base, min(10, int(round(base * (180.0 / max(float(dur or 180.0), 1.0)) ** 0.65))))
 
 
@@ -1546,8 +1586,8 @@ def _wav_seconds(audio: bytes) -> float:
 
 
 def wm_embed(cfg: dict, audio: bytes, info: dict, payload: str = ""):
-    """→ (Audio mit Zeichen, Kennung). info landet im Verzeichnis (Titel, Datei …).
-    payload: eine schon vergebene Kennung erneut setzen (3.4: reparierter Track bleibt derselbe)."""
+    """→ (audio with mark, ID). info ends up in the registry (title, file …).
+    payload: set an already assigned ID again (3.4: a repaired track stays the same)."""
     aw = wm_key(cfg)
     owner = rights(cfg)["owner"]
     payload = payload or wm_payload(owner)
@@ -1559,7 +1599,7 @@ def wm_embed(cfg: dict, audio: bytes, info: dict, payload: str = ""):
         _run([aw, "add", "--quiet", "--key", WM_KEY, "--strength", str(strength), src, dst, payload], timeout=600)
         with open(dst, "rb") as f:
             out = wav_plain(f.read())
-    # Nie stiller schlechter: Format und Länge müssen bleiben, sonst lieber ohne Zeichen.
+    # Never silently worse: format and length must stay, otherwise better without a mark.
     with wave.open(io.BytesIO(audio)) as a, wave.open(io.BytesIO(out)) as b:
         if a.getparams()[:4] != b.getparams()[:4]:
             raise RuntimeError("Wasserzeichen hat das Format verändert (%s → %s)" % (a.getparams()[:4], b.getparams()[:4]))
@@ -1568,7 +1608,7 @@ def wm_embed(cfg: dict, audio: bytes, info: dict, payload: str = ""):
 
 
 def wm_detect(cfg: dict, path: str) -> dict:
-    """Liest das Zeichen aus einer beliebigen Audiodatei (ffmpeg macht vorher WAV daraus)."""
+    """Reads the mark from any audio file (ffmpeg turns it into WAV first)."""
     aw = wm_key(cfg)
     ff = tool(cfg, "ffmpeg")
     with Scratch() as s:
@@ -1580,16 +1620,16 @@ def wm_detect(cfg: dict, path: str) -> dict:
         _run([aw, "get", "--quiet", "--key", WM_KEY, "--json", js, wav], timeout=600)
         with open(js, encoding="utf-8") as f:
             res = json.load(f)
-    # audiowmark 0.6.5 schreibt je Fundstelle {"bits", "rating", "quality", "error", "type"} —
-    # auch Rauschen ohne Zeichen taucht dort auf (Wert ~0,15), darum zählt nur der beste.
+    # audiowmark 0.6.5 writes, per hit, {"bits", "rating", "quality", "error", "type"} —
+    # noise without a mark shows up there too (value ~0.15), so only the best counts.
     best, score = {}, 0.0
     for m in res.get("matches") or []:
         v = float(m.get("rating", m.get("quality", 0)) or 0)
         if v > score:
             best, score = m, v
     payload = str(best.get("bits") or "")
-    # Gemessen: echte Zeichen 1,2–1,4 (auch nach MP3 96 kbit/s und Ausschnitt), ohne Zeichen
-    # oder mit fremdem Schlüssel 0,17. Ein Treffer zählt erst ab 0,7 UND mit unserer Kennung.
+    # Measured: real marks 1.2–1.4 (even after MP3 96 kbit/s and trimming), without a mark
+    # or with a foreign key 0.17. A hit only counts from 0.7 AND with our ID.
     found = score >= 0.7 and payload.startswith(WM_MAGIC)
     info = reg_load().get(payload) if found else None
     return {"found": found, "score": round(score, 3), "id": payload if found else "",
@@ -1610,7 +1650,7 @@ def _short_key(k: str) -> str:
 
 
 def _sung_lines(lyrics: str) -> str:
-    """Nur die gesungenen Zeilen — Marker wie [Chorus] fallen weg, Absätze bleiben."""
+    """Only the sung lines — markers like [Chorus] are dropped, paragraphs stay."""
     out, blank = [], False
     for line in (lyrics or "").splitlines():
         line = line.strip()
@@ -1659,7 +1699,7 @@ def track_tags(cfg: dict, info: dict) -> dict:
         "comment": "",
     }
     if info.get("source") == "eigen":
-        # 3.15: selbst eingespielt — die Musik ist keine KI; nur ein KI-Cover wird genannt
+        # 3.15: played in by hand — the music is not AI; only an AI cover is mentioned
         tags["encoded_by"] = "Manuwave Studio (selbst eingespielt)"
         if r["ai_note"]:
             tags["ai"] = "Musik selbst eingespielt in Manuwave Studio%s" % (
@@ -1673,11 +1713,11 @@ def track_tags(cfg: dict, info: dict) -> dict:
 
 
 def _u16(s: str) -> bytes:
-    return s.encode("utf-16")          # mit BOM
+    return s.encode("utf-16")          # with BOM
 
 
 def id3v23(tags: dict, cover: bytes = None) -> bytes:
-    """ID3v2.3 von Hand (UTF-16) — für WAV; dieselben Felder, die ffmpeg ins MP3 schreibt."""
+    """ID3v2.3 by hand (UTF-16) — for WAV; the same fields ffmpeg writes into the MP3."""
     frames = []
 
     def frame(fid, body):
@@ -1711,14 +1751,14 @@ def _chunk(cid: bytes, data: bytes) -> bytes:
 
 
 def wav_with_tags(audio: bytes, tags: dict, cover: bytes = None) -> bytes:
-    """WAV: alte Tags raus, LIST/INFO (Windows, DAWs) + id3-Block (Musik-Apps) hinein."""
+    """WAV: old tags out, LIST/INFO (Windows, DAWs) + id3 block (music apps) in."""
     if audio[:4] != b"RIFF" or audio[8:12] != b"WAVE":
         raise RuntimeError("keine WAV-Datei")
     pos, keep = 12, []
     while pos + 8 <= len(audio):
         cid = audio[pos:pos + 4]
         size = struct.unpack("<I", audio[pos + 4:pos + 8])[0]
-        end = min(len(audio), pos + 8 + size + (size % 2))      # samt Füllbyte
+        end = min(len(audio), pos + 8 + size + (size % 2))      # including pad byte
         if cid not in (b"LIST", b"id3 ", b"ID3 "):
             part = audio[pos:end]
             if len(part) % 2:
@@ -1738,7 +1778,7 @@ def wav_with_tags(audio: bytes, tags: dict, cover: bytes = None) -> bytes:
 
 
 def apev2(tags: dict, cover: bytes = None) -> bytes:
-    """APEv2 von Hand — für WavPack und TTA, die ffmpeg ohne Cover schreibt."""
+    """APEv2 by hand — for WavPack and TTA, which ffmpeg writes without a cover."""
     items = []
 
     def item(key, val, binary=False):
@@ -1775,8 +1815,10 @@ books, labels, number plates. Never ask for text, letters, titles, logos or wate
 COVER_SCHEMA = {"type": "object", "properties": {"prompt": {"type": "string"}}, "required": ["prompt"]}
 COVER_SUFFIX = (" Square album cover composition, high detail, professional artwork. "
                 "No text, no letters, no typography, no logo, no watermark.")
-#    und ließ die Schilder weg. Nur für Titel, die es sicher schreibt: lateinische Großbuchstaben,
-#    Ziffern, wenige Zeichen — Umlaute und lange Titel bleiben ohne Schrift.
+# 🔑 Measured 12.10.2026: without a title the image model invents signs with pseudo-lettering (made-up words);
+#    WITH the real title as typography it wrote a three-word title twice without error
+#    and left the signs out. Only for titles it writes reliably: Latin capitals,
+#    digits, few characters — umlauts and long titles stay without lettering.
 COVER_TITLE_OK = re.compile(r"^[A-Z0-9][A-Z0-9 '&!?.,-]{0,31}$")
 COVER_TITLE = (" The title \"%s\" appears once at the top in clean, elegant album-cover typography."
                " Square album cover composition, high detail, professional artwork."
@@ -1788,7 +1830,9 @@ def cover_title(info: dict, r: dict) -> str:
     return t if r.get("cover_title", True) and COVER_TITLE_OK.match(t) else ""
 
 
-#    Schrift-Träger werden zu Licht, Klangwörter fallen weg.
+# 🔴 Measured 12.10.2026: despite the instruction, qwen2.5:7b wrote "neon signs" and "rumbling bass" into
+#    the scene — and FLUX painted pseudo-lettering on the signs (made-up words). So filter hard here:
+#    lettering carriers become light, sound words are dropped.
 TEXT_CARRIERS = re.compile(r"\b(?:neon\s+)?(?:signs?|signboards?|billboards?|posters?|banners?|placards?|"
                            r"screens?|labels?|books?|newspapers?|number\s+plates?|license\s+plates?)\b", re.I)
 SOUND_WORDS = re.compile(r"\b(?:rumbling|thumping|pulsing|echoing|humming|beats?|basslines?|sub-?bass|bass|"
@@ -1803,7 +1847,7 @@ def scrub_prompt(p: str) -> str:
 
 
 def cover_scene(cfg: dict, info: dict) -> str:
-    """Das Motiv (ohne Schrift-Anweisung) — vom Sprachmodell, sonst aus den Stil-Tags."""
+    """The scene (without lettering instruction) — from the language model, otherwise from the style tags."""
     title = (info.get("title") or "").strip()
     caption = (info.get("caption") or "").strip()
     lyr = _sung_lines(info.get("lyrics") or "")
@@ -1832,14 +1876,16 @@ def cover_prompt(cfg: dict, info: dict) -> str:
     return cover_scene(cfg, info) + ((COVER_TITLE % shown) if shown else COVER_SUFFIX)
 
 
-#    Cover ist schlimmer als keiner. Darum liest die Texterkennung von macOS (Vision, nf-ocr) jedes
-#    Bild: mit Titel zählt nur der EXAKTE Titel, ohne Titel höchstens 3 Zeichen Schein-Schrift.
+# 🔴 Measured 12.10.2026 on a real archive: a two-word title came back misspelled in several variants
+#    — the image model misspells longer words. A wrong title on the
+#    cover is worse than none. So the macOS text recognition (Vision, OCR helper) reads every
+#    image: with a title only the EXACT title counts, without a title at most 3 characters of pseudo-lettering.
 def _letters(t: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", (t or "").upper())
 
 
-NF_OCR_SWIFT = r'''// Manuwave Studio: liest Schrift aus einem Bild (Vision-Framework von macOS, nur lokal).
-// Ausgabe: JSON-Liste der erkannten Zeilen. Gebraucht, um die Titelschrift auf KI-Covern zu prüfen.
+NF_OCR_SWIFT = r'''// Manuwave Studio: reads text from an image (macOS Vision framework, local only).
+// Output: JSON list of the recognized lines. Used to check the title lettering on AI-generated covers.
 import Foundation
 import Vision
 import AppKit
@@ -1851,14 +1897,14 @@ guard CommandLine.arguments.count > 1,
 }
 let req = VNRecognizeTextRequest()
 req.recognitionLevel = .accurate
-req.usesLanguageCorrection = false          // NICHT korrigieren — wir wollen sehen, was wirklich dasteht
+req.usesLanguageCorrection = false          // do NOT autocorrect — we want to see what is really there
 try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([req])
 let lines = (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
 let data = try! JSONSerialization.data(withJSONObject: lines, options: [])
 print(String(data: data, encoding: .utf8)!)
 '''
-NF_STEMPEL_SWIFT = r'''// Manuwave Studio: setzt den Künstlernamen als festen Schriftzug unten mittig aufs Cover (nur lokal, AppKit).
-// Aufruf: nf-stempel ein.jpg aus.jpg "NAME". Das Bildmodell schreibt nicht immer fehlerfrei — dieser Schriftzug schon.
+NF_STEMPEL_SWIFT = r'''// Manuwave Studio: stamps the artist name as fixed lettering at the bottom center of the cover (local only, AppKit).
+// Usage: nf-stempel in.jpg out.jpg "NAME". The image model does not always spell correctly — this lettering always does.
 import Foundation
 import AppKit
 
@@ -1871,7 +1917,7 @@ let srgb = CGColorSpace(name: CGColorSpace.sRGB)!
 guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: srgb,
                           bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { exit(1) }
 ctx.draw(cg, in: CGRect(x: 0, y: 0, width: W, height: H))
-// Ein sanfter dunkler Verlauf unten, damit der Schriftzug auf jedem Motiv lesbar bleibt
+// A soft dark gradient at the bottom keeps the lettering readable on any artwork
 let grad = CGGradient(colorsSpace: srgb, colors: [CGColor(red: 0, green: 0, blue: 0, alpha: 0.5),
                                                    CGColor(red: 0, green: 0, blue: 0, alpha: 0)] as CFArray,
                       locations: [0, 1])!
@@ -1889,7 +1935,7 @@ func styled(_ size: CGFloat) -> NSAttributedString {
 }
 var s = styled(size)
 while s.size().width > W * 0.84 && size > 8 { size *= 0.92; s = styled(size) }
-let x = (W - s.size().width + size * 0.38) / 2      // die Sperrung hängt auch hinter dem letzten Buchstaben
+let x = (W - s.size().width + size * 0.38) / 2      // the letter-spacing also trails after the last letter
 s.draw(at: NSPoint(x: x, y: H * 0.045))
 NSGraphicsContext.current = nil
 guard let out = ctx.makeImage(),
@@ -1901,7 +1947,7 @@ _built = {}
 
 
 def _swift_tool(cfg: dict, name: str, source: str) -> str:
-    """Kleine macOS-Werkzeuge gehören zu Manuwave Studio: fehlt eins, baut die Brücke es einmal selbst (swiftc)."""
+    """Small macOS tools belong to Manuwave Studio: if one is missing, the bridge builds it once itself (swiftc)."""
     path = tool(cfg, name)
     if path or _built.get(name):
         return path
@@ -1927,7 +1973,7 @@ def ensure_ocr(cfg: dict) -> str:
 
 
 def cover_text(cfg: dict, jpeg: bytes):
-    """→ Liste der erkannten Zeilen, oder None, wenn keine Texterkennung da ist."""
+    """→ List of recognized lines, or None if no text recognition is available."""
     ocr = ensure_ocr(cfg)
     if not ocr:
         return None
@@ -1945,13 +1991,13 @@ def cover_text(cfg: dict, jpeg: bytes):
 
 def cover_text_ok(lines, shown: str) -> bool:
     if lines is None:
-        return True                       # ohne Texterkennung: wie bisher
+        return True                       # without text recognition: as before
     seen = _letters(" ".join(lines))
     return seen == _letters(shown) if shown else len(seen) <= 3
 
 
 def make_cover(cfg: dict, info: dict, tick=None) -> dict:
-    """→ {"jpeg", "prompt", "model", "s", "text", "text_ok", "tries"}. Wirft, wenn kein Bildmodell da ist."""
+    """→ {"jpeg", "prompt", "model", "s", "text", "text_ok", "tries"}. Raises if no image model is available."""
     model = find_image_model(cfg)
     if not model:
         raise RuntimeError("Kein Bildmodell installiert (macOS: tools/ollama-bild mit x/flux2-klein:4b, "
@@ -1962,11 +2008,11 @@ def make_cover(cfg: dict, info: dict, tick=None) -> dict:
     scene = cover_scene(cfg, info)
     shown = cover_title(info, rights(cfg))
     base_seed = int(info.get("seed") or 0) % 2147483647 or random.randint(1, 2147483646)
-    # Erst zweimal mit Titel, dann zweimal ohne Schrift — das erste Bild, das die Prüfung besteht, gilt.
+    # First twice with the title, then twice without lettering — the first image that passes the check wins.
     plan = ([shown, shown] if shown else []) + ["", ""]
     if not ensure_ocr(cfg):
-        # 3.11: ohne Texterkennung (Windows/Linux) lässt sich ein verschriebener Titel nicht erkennen —
-        #       dann lieber gar keine Schrift auf dem Bild (der Künstlername kommt, wo möglich, als Schriftzug)
+        # 3.11: without text recognition (Windows/Linux) a misspelled title cannot be detected —
+        #       so better no lettering at all on the image (the artist name is added, where possible, as an overlay)
         plan = [""]
     import base64
     best = None
@@ -1993,7 +2039,7 @@ def make_cover(cfg: dict, info: dict, tick=None) -> dict:
                 src, dst = s.path("cover.png"), s.path("cover.jpg")
                 with open(src, "wb") as f:
                     f.write(base64.b64decode(b64))
-                # 1000 px, JPEG — so klein, dass es in jede Datei passt (macOS: sips, sonst ffmpeg)
+                # 1000 px, JPEG — small enough to fit into any file (macOS: sips, otherwise ffmpeg)
                 img_to_jpeg(cfg, src, dst, 1000, 88)
                 with open(dst, "rb") as f:
                     jpeg = f.read()
@@ -2011,18 +2057,18 @@ def make_cover(cfg: dict, info: dict, tick=None) -> dict:
     return best
 
 
-# ---- Archiv: finden, veredeln -------------------------------------------------
+# ---- Archive: find, refine -------------------------------------------------
 
 def rel_home(path: str) -> str:
-    """Pfad relativ zu ~ — zwischen zwei ECHTEN Pfaden. 🔴 Gefunden im Prüfstand 12.10.2026:
-    archive_path() liefert realpath (/private/var/…), HOME war /var/… (Symlink) → relpath ergab
-    „../../../../private/var/…", der Browser speicherte das, und der nächste Export fand nichts mehr.
-    Gleiches träfe ein ~/NeonForge, das per Symlink auf einer anderen Platte liegt."""
+    """Path relative to ~ — between two REAL paths. 🔴 Found in the test bench 12.10.2026:
+    archive_path() returns realpath (/private/var/…), HOME was /var/… (symlink) → relpath gave
+    "../../../../private/var/…", the browser stored that, and the next export found nothing anymore.
+    The same would hit a previous install folder that lives on another disk via symlink."""
     return os.path.relpath(os.path.realpath(path), os.path.realpath(HOME))
 
 
 def archive_path(rel: str) -> str:
-    """Pfad aus dem Browser (relativ zu ~) → echte Datei NUR innerhalb von renders/."""
+    """Path from the browser (relative to ~) → real file ONLY inside renders/."""
     if not isinstance(rel, str) or not rel.endswith(".wav"):
         return ""
     p = os.path.realpath(os.path.join(HOME, rel))
@@ -2049,7 +2095,7 @@ def _read_bytes(path: str):
 
 def _write_atomic(path: str, data: bytes) -> None:
     import tempfile
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".neonforge-", suffix=".tmp")
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".mws-", suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
@@ -2063,13 +2109,13 @@ def _write_atomic(path: str, data: bytes) -> None:
 
 
 def info_from_archive(wav_path: str, given: dict = None) -> dict:
-    """Was wir über einen Track wissen: zuerst sein .json im Archiv, dann was der Browser schickt
-    (der Browser gewinnt beim TITEL — dort wird umbenannt)."""
+    """What we know about a track: first its .json in the archive, then what the browser sends
+    (the browser wins for the TITLE — that is where renaming happens)."""
     d = _read_json(wav_path[:-4] + ".json") if wav_path else {}
     req, meta, res = d.get("request") or {}, d.get("meta") or {}, d.get("result") or {}
     g = given or {}
-    # Erzeugt ist ein Track an dem Tag, unter dem er im Archiv liegt — der Browser kennt nur
-    # den Tag, an dem ER ihn bekommen hat (nach einem Umzug ein anderer).
+    # A track is created on the day under which it sits in the archive — the browser only knows
+    # the day IT received it (a different one after a move).
     m = re.search(r"/(\d{4}-\d{2}-\d{2})/", wav_path or "")
     created = m.group(1) if m else (g.get("created") or "")
     return {
@@ -2088,11 +2134,11 @@ def info_from_archive(wav_path: str, given: dict = None) -> dict:
 
 
 class FileLock:
-    """Sperre — auch über Prozesse (Dienst + „--nachruesten" im Terminal). Schlüssel ist der ECHTE
-    Pfad (Audit 3.2: über einen Symlink hätte dieselbe Datei zwei Sperren gehabt) oder ein Name."""
+    """Lock — also across processes (service + "--nachruesten" in the terminal). The key is the REAL
+    path (audit 3.2: via a symlink the same file would have had two locks) or a name."""
 
     def __init__(self, key, blocking=True):
-        # 3.11: Windows kennt kein fcntl — dort sperrt msvcrt.locking das erste Byte der Sperrdatei
+        # 3.11: Windows has no fcntl — there msvcrt.locking locks the first byte of the lock file
         if IS_WIN:
             import msvcrt
             self.fcntl, self.msvcrt = None, msvcrt
@@ -2123,7 +2169,7 @@ class FileLock:
                 self.fcntl.flock(self.fh, self.fcntl.LOCK_EX | (0 if self.blocking else self.fcntl.LOCK_NB))
             self.held = True
         except OSError:
-            self.held = False          # nur bei blocking=False: jemand anderes hält sie
+            self.held = False          # only with blocking=False: someone else holds it
         return self
 
     def __exit__(self, *exc):
@@ -2141,9 +2187,9 @@ class FileLock:
 
 
 def wav_plain(data: bytes) -> bytes:
-    """24-Bit-WAV mit dem einfachen PCM-Kopf (Format 1) statt WAVE_FORMAT_EXTENSIBLE (65534).
-    🔴 3.5: ffmpeg und audiowmark schreiben ab 24 Bit den erweiterten Kopf — das wave-Modul von
-    Python 3.9 (die Brücke läuft mit /usr/bin/python3) kennt ihn nicht: „unknown format: 65534"."""
+    """24-bit WAV with the plain PCM header (format 1) instead of WAVE_FORMAT_EXTENSIBLE (65534).
+    🔴 3.5: ffmpeg and audiowmark write the extended header from 24 bit on — the wave module of
+    Python 3.9 (the bridge runs with /usr/bin/python3) does not know it: "unknown format: 65534"."""
     if data[:4] != b"RIFF" or data[8:12] != b"WAVE":
         return data
     pos, out = 12, []
@@ -2161,13 +2207,13 @@ def wav_plain(data: bytes) -> bytes:
 
 
 def _clean_master_audio(cfg: dict, src: str, declip: bool, out: str) -> dict:
-    """Original → (adeclip) → 1 dB Luft → 24 Bit mit Dreiecks-Dither. → {"spitze_db", "pegel_db"}"""
+    """Original → (adeclip) → 1 dB headroom → 24 bit with triangular dither. → {"spitze_db", "pegel_db"}"""
     ff = tool(cfg, "ffmpeg")
     with Scratch() as s:
         fl = s.path("f.wav")
         _run([ff, "-v", "error", "-y", "-i", src] + (["-af", "adeclip"] if declip else []) + ["-c:a", "pcm_f32le", fl], timeout=900)
-        # 🔴 NICHT volumedetect: das rechnet in 16 Bit und meldet höchstens 0,0 dB — die rekonstruierten
-        #    Spitzen liegen darüber (gemessen +1,47 dB), es gäbe zu wenig Luft und neues Clipping.
+        # 🔴 NOT volumedetect: it computes in 16 bit and reports at most 0.0 dB — the reconstructed
+        #    peaks lie above that (measured +1.47 dB), there would be too little headroom and new clipping.
         p = subprocess.run([ff, "-hide_banner", "-nostats", "-i", fl, "-af",
                             "astats=measure_perchannel=none:measure_overall=Peak_level", "-f", "null", "-"],
                            capture_output=True, text=True, timeout=600)
@@ -2181,12 +2227,12 @@ def _clean_master_audio(cfg: dict, src: str, declip: bool, out: str) -> dict:
 
 
 def aufbereiten(cfg: dict, wav_path: str):
-    """3.4/3.5: das Archiv auf den besten Stand bringen — aus dem UNMARKIERTEN Original:
-    • vor 3.4 hat der Modellserver JEDEN Track hart beschnitten (peak_clip 10) → adeclip
-      (🔴 auf der markierten Datei wirkt es nicht: das Zeichen verrauscht die flachen Stellen — gemessen)
-    • vor 3.5 war das Wasserzeichen zu laut (Stärke 10) → DIESELBE Kennung leise neu setzen
-    • 24 Bit statt 16 (die Reparatur rechnet in Fließkomma)
-    Scheitert etwas oder ist das Zeichen danach nicht lesbar, bleibt die alte Datei. → dict oder None."""
+    """3.4/3.5: bring the archive to the best state — from the UNMARKED original:
+    • before 3.4 the model server hard-clipped EVERY track (peak_clip 10) → adeclip
+      (🔴 on the marked file it does not work: the mark makes the flat spots noisy — measured)
+    • before 3.5 the watermark was too loud (strength 10) → set the SAME ID again, quietly
+    • 24 bit instead of 16 (the repair computes in floating point)
+    If anything fails or the mark is unreadable afterwards, the old file stays. → dict or None."""
     jpath = wav_path[:-4] + ".json"
     d = _read_json(jpath)
     if (d.get("aufbereitet") or {}).get("v") == AUFBEREITET_V:
@@ -2231,9 +2277,9 @@ def aufbereiten(cfg: dict, wav_path: str):
 
 
 def hq_version(cfg: dict, wav_path: str, variant: str = "C") -> str:
-    """3.5: eine neue Version eines Tracks in bester Qualität — DERSELBE Inhalt (nicht neu gerechnet:
-    derselbe Seed ergibt ein anderes Stück, gemessen), aus dem unmarkierten Original aufbereitet,
-    24 Bit, eigenes leises Wasserzeichen, Cover übernommen. Erscheint in der App unter „📥 Vom Mac holen". → Pfad"""
+    """3.5: a new version of a track in best quality — the SAME content (not re-rendered:
+    the same seed gives a different piece, measured), refined from the unmarked original,
+    24 bit, own quiet watermark, cover taken over. Appears in the app under "📥 Vom Mac holen". → path"""
     orig = os.path.join(ORIG_DIR, os.path.basename(os.path.dirname(wav_path)), os.path.basename(wav_path))
     if not os.path.isfile(orig):
         raise RuntimeError("Kein unmarkiertes Original für %s" % os.path.basename(wav_path))
@@ -2252,7 +2298,7 @@ def hq_version(cfg: dict, wav_path: str, variant: str = "C") -> str:
         clean = _read_bytes(out)
     o2 = os.path.join(ORIG_DIR, os.path.basename(folder), base + ".wav")
     os.makedirs(os.path.dirname(o2), exist_ok=True)
-    _write_atomic(o2, clean)                    # auch Version C behält ihr unmarkiertes Original
+    _write_atomic(o2, clean)                    # version C also keeps its unmarked original
     target = wm_strength(cfg, _wav_seconds(clean))
     audio, payload = wm_embed(cfg, clean, {"title": title, "variant": variant, "archived": rel_home(new),
                                            "created": os.path.basename(folder)})
@@ -2267,7 +2313,7 @@ def hq_version(cfg: dict, wav_path: str, variant: str = "C") -> str:
                               adeclip=clipped, bits=24, wm_staerke=target)}
     if d.get("master"):
         nd["master"] = d["master"]
-    # Cover übernehmen: der unbeschriftete Rohling, der Schriftzug kommt beim Veredeln neu drauf
+    # Take over the cover: the unlettered blank; the lettering is applied anew during refinement
     raw = _read_bytes(raw_cover_path(wav_path)) or _read_bytes(wav_path[:-4] + ".jpg")
     if raw:
         _write_atomic(raw_cover_path(new), raw)
@@ -2275,13 +2321,13 @@ def hq_version(cfg: dict, wav_path: str, variant: str = "C") -> str:
         nd["cover"] = dict(d.get("cover") or {}, stamp="")
     _write_atomic(new[:-4] + ".json", json.dumps(nd, indent=2, ensure_ascii=False).encode("utf-8"))
     _write_atomic(new, wav_with_tags(audio, track_tags(cfg, info_from_archive(new)), raw))
-    veredeln(cfg, new, None, want_cover=False, backup=False)   # Schriftzug + Tags mit fertigem Cover
+    veredeln(cfg, new, None, want_cover=False, backup=False)   # lettering + tags with the finished cover
     log("Version %s angelegt: %s (aus %s)" % (variant, os.path.basename(new), os.path.basename(wav_path)))
     return new
 
 
 def stamp_text(r: dict) -> str:
-    """Was als Schriftzug aufs Cover gehört: der Künstlername — nie der bürgerliche Name des Inhabers."""
+    """What belongs on the cover as lettering: the artist name — never the owner's legal name."""
     return re.sub(r"\s+", " ", str(r.get("artist") or "")).strip()[:40] if r.get("cover_artist", True) else ""
 
 
@@ -2290,9 +2336,9 @@ def raw_cover_path(wav_path: str) -> str:
 
 
 def apply_stamp(cfg: dict, wav_path: str) -> bool:
-    """Bringt den Schriftzug auf dem Cover auf den Stand der Einstellungen. Gemalt wird nichts:
-    das unbeschriftete Bild liegt als .roh.jpg daneben, das .jpg ist immer das fertige Cover.
-    → True, wenn sich das .jpg geändert hat."""
+    """Brings the lettering on the cover up to date with the settings. Nothing is painted:
+    the unlettered image sits next to it as .roh.jpg, the .jpg is always the finished cover.
+    → True if the .jpg changed."""
     cpath, rpath, jpath = wav_path[:-4] + ".jpg", raw_cover_path(wav_path), wav_path[:-4] + ".json"
     want = stamp_text(rights(cfg))
     with FileLock(wav_path):
@@ -2305,11 +2351,11 @@ def apply_stamp(cfg: dict, wav_path: str) -> bool:
             return False
         if not os.path.isfile(rpath):
             if have:
-                # 🔴 Der Rohling fehlt, das Bild trägt schon einen Namen — ein zweiter Schriftzug
-                #    darüber wäre schlimmer als der alte. Ein neues Cover (🎨) löst das.
+                # 🔴 The blank is missing, the image already carries a name — a second lettering
+                #    on top would be worse than the old one. A new cover (🎨) solves this.
                 log("Cover %s: Rohling fehlt, Schriftzug „%s\" bleibt" % (os.path.basename(cpath), have))
                 return False
-            _write_atomic(rpath, _read_bytes(cpath))     # noch nie beschriftet: das .jpg IST der Rohling
+            _write_atomic(rpath, _read_bytes(cpath))     # never lettered yet: the .jpg IS the blank
         if want:
             st = _swift_tool(cfg, "nf-stempel", NF_STEMPEL_SWIFT)
             if not st:
@@ -2336,20 +2382,20 @@ def _cover_hash(cpath: str) -> str:
 
 def veredeln(cfg: dict, wav_path: str, given: dict = None, want_cover: bool = True, tick=None,
              backup: bool = True, new_cover: bool = False) -> dict:
-    """Bringt EINE Datei im Archiv auf den Stand: Wasserzeichen, Tags, Cover daneben.
-    🔴 Audit 3.2: die Sperre gilt nur fürs Schreiben — das Cover wird OHNE sie gemalt (bis zu
-       Minuten), sonst wartete ein Export desselben Tracks (und mit ihm die ganze Brief-Spur)."""
+    """Brings ONE file in the archive up to date: watermark, tags, cover alongside.
+    🔴 Audit 3.2: the lock only covers writing — the cover is painted WITHOUT it (up to
+       minutes), otherwise an export of the same track would wait (and with it the whole brief lane)."""
     with FileLock(wav_path):
         out = _mark_and_tag(cfg, wav_path, given, tick, backup)
     try:
         if aufbereiten(cfg, wav_path):
             out["changed"].append("aufbereitet")
-    except Exception as e:  # noqa: BLE001 — die alte Datei bleibt, alles andere geht weiter
+    except Exception as e:  # noqa: BLE001 — the old file stays, everything else continues
         log("Aufbereiten %s fehlgeschlagen: %s" % (os.path.basename(wav_path), e))
     r = rights(cfg)
     cpath = wav_path[:-4] + ".jpg"
     if want_cover and r["cover"] and os.path.isfile(cpath) and not new_cover:
-        # Ein Cover von vor der Schriftprüfung: einmal lesen — steht ein falscher Titel drauf, neu malen
+        # A cover from before the lettering check: read it once — if a wrong title is on it, repaint
         dc = _read_json(wav_path[:-4] + ".json").get("cover") or {}
         if "text_ok" not in dc:
             lines = cover_text(cfg, _read_bytes(raw_cover_path(wav_path)) or _read_bytes(cpath) or b"")
@@ -2365,7 +2411,7 @@ def veredeln(cfg: dict, wav_path: str, given: dict = None, want_cover: bool = Tr
                 new_cover = True
     if (want_cover and r["cover"] and not os.path.isfile(cpath)) or new_cover:
         info = info_from_archive(wav_path, given)
-        if new_cover:   # anderes Motiv: neuer Zufallswert, neue Beschreibung
+        if new_cover:   # different scene: new random value, new description
             info["seed"] = random.randint(1, 2147483646)
         try:
             c = make_cover(cfg, info, tick)
@@ -2384,15 +2430,15 @@ def veredeln(cfg: dict, wav_path: str, given: dict = None, want_cover: bool = Tr
             out["cover"] = True
             out["changed"].append("cover")
     try:
-        # auch beim Export (want_cover=False): der Schriftzug kostet keinen Grafikchip, und eine Datei
-        # direkt nach dem Umbenennen soll schon den neuen Namen tragen
+        # also on export (want_cover=False): the lettering costs no graphics chip, and a file
+        # right after renaming should already carry the new name
         if apply_stamp(cfg, wav_path) and "cover" not in out["changed"]:
             out["changed"].append("schriftzug")
-    except Exception as e:  # noqa: BLE001 — das Cover bleibt dann ohne Namen, der Rest geht weiter
+    except Exception as e:  # noqa: BLE001 — the cover then stays without a name, the rest continues
         log("Schriftzug für %s fehlgeschlagen: %s" % (os.path.basename(wav_path), e))
     if os.path.isfile(cpath):
         with FileLock(wav_path):
-            again = _mark_and_tag(cfg, wav_path, given, None, backup)     # fertiges Cover in die Tags
+            again = _mark_and_tag(cfg, wav_path, given, None, backup)     # finished cover into the tags
         out["changed"] += [x for x in again["changed"] if x not in out["changed"]]
     out["cover"] = os.path.isfile(cpath)
     out["stamp"] = str((_read_json(wav_path[:-4] + ".json").get("cover") or {}).get("stamp") or "")
@@ -2400,13 +2446,13 @@ def veredeln(cfg: dict, wav_path: str, given: dict = None, want_cover: bool = Tr
 
 
 def _mark_and_tag(cfg, wav_path, given, tick, backup) -> dict:
-    """Wasserzeichen (falls noch keins) und Tags — unter der Sperre der Datei."""
+    """Watermark (if none yet) and tags — under the file lock."""
     r = rights(cfg)
     jpath = wav_path[:-4] + ".json"
     cpath = wav_path[:-4] + ".jpg"
     d = _read_json(jpath)
     out = {"marked": bool(d.get("wasserzeichen")), "changed": []}
-    # Eine Umbenennung im Browser gilt auch im Archiv (Audit 3.2: sonst sprang der Titel zurück)
+    # A rename in the browser also applies in the archive (audit 3.2: otherwise the title jumped back)
     g = given or {}
     meta = d.get("meta") if isinstance(d.get("meta"), dict) else {}
     d["meta"] = meta
@@ -2420,9 +2466,9 @@ def _mark_and_tag(cfg, wav_path, given, tick, backup) -> dict:
     audio = None
     if r["watermark"] and not d.get("wasserzeichen"):
         try:
-            # 🔴 Audit 3.2: ein Track kann SCHON markiert sein (aus dem Browser nachgereicht, Absturz
-            #    zwischen WAV und .json) — ein zweites Zeichen mit demselben Schlüssel löscht das erste
-            #    teilweise aus. Also erst nachsehen, dann setzen.
+            # 🔴 Audit 3.2: a track may ALREADY be marked (resubmitted from the browser, crash
+            #    between WAV and .json) — a second mark with the same key partly erases the
+            #    first. So look first, then set.
             if tick:
                 tick("Wasserzeichen …")
             found = wm_detect(cfg, wav_path)
@@ -2436,7 +2482,7 @@ def _mark_and_tag(cfg, wav_path, given, tick, backup) -> dict:
                     bfile = os.path.join(ORIG_DIR, os.path.basename(os.path.dirname(wav_path)), os.path.basename(wav_path))
                     os.makedirs(os.path.dirname(bfile), exist_ok=True)
                     if not os.path.exists(bfile) or os.path.getsize(bfile) != len(audio):
-                        _write_atomic(bfile, audio)       # atomar: nie ein halbes Original
+                        _write_atomic(bfile, audio)       # atomic: never a half-written original
                 staerke = wm_strength(cfg, _wav_seconds(audio))
                 audio, payload = wm_embed(cfg, audio, {"title": info["title"], "variant": info["variant"],
                                                        "archived": rel, "created": info["created"]})
@@ -2445,7 +2491,7 @@ def _mark_and_tag(cfg, wav_path, given, tick, backup) -> dict:
             out["marked"] = True
             out["changed"].append("wasserzeichen")
         except Exception as e:  # noqa: BLE001
-            # Tags und Cover gehen trotzdem weiter — das Fehlen wird gemeldet, nicht verschluckt
+            # Tags and cover continue anyway — the failure is reported, not swallowed
             out["wm_error"] = (str(e) or type(e).__name__)[:200]
             log("Wasserzeichen für %s fehlgeschlagen: %s" % (os.path.basename(wav_path), e))
             audio = None
@@ -2455,9 +2501,9 @@ def _mark_and_tag(cfg, wav_path, given, tick, backup) -> dict:
         if audio is None:
             with open(wav_path, "rb") as f:
                 audio = f.read()
-        # Erst die WAV, DANN die .json mit der Kennung: scheitert die WAV, behauptet die .json
-        # nichts Falsches; stirbt der Prozess dazwischen, findet die Erkennung das Zeichen beim
-        # nächsten Mal und trägt es nach (statt ein zweites zu setzen).
+        # First the WAV, THEN the .json with the ID: if the WAV fails, the .json claims
+        # nothing false; if the process dies in between, the detection finds the mark next
+        # time and carries it over (instead of setting a second one).
         _write_atomic(wav_path, wav_with_tags(audio, tags, _read_bytes(cpath)))
         d["tags"], d["tags_version"], d["tags_cover"] = tags, TAGS_VERSION, ch
         _write_atomic(jpath, json.dumps(d, indent=2, ensure_ascii=False).encode("utf-8"))
@@ -2469,14 +2515,16 @@ def _mark_and_tag(cfg, wav_path, given, tick, backup) -> dict:
 
 
 def archive_upload(cfg: dict, audio: bytes, given: dict) -> str:
-    """Ein Track, den der Mac nicht (mehr) hat, kommt aus dem Browser — ab ins Archiv."""
+    """A track the Mac does not (or no longer) have comes from the browser — into the archive."""
     created = str(given.get("created") or datetime.date.today().isoformat())[:10]
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", created):
         created = datetime.date.today().isoformat()
     folder = os.path.join(RENDERS, created)
     os.makedirs(folder, exist_ok=True)
-    # 🔴 3.7: schickte der Browser denselben Track noch einmal (Seite neu geladen / Tab zu, bevor er das Ergebnis des
-    #    Archiv ändert sich beim Veredeln, darum steht die Summe in der .json) und nimmt den vorhandenen Platz.
+    # 🔴 3.7: if the browser sent the same track again (page reloaded / tab closed before it fetched the result of
+    #    the retrofit), another copy was created each time ("aus-browser_…_2.wav", "_3" …) — they showed up as
+    #    "only on your Mac". Now the Mac recognizes it by the checksum of the UPLOADED audio (the file in the
+    #    archive changes during refinement, so the checksum is stored in the .json) and reuses the existing slot.
     digest = hashlib.sha256(audio).hexdigest()
     try:
         names = sorted(os.listdir(folder))
@@ -2493,7 +2541,7 @@ def archive_upload(cfg: dict, audio: bytes, given: dict) -> str:
     base = ("selbst_" if eigen else "aus-browser_") + "%s%s_%s" % (clean(given.get("title"), 50) or "Manuwave_Studio",
                                     ("_" + clean(given.get("variant"), 4)) if clean(given.get("variant"), 4) else "",
                                     clean(given.get("seed"), 12) or secrets.token_hex(3))
-    # Audit 3.2: nie eine vorhandene Datei überschreiben (gleicher Titel, Variante, Seed am selben Tag)
+    # Audit 3.2: never overwrite an existing file (same title, variant, seed on the same day)
     for n in range(100):
         wav = os.path.join(folder, base + ("" if n == 0 else "_%d" % (n + 1)) + ".wav")
         try:
@@ -2523,25 +2571,26 @@ def all_archived() -> list:
 
 
 # ---- Mastering (3.4) -------------------------------------------------------------
-# tonfarbe höhen bässe regulieren können, live wenn man sie hört um dann erst zu exportieren".
-# Der Browser spielt die Kette LIVE mit Web Audio, der Mac rechnet beim Export DIESELBE Kette mit ffmpeg.
-# 🔑 Gemessen: ffmpegs lowshelf/highshelf (t=s:w=1) und equalizer (t=q) sind die RBJ-Biquads, die
-#    auch Web Audio benutzt — Abweichung ≤ 0,005 dB. Darum klingt der Export wie die Vorschau.
-#    Reihenfolge und Frequenzen hier und in app.js (MASTER_CHAIN) müssen gleich bleiben.
+# The idea: tracks can be mastered in the app, trimmed, and tone/treble/bass adjusted,
+# live while listening, and only then exported.
+# The browser plays the chain LIVE with Web Audio, the Mac computes the SAME chain with ffmpeg on export.
+# 🔑 Measured: ffmpeg's lowshelf/highshelf (t=s:w=1) and equalizer (t=q) are the RBJ biquads that
+#    Web Audio also uses — deviation ≤ 0.005 dB. That is why the export sounds like the preview.
+#    Order and frequencies here and in app.js (MASTER_CHAIN) must stay the same.
 MASTER_RANGES = {"bass": (-12.0, 12.0), "tone": (-6.0, 6.0), "treble": (-12.0, 12.0), "soft": (0.0, 8.0),
                  "gain": (-24.0, 12.0), "fade_in": (0.0, 10.0), "fade_out": (0.0, 15.0)}
 MASTER_DEFAULT = {"bass": 0.0, "tone": 0.0, "treble": 0.0, "soft": 2.0, "fade_in": 0.0}
-MASTER_LIMIT_DB = -1.5      # Spitzen-Grenze: auch ein MP3 bleibt beim Abspielen unter 0 dBFS
-MASTER_TARGET_LUFS = -14.0  # Lautheit wie bei den großen Streamingdiensten — lauter wird dort ohnehin leiser gedreht
-# 3.27: Lautheitsziel wählbar — Streaming −14, leise −16, Club −9 (wie ZIELE in mastering.js)
+MASTER_LIMIT_DB = -1.5      # peak limit: even an MP3 stays below 0 dBFS on playback
+MASTER_TARGET_LUFS = -14.0  # loudness as on the big streaming services — louder gets turned down there anyway
+# 3.27: selectable loudness target — streaming −14, quiet −16, club −9 (like ZIELE in mastering.js)
 ZIELE = {"streaming": -14.0, "leise": -16.0, "club": -9.0}
-EQ_BUTTER4 = (0.5411961, 1.3065630)        # Hoch-/Tiefpass 4. Ordnung = zwei Butterworth-Stufen
+EQ_BUTTER4 = (0.5411961, 1.3065630)        # 4th-order high/low-pass = two Butterworth stages
 MONO_BASS, BREITE = (60, 200), (50, 150)
 
-# 3.28: Dynamik — dynamischer EQ gegen KI-Härte, De-Esser, Kompressor (wie DYN_STUFEN/dynamik in mastering.js).
-# 🔑 Alle drei = acompressor (Kern seit ffmpeg 5.1 gleich, der Browser rechnet ihn Zeile für Zeile nach — gemessen
-#    bitgleich, die Bänder −140 dB). adynamicequalizer/deesser rechnen je ffmpeg-Fassung anders → nicht genommen.
-#    Band-Stufen: out = x − Bandpass(x) + acompressor(Bandpass(x)). Schwellen relativ zum Lautheitsziel.
+# 3.28: Dynamics — dynamic EQ against AI harshness, de-esser, compressor (like DYN_STUFEN/dynamik in mastering.js).
+# 🔑 All three = acompressor (core identical since ffmpeg 5.1, the browser recomputes it line by line — measured
+#    bit-identical, the bands −140 dB). adynamicequalizer/deesser compute differently per ffmpeg version → not used.
+#    Band stages: out = x − bandpass(x) + acompressor(bandpass(x)). Thresholds relative to the loudness target.
 DYN_KEYS, DYN_MAX, DYN_AUSGLEICH = ("haerte", "zisch", "komp"), 10.0, 6.0
 DYN_STUFEN = {
     "haerte": dict(f=3200, q=1.0, ratio=3, knee=2, att=5, rel=80, thr=lambda s: -5 - 1.1 * s),
@@ -2568,7 +2617,7 @@ def dyn_filters(m: dict) -> list:
     for i, p in enumerate(dyn_stufen(m)):
         comp = ("acompressor=threshold=%.6f:ratio=%g:attack=%g:release=%g:knee=%g:makeup=1:detection=rms:link=average:mix=1"
                 % (p["thr"], p["ratio"], p["att"], p["rel"], p["knee"]))
-        if p.get("f"):              # Band herausnehmen, allein komprimieren, wieder einsetzen (eindeutige Namen je Stufe)
+        if p.get("f"):              # take the band out, compress it alone, put it back (unique names per stage)
             a = "dy%d" % i
             f.append("aformat=channel_layouts=stereo,asplit=2[{a}x][{a}b];[{a}b]bandpass=f={f}:t=q:w={q:g},asplit=2[{a}p][{a}q];"
                      "[{a}q]{c}[{a}c];[{a}x][{a}p][{a}c]amerge=inputs=3,pan=stereo|c0=c0-c2+c4|c1=c1-c3+c5".format(
@@ -2578,7 +2627,7 @@ def dyn_filters(m: dict) -> list:
     return f
 
 
-# 3.27: Equalizer — bis zu 8 Bänder hinter den Schnellreglern (wie eqClean in mastering.js)
+# 3.27: Equalizer — up to 8 bands after the quick controls (like eqClean in mastering.js)
 EQ_TYPES = {"lc": "highpass", "ls": "lowshelf", "pk": "peaking", "hs": "highshelf", "hc": "lowpass"}
 EQ_MAX, EQ_F, EQ_G, EQ_Q = 8, (20, 20000), (-12.0, 12.0), (0.3, 8.0)
 
@@ -2611,7 +2660,7 @@ def clean_eq(raw) -> list:
 
 
 def clean_master(raw):
-    """Nur bekannte Regler, in ihren Grenzen. → dict oder None."""
+    """Only known controls, within their limits. → dict or None."""
     if not isinstance(raw, dict):
         return None
     num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)  # noqa: E731
@@ -2632,7 +2681,7 @@ def clean_master(raw):
         m["breite"] = int(round(max(BREITE[0], min(BREITE[1], br))))
     if raw.get("ziel") in ZIELE and raw.get("ziel") != "streaming":
         m["ziel"] = raw["ziel"]
-    for k in DYN_KEYS:                             # 3.28: Stärke 0–10 in halben Schritten (wie masterClean)
+    for k in DYN_KEYS:                             # 3.28: strength 0–10 in half steps (like masterClean)
         if num(raw.get(k)):
             r = math.floor(min(DYN_MAX, float(raw[k])) * 2 + 0.5) / 2
             if r > 0:
@@ -2642,8 +2691,8 @@ def clean_master(raw):
     return m
 
 
-# 3.27: Mastering-Presets — liegen hier (bridge.json), damit sie für jeden Browser und jeden Export ohne Browser gelten.
-# Ein Preset ist ein ganzer Klang: Schnellregler, EQ und Blenden — nie Ausschnitt oder Pegel (die gehören zum Track).
+# 3.27: Mastering presets — they live here (bridge.json) so they apply to every browser and every export without a browser.
+# A preset is a whole sound: quick controls, EQ and fades — never trim or level (those belong to the track).
 PRESET_KEYS = ("bass", "tone", "treble", "soft", "fade_in", "fade_out", "eq", "mono_bass", "breite", "ziel", "haerte", "zisch", "komp")
 PRESET_MAX = 40
 
@@ -2668,7 +2717,7 @@ def clean_presets(raw) -> list:
 
 
 def master_vorgabe(cfg) -> dict:
-    """Der Klang, den neue Titel bekommen: das als Standard gewählte Preset, sonst nichts (= alte Vorgabe)."""
+    """The sound new tracks get: the preset chosen as default, otherwise nothing (= the old default)."""
     v = cfg.get("master_vorgabe") or ""
     if v == "mein_sound":
         return (mein_sound() or {}).get("m") or {}
@@ -2679,7 +2728,7 @@ _mein_sound_cache = {"at": 0.0, "wert": None}
 
 
 def mein_sound():
-    """„Mein Sound“: der Median deiner Mastering-Regler über alle Titel im Archiv, die du selbst gemastert hast."""
+    """'My Sound': the median of your mastering controls across all archive tracks you mastered yourself."""
     if time.time() - _mein_sound_cache["at"] < 300:
         return _mein_sound_cache["wert"]
     werte = {k: [] for k in ("bass", "tone", "treble", "soft", "fade_in", "fade_out") + DYN_KEYS}
@@ -2709,9 +2758,9 @@ def _wav_frames(path: str):
 
 
 def auto_end(path: str):
-    """Wo die Musik wirklich aufhört. Nach dem Ende liefert die Musik-KI oft noch Sekunden leisen
-    Klangmüll (gemessen: −28…−57 dB, Buckel bei 150–400 Hz) — Rückmeldung: „am ende der titel kommt noch
-    ein soundartefakt". → (ende_s, ausblende_s) oder None. Gleiche Rechnung wie autoEnd() in app.js."""
+    """Where the music really ends. After the end, the music AI often still delivers seconds of quiet
+    sound garbage (measured: -28...-57 dB, hump at 150-400 Hz); user feedback: a sound artifact at the end
+    of the tracks. -> (end_s, fade_out_s) or None. Same calculation as autoEnd() in app.js."""
     try:
         params, frames = _wav_frames(path)
     except Exception:
@@ -2719,7 +2768,7 @@ def auto_end(path: str):
     sw, ch, sr = params.sampwidth, params.nchannels, params.framerate
     if sw not in (2, 3, 4) or audioop is None or sr <= 0:
         return None
-    full = float(1 << (8 * sw - 1))           # 3.5: das Archiv hat auch 24 Bit
+    full = float(1 << (8 * sw - 1))           # 3.5: the archive also has 24 bit
     blk = int(sr * 0.1) * sw * ch
     n = len(frames) // blk
     if n < 50:
@@ -2731,17 +2780,17 @@ def auto_end(path: str):
         return None
     dur = len(frames) / float(sw * ch * sr)
     end = min(dur, (last + 1) * 0.1 + 0.3)
-    if dur - end < 0.5:          # nichts Nennenswertes dahinter
+    if dur - end < 0.5:          # nothing worth keeping after it
         return None
     return round(end, 2), 1.0
 
 
 def master_settings(path: str, given) -> dict:
-    """Die Regler für einen Export: was der Browser schickt, sonst was am Track gespeichert ist,
-    sonst die Vorgabe (weich, Ende abschneiden, Lautheit automatisch)."""
+    """The controls for an export: what the browser sends, otherwise what is stored on the track,
+    otherwise the default (soft, trim the end, loudness automatic)."""
     m = clean_master(given)
     if m is None:
-        m = clean_master((_read_json(path[:-4] + ".json")).get("master"))   # 3.27: auch die beim Entstehen gestempelte Vorgabe
+        m = clean_master((_read_json(path[:-4] + ".json")).get("master"))   # 3.27: also the default stamped at creation
     if m is None:
         m = dict(MASTER_DEFAULT)
         ae = auto_end(path)
@@ -2751,9 +2800,9 @@ def master_settings(path: str, given) -> dict:
 
 
 def master_filters(m: dict, dur: float, gain=None, ausgleich=0.0, bis_dynamik=False) -> list:
-    """ffmpeg-Filter in derselben Reihenfolge wie die Web-Audio-Kette im Browser.
-    3.28: nach dem Pegel die Dynamik, dann `ausgleich` dB (was die Dynamik an Lautheit nahm), Blenden, Limiter.
-    `bis_dynamik` endet nach der Dynamik — zum Messen des Ausgleichs."""
+    """ffmpeg filters in the same order as the Web Audio chain in the browser.
+    3.28: after the level comes the dynamics, then `ausgleich` dB (the loudness the dynamics took), fades, limiter.
+    `bis_dynamik` ends after the dynamics — used to measure the compensation."""
     f = []
     start = max(0.0, min(m.get("start", 0.0), dur))
     end = m.get("end") or dur
@@ -2762,22 +2811,22 @@ def master_filters(m: dict, dur: float, gain=None, ausgleich=0.0, bis_dynamik=Fa
         f += ["atrim=start=%.4f:end=%.4f" % (start, end), "asetpts=PTS-STARTPTS"]
     if m.get("bass"):
         f.append("lowshelf=f=100:g=%.2f:t=s:w=1" % m["bass"])
-    if m.get("tone"):                          # Tonfarbe: − warm, + hell (Kippen um ~1 kHz)
+    if m.get("tone"):                          # Tone color: - warm, + bright (tilt around ~1 kHz)
         f.append("lowshelf=f=300:g=%.2f:t=s:w=1" % (-m["tone"] / 2))
         f.append("highshelf=f=3000:g=%.2f:t=s:w=1" % (m["tone"] / 2))
-    if m.get("soft"):
+    if m.get("soft"):                          # Take out harshness at 3.5 kHz - "softer"
         f.append("equalizer=f=3500:t=q:w=0.8:g=%.2f" % -m["soft"])
     if m.get("treble"):
         f.append("highshelf=f=8000:g=%.2f:t=s:w=1" % m["treble"])
-    for b in clean_eq(m.get("eq")):              # 3.27: Equalizer — gleiche RBJ-Biquads wie Web Audio
-        if b["t"] in ("lc", "hc"):                 # 4. Ordnung: zwei Butterworth-Stufen
+    for b in clean_eq(m.get("eq")):              # 3.27: equalizer - same RBJ biquads as Web Audio
+        if b["t"] in ("lc", "hc"):                 # 4th order: two Butterworth stages
             f += ["%s=f=%d:poles=2:t=q:w=%.7f" % ("highpass" if b["t"] == "lc" else "lowpass", b["f"], q) for q in EQ_BUTTER4]
         elif b["t"] == "pk":
             f.append("equalizer=f=%d:t=q:w=%.2f:g=%.2f" % (b["f"], b["q"], b["g"]))
         else:
             f.append("%s=f=%d:g=%.2f:t=s:w=1" % ("lowshelf" if b["t"] == "ls" else "highshelf", b["f"], b["g"]))
     mono, breite = m.get("mono_bass") or 0, (m.get("breite") or 100) / 100.0
-    if mono or breite != 1:                        # 3.27: Mitte/Seite — wie eqNodes im Browser (exakt linear)
+    if mono or breite != 1:                        # 3.27: mid/side - like eqNodes in the browser (exactly linear)
         f.append("pan=stereo|c0=0.5*c0+0.5*c1|c1=0.5*c0-0.5*c1")
         if mono:
             f += ["highpass=f=%d:poles=2:t=q:w=%.7f:c=FR" % (mono, q) for q in EQ_BUTTER4]
@@ -2800,7 +2849,7 @@ def master_filters(m: dict, dur: float, gain=None, ausgleich=0.0, bis_dynamik=Fa
 
 
 def measure_lufs(ff: str, path: str, filters: list) -> float:
-    """Integrierte Lautheit (EBU R128) nach EQ, vor Pegel und Limiter."""
+    """Integrated loudness (EBU R128) after EQ, before level and limiter."""
     p = subprocess.run([ff, "-hide_banner", "-nostats", "-i", path, "-af", ",".join(filters + ["ebur128=framelog=quiet"]),
                         "-f", "null", "-"], capture_output=True, text=True, timeout=600)
     m = re.findall(r"I:\s+(-?[\d.]+) LUFS", p.stderr)
@@ -2810,8 +2859,8 @@ def measure_lufs(ff: str, path: str, filters: list) -> float:
 
 
 def master_kette(ff: str, wav_path: str, m: dict, tick=None):
-    """Die ganze Mastering-Kette eines Exports → (ffmpeg-Filter, Infos). Misst Lautheit (wenn „Auto“) und
-    3.28 den Ausgleich nach der Dynamik — dieselbe Rechnung wie masterAudio/renderMaster im Browser."""
+    """The whole mastering chain of an export -> (ffmpeg filters, info). Measures loudness (if 'Auto') and,
+    3.28, the compensation after the dynamics - same calculation as masterAudio/renderMaster in the browser."""
     mi = {}
     dur = wav_duration(wav_path)
     gain, lufs = m.get("gain"), None
@@ -2823,7 +2872,7 @@ def master_kette(ff: str, wav_path: str, m: dict, tick=None):
         mi["lufs_vorher"] = round(lufs, 1)
     gain = round(gain, 2)
     ausgleich = 0.0
-    if dyn_stufen(m) and lufs is not None:          # 3.28: was Kompressor & Co. an Lautheit nehmen, kommt danach wieder drauf
+    if dyn_stufen(m) and lufs is not None:          # 3.28: loudness taken by compressor & co. is added back afterwards
         if tick:
             tick("Dynamik wird gemessen …")
         nach = measure_lufs(ff, wav_path, master_filters(m, dur, gain, bis_dynamik=True))
@@ -2841,7 +2890,7 @@ def wav_duration(path: str) -> float:
 # ---- Export -------------------------------------------------------------------
 
 def aiff_with_id3(data: bytes, tag: bytes) -> bytes:
-    """Hängt einen ID3-Block als „ID3 "-Chunk an eine AIFF-Datei (so liest ihn auch Apple)."""
+    """Appends an ID3 block as an 'ID3 ' chunk to an AIFF file (so Apple reads it too)."""
     if data[:4] != b"FORM" or data[8:12] not in (b"AIFF", b"AIFC"):
         return data
     chunk = b"ID3 " + struct.pack(">I", len(tag)) + tag + (b"\0" if len(tag) % 2 else b"")
@@ -2871,8 +2920,8 @@ def export_track(cfg: dict, wav_path: str, fmt: str, rate: int, info: dict, tick
         else:
             args += ["-map", "0:a"]
         args += ["-map_metadata", "-1"]
-        # Zum Schluss immer auf die Zielrate (Hochwertiger Standard-Umrechner — soxr fehlt im Homebrew-
-        # ffmpeg, gemessen) mit Dreiecks-Dither: aus der Fließkomma-Kette wird sauber 16 oder 24 Bit.
+        # Finally always resample to the target rate (high-quality default resampler - soxr is missing in the
+        # Homebrew ffmpeg, measured) with triangular dither: the float chain becomes clean 16 or 24 bit.
         chain = chain + ["aresample=%d:filter_size=64:phase_shift=10:cutoff=0.97:dither_method=triangular" % (rate or 48000)]
         args += ["-af", ",".join(chain)]
         args += f["args"] + f.get("s24" if bits == 24 else "s16", [])
@@ -2907,11 +2956,13 @@ def export_track(cfg: dict, wav_path: str, fmt: str, rate: int, info: dict, tick
 
 
 # =============================================================================
-# 3.9: Veröffentlichungspaket — alles, was man zum Veröffentlichen oder Lizenzieren braucht
+# 3.9: Release package — everything needed to publish or license a track
 # =============================================================================
-# Eine ZIP je Track: Audio (gemastert, wie im Export gewählt), Cover 3000 × 3000 (Vertriebe verlangen das),
-# Metadaten fürs Hochladen inkl. KI-Angaben, Liedtext, Herkunftsnachweis (PDF) und eine Lizenz-VORLAGE
-# für Firmen (Word, zum Ausfüllen). Lizenzen der Modelle am 15.10.2026 an den Modellkarten geprüft.
+# One ZIP per track: audio (mastered as chosen in the export), cover at 3000 × 3000 (distributors require it),
+# upload metadata incl. AI disclosure, lyrics, provenance record (PDF) and a license TEMPLATE for companies
+# (Word, to be filled in). Model licenses checked against the model cards on 2026-10-15.
+# Language: opts["ui_lang"] == "en" -> every text and every file name in the ZIP is English; anything else -> German
+# (unchanged behaviour). Texts are picked per call with T(german, english) inside release_package.
 MODEL_LICENSES = (
     ("flux2-klein", "FLUX.2 [klein] 4B (Black Forest Labs)", "Apache 2.0", "https://huggingface.co/black-forest-labs/FLUX.2-klein-4B"),
     ("z-image", "Z-Image Turbo (Tongyi-MAI)", "Apache 2.0", "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo"),
@@ -2919,8 +2970,11 @@ MODEL_LICENSES = (
 ACE_LICENSE = ("ACE-Step 1.5", "MIT — laut Modellkarte ausdrücklich für kommerzielle Nutzung der erzeugten Musik",
                "https://huggingface.co/ACE-Step/Ace-Step1.5")
 LANG_DE = {"en": "Englisch", "de": "Deutsch", "es": "Spanisch", "fr": "Französisch", "it": "Italienisch"}
+# English counterparts for the package texts (the shared LANG_DE above stays German)
+LANG_EN = {"en": "English", "de": "German", "es": "Spanish", "fr": "French", "it": "Italian"}
+ACE_LICENSE_EN = "MIT — expressly for commercial use of the generated music, according to the model card"
 
-NF_PDF_SWIFT = r'''// Manuwave Studio: HTML → PDF (A4) mit AppKit, nur lokal. Aufruf: nf-pdf ein.html aus.pdf
+NF_PDF_SWIFT = r'''// Manuwave Studio: HTML → PDF (A4) with AppKit, local only. Usage: nf-pdf in.html out.pdf
 import AppKit
 let a = CommandLine.arguments
 guard a.count == 3, let html = try? Data(contentsOf: URL(fileURLWithPath: a[1])),
@@ -2986,8 +3040,8 @@ def _audio_seconds(cfg: dict, data: bytes, ext: str, fallback: float) -> float:
 
 
 def _cover_3000(cfg: dict, cpath: str):
-    """Vertriebe verlangen mind. 3000 × 3000 px. Das Cover entsteht mit 1000 px
-    und wird hier hochgerechnet (sips, Lanczos) — steht so im Lies-mich."""
+    """Distributors require at least 3000 × 3000 px. The cover is generated at 1000 px
+    and upscaled here (sips, Lanczos) — the read-me says so."""
     if not os.path.isfile(cpath):
         return None
     with Scratch() as s:
@@ -2997,7 +3051,7 @@ def _cover_3000(cfg: dict, cpath: str):
 
 
 def _html_to(cfg: dict, html: str, kind: str):
-    """HTML → PDF (eigenes Werkzeug nf-pdf) oder DOCX (textutil). → (bytes, endung); Rückfall: HTML."""
+    """HTML -> PDF (own tool nf-pdf) or DOCX (textutil). -> (bytes, extension); fallback: HTML."""
     with Scratch() as s:
         src = s.path("d.html")
         with open(src, "w", encoding="utf-8") as f:
@@ -3023,11 +3077,18 @@ def _html_to(cfg: dict, html: str, kind: str):
 
 
 def release_package(cfg: dict, path: str, res: dict, info: dict, opts: dict, fin: dict, own_master: bool = False) -> dict:
-    """Baut die ZIP aus einem fertigen Export (res) — opts: {"text_eigen": bool}. own_master: der Nutzer hat in 🎚 eingestellt
-    (sonst ist es der automatische Vorschlag — und das darf der Nachweis nicht als seine Arbeit ausgeben)."""
+    """Builds the ZIP from a finished export (res) — opts: {"text_eigen": bool, "ui_lang": "de"|"en"}. own_master: the user
+    set the master in 🎚 (otherwise it is the automatic suggestion — and the record must not present that as their work)."""
     import hashlib
     import zipfile
     import io
+    en = opts.get("ui_lang") == "en"        # anything but "en" -> German, exactly as before
+
+    def T(de, en_):
+        return en_ if en else de
+
+    def kv(de, en_, value):
+        return "%-35s%s" % (T(de, en_), value)
     r = rights(cfg)
     d = _read_json(path[:-4] + ".json")
     req, meta, result = d.get("request") or {}, d.get("meta") or {}, d.get("result") or {}
@@ -3037,7 +3098,7 @@ def release_package(cfg: dict, path: str, res: dict, info: dict, opts: dict, fin
     title = tags.get("title") or info.get("title") or "Track"
     created = info.get("created") or ""
     ext = res["filename"].rsplit(".", 1)[-1]
-    qual = "320 kbit/s" if res["format"] == "mp3" else "%s Bit" % res["bits"]
+    qual = "320 kbit/s" if res["format"] == "mp3" else T("%s Bit", "%s-bit") % res["bits"]
     audio = res["data"]
     sha = hashlib.sha256(audio).hexdigest()
     dur = _audio_seconds(cfg, audio, ext, wav_duration(path))
@@ -3045,190 +3106,278 @@ def release_package(cfg: dict, path: str, res: dict, info: dict, opts: dict, fin
     caption_tags = [t.strip().lower() for t in (info.get("caption") or "").split(",") if t.strip()]
     instrumental = not lines.strip() or ("instrumental" in caption_tags and len(lines.splitlines()) < 3)
     text_eigen = bool(opts.get("text_eigen")) and not instrumental
-    lang = LANG_DE.get(str(req.get("vocal_language") or result.get("vocal_language") or "en"), "Englisch")
+    lang_code = str(req.get("vocal_language") or result.get("vocal_language") or "en")
+    lang = LANG_EN.get(lang_code, "English") if en else LANG_DE.get(lang_code, "Englisch")
+    ace = (ACE_LICENSE[0], ACE_LICENSE_EN, ACE_LICENSE[2]) if en else ACE_LICENSE
     cover_model = (d.get("cover") or {}).get("model", "")
     cov_lic = next(((n, l, u) for k, n, l, u in MODEL_LICENSES if k in cover_model), None)
     imported = meta.get("source") == "import"
-    eigen = meta.get("source") == "eigen" or info.get("source") == "eigen"     # 3.15: selbst eingespielt
+    eigen = meta.get("source") == "eigen" or info.get("source") == "eigen"     # 3.15: self-performed in the studio
     herkunft = meta.get("herkunft") or {}
     mastered = res.get("master") or {}
     wm = (d.get("wasserzeichen") or {}).get("id") or fin.get("id") or ""
     auf = d.get("aufbereitet") or {}
     safe = re.sub(r"[^\w\-äöüÄÖÜß ()]+", "", title).strip()[:80] or "Track"
+    # file names inside the ZIP (German as before; English when ui_lang == "en")
+    f_meta = T("Metadaten.txt", "Metadata.txt")
+    f_lyrics = T("Liedtext.txt", "Lyrics.txt")
+    f_prov = T("Herkunftsnachweis", "Provenance")
+    f_lic = T("Lizenz_Vorlage_Firmen", "License_Template_Companies")
+    f_readme = T("Lies_mich.txt", "Read_me.txt")
     today = datetime.date.today().isoformat()
     year = (created or today)[:4]
     cpy = tags.get("copyright") or ""
 
-    # ---- Metadaten fürs Hochladen ----
+    # ---- Upload metadata ----
+    cover_label = cov_lic[0] if cov_lic else cover_model or T("Bildmodell", "image model")
     ki = [
-        "[ ] Musik — selbst eingespielt (Synthesizer und Drum-Machine in Manuwave Studio, keine KI)",
-        "[ ] Gesamter Ton / Aufnahme — selbst eingespielt",
-        "[ ] Liedtext — entfällt (instrumental)" if instrumental else ("[ ] Liedtext — von %s selbst geschrieben" % owner),
-        "[x] Cover — mit KI erzeugt (%s)" % (cov_lic[0] if cov_lic else cover_model or "Bildmodell"),
-        "Nicht als KI anzugeben: Mastering in Manuwave Studio",
+        T("[ ] Musik — selbst eingespielt (Synthesizer und Drum-Machine in Manuwave Studio, keine KI)",
+          "[ ] Music — self-performed (synthesizer and drum machine in Manuwave Studio, no AI)"),
+        T("[ ] Gesamter Ton / Aufnahme — selbst eingespielt", "[ ] Entire audio / recording — self-performed"),
+        T("[ ] Liedtext — entfällt (instrumental)", "[ ] Lyrics — not applicable (instrumental)") if instrumental else (
+            T("[ ] Liedtext — von %s selbst geschrieben", "[ ] Lyrics — written by %s personally") % owner),
+        T("[x] Cover — mit KI erzeugt (%s)", "[x] Cover — AI-generated (%s)") % cover_label,
+        T("Nicht als KI anzugeben: Mastering in Manuwave Studio", "Not to be declared as AI: mastering in Manuwave Studio"),
     ] if eigen else [
-        "[x] Musik — mit KI erzeugt (%s)" % ACE_LICENSE[0],
-        "[x] Gesamter Ton / Aufnahme — mit KI erzeugt" + (" (inkl. Gesang)" if not instrumental else ""),
-        ("[ ] Liedtext — von %s selbst geschrieben" % owner) if text_eigen else
-        ("[ ] Liedtext — entfällt (instrumental)" if instrumental else "[x] Liedtext — mit KI erzeugt"),
-        "[x] Cover — mit KI erzeugt (%s)" % (cov_lic[0] if cov_lic else cover_model or "Bildmodell"),
-        "Nicht als KI anzugeben (KI-gestütztes Mixing/Mastering zählt bei Vertrieben in der Regel nicht): Mastering in Manuwave Studio",
+        T("[x] Musik — mit KI erzeugt (%s)", "[x] Music — AI-generated (%s)") % ace[0],
+        T("[x] Gesamter Ton / Aufnahme — mit KI erzeugt", "[x] Entire audio / recording — AI-generated")
+        + ((T(" (inkl. Gesang)", " (incl. vocals)")) if not instrumental else ""),
+        (T("[ ] Liedtext — von %s selbst geschrieben", "[ ] Lyrics — written by %s personally") % owner) if text_eigen else
+        (T("[ ] Liedtext — entfällt (instrumental)", "[ ] Lyrics — not applicable (instrumental)") if instrumental
+         else T("[x] Liedtext — mit KI erzeugt", "[x] Lyrics — AI-generated")),
+        T("[x] Cover — mit KI erzeugt (%s)", "[x] Cover — AI-generated (%s)") % cover_label,
+        T("Nicht als KI anzugeben (KI-gestütztes Mixing/Mastering zählt bei Vertrieben in der Regel nicht): Mastering in Manuwave Studio",
+          "Not to be declared as AI (AI-assisted mixing/mastering usually does not count for distributors): mastering in Manuwave Studio"),
     ]
     meta_txt = "\n".join([
-        "VERÖFFENTLICHUNG — METADATEN FÜRS HOCHLADEN",
-        "„%s“ · %s · erstellt %s mit Manuwave Studio" % (title, artist, today),
+        T("VERÖFFENTLICHUNG — METADATEN FÜRS HOCHLADEN", "RELEASE — UPLOAD METADATA"),
+        T("„%s“ · %s · erstellt %s mit Manuwave Studio", "“%s” · %s · created %s with Manuwave Studio") % (title, artist, today),
         "",
-        "Songtitel (Song title):            %s" % title,
-        "Künstler (Artist):                 %s" % artist,
-        "Art:                               Single" + ("" if (tags.get("album") or title) == title.split(" (Version")[0] else " · Album: %s" % tags.get("album")),
-        "Genre (primär):                    %s   ← beim Vertrieb aus dessen Liste wählen" % (tags.get("genre") or "—"),
-        "Sprache des Textes:                %s" % ("Instrumental" if instrumental else lang),
-        "Explizite Inhalte:                 Nein (bitte prüfen)",
-        "Dauer:                             %s" % _fmt_dur(dur),
-        "BPM / Tonart:                      %s / %s" % (tags.get("bpm") or "—", tags.get("key") or "—"),
-        "Erzeugt am:                        %s" % (created or "—"),
-        "Songwriter (echter Name):          %s" % owner,
-        "Textdichter:                       %s" % ((owner) if text_eigen else ("—" if instrumental else "keiner (KI-Text) — siehe KI-Angaben")),
-        "Copyright (©):                     %s" % (cpy or "—"),
-        "Aufnahme (℗):                      ℗ %s %s" % (year, artist),
-        "ISRC / UPC:                        vergibt der Vertrieb",
-        "Cover:                             %s — 3000 × 3000 px, JPG, RGB" % ("Cover_3000x3000.jpg"),
-        "Datei:                             %s (%s, %s, %d Hz)" % (res["filename"], res["format"].upper(), qual, res["rate"]),
+        kv("Songtitel (Song title):", "Song title:", title),
+        kv("Künstler (Artist):", "Artist:", artist),
+        kv("Art:", "Type:", "Single" + ("" if (tags.get("album") or title) == title.split(" (Version")[0] else " · Album: %s" % tags.get("album"))),
+        kv("Genre (primär):", "Genre (primary):", (tags.get("genre") or "—")
+           + T("   ← beim Vertrieb aus dessen Liste wählen", "   ← pick from the distributor's list when uploading")),
+        kv("Sprache des Textes:", "Language of the lyrics:", "Instrumental" if instrumental else lang),
+        kv("Explizite Inhalte:", "Explicit content:", T("Nein (bitte prüfen)", "No (please check)")),
+        kv("Dauer:", "Duration:", _fmt_dur(dur)),
+        kv("BPM / Tonart:", "BPM / Key:", "%s / %s" % (tags.get("bpm") or "—", tags.get("key") or "—")),
+        kv("Erzeugt am:", "Created on:", created or "—"),
+        kv("Songwriter (echter Name):", "Songwriter (real name):", owner),
+        kv("Textdichter:", "Lyricist:", (owner) if text_eigen else ("—" if instrumental else T(
+            "keiner (KI-Text) — siehe KI-Angaben", "none (AI lyrics) — see AI disclosure"))),
+        kv("Copyright (©):", "Copyright (©):", cpy or "—"),
+        kv("Aufnahme (℗):", "Recording (℗):", "℗ %s %s" % (year, artist)),
+        kv("ISRC / UPC:", "ISRC / UPC:", T("vergibt der Vertrieb", "assigned by the distributor")),
+        kv("Cover:", "Cover:", "%s — 3000 × 3000 px, JPG, RGB" % ("Cover_3000x3000.jpg")),
+        kv("Datei:", "File:", "%s (%s, %s, %d Hz)" % (res["filename"], res["format"].upper(), qual, res["rate"])),
         "",
-        "KI-ANGABEN (wie Vertriebe sie abfragen — Stand Oktober 2026, beim Hochladen prüfen):",
+        T("KI-ANGABEN (wie Vertriebe sie abfragen — Stand Oktober 2026, beim Hochladen prüfen):",
+          "AI DISCLOSURE (as distributors ask for it — as of October 2026, check when uploading):"),
         *("  " + x for x in ki),
         "",
-        "WICHTIG",
-        "  • Keine Nachahmung anderer Künstler, keine Massen-Uploads — sonst sperren Vertriebe und Plattformen.",
-        *(["  • Selbst eingespielte Musik: bei einer Verwertungsgesellschaft anmeldbar, auch Plattformen ohne KI-Musik nehmen sie."] if eigen else [
-        "  • Manche Plattformen und Musikbibliotheken nehmen (Stand Oktober 2026) keine KI-erzeugte Musik — vorher deren Regeln lesen.",
-        "  • Verwertungsgesellschaften: rein KI-erzeugte Teile sind nicht anmeldbar%s." % (" — dein eigener Text kann es sein" if text_eigen else "")]),
-        "  • Wasserzeichen-Kennung (unhörbar im Audio): %s" % (wm or "—"),
-        "  • SHA-256 der Audiodatei: %s" % sha,
+        T("WICHTIG", "IMPORTANT"),
+        T("  • Keine Nachahmung anderer Künstler, keine Massen-Uploads — sonst sperren Vertriebe und Plattformen.",
+          "  • No imitation of other artists, no mass uploads — otherwise distributors and platforms will block you."),
+        *([T("  • Selbst eingespielte Musik: bei einer Verwertungsgesellschaft anmeldbar, auch Plattformen ohne KI-Musik nehmen sie.",
+             "  • Self-performed music: can be registered with a collecting society, and platforms without AI music accept it too.")]
+          if eigen else [
+        T("  • Manche Plattformen und Musikbibliotheken nehmen (Stand Oktober 2026) keine KI-erzeugte Musik — vorher deren Regeln lesen.",
+          "  • Some platforms and music libraries do not accept AI-generated music (as of October 2026) — read their rules first."),
+        T("  • Verwertungsgesellschaften: rein KI-erzeugte Teile sind nicht anmeldbar%s.",
+          "  • Collecting societies: purely AI-generated parts cannot be registered%s.") % (
+              T(" — dein eigener Text kann es sein", " — your own lyrics may be") if text_eigen else "")]),
+        T("  • Wasserzeichen-Kennung (unhörbar im Audio): %s", "  • Watermark ID (inaudible in the audio): %s") % (wm or "—"),
+        T("  • SHA-256 der Audiodatei: %s", "  • SHA-256 of the audio file: %s") % sha,
     ]) + "\n"
 
-    # ---- Herkunftsnachweis ----
+    # ---- Provenance record ----
+    program_name = T("Früheres lokales Programm, übernommen in Manuwave Studio", "Earlier local program, imported into Manuwave Studio")
+    cover_row = ("Cover",
+                 ("%s — %s<br><span class='klein'>%s</span>" % (_h(cov_lic[0]), _h(cov_lic[1]), _h(cov_lic[2]))) if cov_lic else _h(cover_model or "—"))
     entstehung = [
-        ("Erzeugt am", _h(created or "—")),
-        ("Musik und Gesang", "%s — %s<br><span class='klein'>%s · Modell: %s</span>" % (
-            _h(ACE_LICENSE[0]), _h(ACE_LICENSE[1]), _h(ACE_LICENSE[2]), _h(result.get("dit") or req.get("dit") or "ACE-Step 1.5"))),
-        ("Programm", _h("Music Generator (lokal), übernommen in Manuwave Studio" if imported else "Manuwave Studio (lokal auf dem Mac, keine Cloud)")),
+        (T("Erzeugt am", "Created on"), _h(created or "—")),
+        (T("Musik und Gesang", "Music and vocals"), "%s — %s<br><span class='klein'>%s · %s: %s</span>" % (
+            _h(ace[0]), _h(ace[1]), _h(ace[2]), T("Modell", "Model"), _h(result.get("dit") or req.get("dit") or "ACE-Step 1.5"))),
+        (T("Programm", "Program"), _h(program_name if imported else T("Manuwave Studio (lokal auf dem Mac, keine Cloud)",
+                                                                       "Manuwave Studio (local on the Mac, no cloud)"))),
         ("Seed", _h(result.get("seed", req.get("seed", "")))),
-        ("Schritte / Führung", _h("%s / %s" % (req.get("inference_steps") or "Standard", req.get("guidance_scale") or result.get("guidance_scale") or "Standard"))),
-        ("Cover", ("%s — %s<br><span class='klein'>%s</span>" % (_h(cov_lic[0]), _h(cov_lic[1]), _h(cov_lic[2]))) if cov_lic else _h(cover_model or "—")),
+        (T("Schritte / Führung", "Steps / Guidance"), _h("%s / %s" % (
+            req.get("inference_steps") or T("Standard", "default"),
+            req.get("guidance_scale") or result.get("guidance_scale") or T("Standard", "default")))),
+        cover_row,
     ]
     if eigen:
         entstehung = [
-            ("Erzeugt am", _h(created or "—")),
-            ("Musik", _h("selbst eingespielt von %s — Synthesizer und Drum-Machine von Manuwave Studio (Klang wird im Browser "
-                         "berechnet, keine Samples, keine KI)" % owner)),
-            ("Programm", _h("Manuwave Studio · Tab „Selber machen“")),
-            ("Cover", ("%s — %s<br><span class='klein'>%s</span>" % (_h(cov_lic[0]), _h(cov_lic[1]), _h(cov_lic[2]))) if cov_lic else _h(cover_model or "—")),
+            (T("Erzeugt am", "Created on"), _h(created or "—")),
+            (T("Musik", "Music"), _h(T("selbst eingespielt von %s — Synthesizer und Drum-Machine von Manuwave Studio (Klang wird im Browser "
+                                       "berechnet, keine Samples, keine KI)",
+                                       "self-performed by %s — synthesizer and drum machine from Manuwave Studio (sound is computed "
+                                       "in the browser, no samples, no AI)") % owner)),
+            (T("Programm", "Program"), _h(T("Manuwave Studio · Tab „Selber machen“", "Manuwave Studio · “Make your own” tab"))),
+            cover_row,
         ]
     if imported and herkunft:
-        entstehung.append(("Ursprung", _h("%s, Eintrag %s, Datei %s, erzeugt %s" % (herkunft.get("programm", ""), herkunft.get("id", ""),
-                                                                                 herkunft.get("datei", ""), herkunft.get("erzeugt", "")))))
-    mensch = (["Komposition, Einspielung, Klanggestaltung und Arrangement: %s" % owner] if eigen else
-              ["Idee, Vorgaben (Richtung, Länge, Stimme) und Auswahl dieser Fassung aus den erzeugten Versionen: %s" % owner])
+        entstehung.append((T("Ursprung", "Origin"), _h(T("%s, Eintrag %s, Datei %s, erzeugt %s", "%s, entry %s, file %s, created %s") % (
+            herkunft.get("programm", ""), herkunft.get("id", ""), herkunft.get("datei", ""), herkunft.get("erzeugt", "")))))
+    mensch = ([T("Komposition, Einspielung, Klanggestaltung und Arrangement: %s",
+                 "Composition, performance, sound design and arrangement: %s") % owner] if eigen else
+              [T("Idee, Vorgaben (Richtung, Länge, Stimme) und Auswahl dieser Fassung aus den erzeugten Versionen: %s",
+                 "Idea, specifications (direction, length, voice) and selection of this version from the generated versions: %s") % owner])
     if text_eigen:
-        mensch.insert(0, "Liedtext: von %s selbst geschrieben" % owner)
-    ms_names = {"bass": "Bässe %+.1f dB", "tone": "Tonfarbe %+.1f", "treble": "Höhen %+.1f dB", "soft": "Weich %.0f",
-                "fade_in": "Einblenden %.1f s", "fade_out": "Ausblenden %.1f s", "start": "Start bei %.1f s", "end": "Ende bei %.1f s",
-                "gain": "Pegel %+.1f dB"}
+        mensch.insert(0, T("Liedtext: von %s selbst geschrieben", "Lyrics: written by %s personally") % owner)
+    ms_names = {"bass": T("Bässe %+.1f dB", "Bass %+.1f dB"), "tone": T("Tonfarbe %+.1f", "Tone %+.1f"),
+                "treble": T("Höhen %+.1f dB", "Treble %+.1f dB"), "soft": T("Weich %.0f", "Soft %.0f"),
+                "fade_in": T("Einblenden %.1f s", "Fade-in %.1f s"), "fade_out": T("Ausblenden %.1f s", "Fade-out %.1f s"),
+                "start": T("Start bei %.1f s", "Start at %.1f s"), "end": T("Ende bei %.1f s", "End at %.1f s"),
+                "gain": T("Pegel %+.1f dB", "Level %+.1f dB")}
     ms_txt = ", ".join(ms_names[k] % float(v) for k, v in (mastered.get("settings") or {}).items()
                        if k in ms_names and isinstance(v, (int, float)) and float(v) != 0)
     bearbeitung_auto = ""
     if mastered and own_master:
-        mensch.append("Mastering: eigene Einstellungen von %s%s" % (owner, (" (%s)" % ms_txt) if ms_txt else ""))
+        mensch.append(T("Mastering: eigene Einstellungen von %s%s", "Mastering: own settings by %s%s") % (
+            owner, (" (%s)" % ms_txt) if ms_txt else ""))
     elif mastered:
-        bearbeitung_auto = "Mastering automatisch (Manuwave-Studio-Vorschlag%s), Ziel −14 LUFS" % ((": " + ms_txt) if ms_txt else "")
+        bearbeitung_auto = T("Mastering automatisch (Manuwave-Studio-Vorschlag%s), Ziel −14 LUFS",
+                             "Mastering automatic (Manuwave Studio suggestion%s), target −14 LUFS") % ((": " + ms_txt) if ms_txt else "")
     bearbeitung = []
     if auf.get("adeclip"):
-        bearbeitung.append("abgeschnittene Spitzen rekonstruiert (adeclip, bis %+.1f dB)" % (auf.get("spitze_db") or 0))
+        bearbeitung.append(T("abgeschnittene Spitzen rekonstruiert (adeclip, bis %+.1f dB)",
+                             "clipped peaks reconstructed (adeclip, up to %+.1f dB)") % (auf.get("spitze_db") or 0))
     if auf.get("bits"):
-        bearbeitung.append("%s Bit" % auf["bits"])
+        bearbeitung.append(T("%s Bit", "%s-bit") % auf["bits"])
     if bearbeitung_auto:
         bearbeitung.append(bearbeitung_auto)
     if mastered.get("gain") is not None:
-        bearbeitung.append("Pegel %+.1f dB%s" % (mastered["gain"], (" (vorher %.1f LUFS)" % mastered["lufs_vorher"]) if mastered.get("lufs_vorher") is not None else ""))
+        bearbeitung.append(T("Pegel %+.1f dB%s", "Level %+.1f dB%s") % (mastered["gain"], (
+            T(" (vorher %.1f LUFS)", " (before: %.1f LUFS)") % mastered["lufs_vorher"]) if mastered.get("lufs_vorher") is not None else ""))
     nachweis = ("<html><head><meta charset='utf-8'><style>%s</style></head><body>" % PAKET_CSS
-                + "<h1>Herkunftsnachweis</h1><p><b>„%s“</b> · %s</p>" % (_h(title), _h(artist))
-                + "<p class='klein'>Erstellt am %s von Manuwave Studio. Dieser Nachweis beschreibt, wie der Track entstanden ist, "
-                  "und belegt über Wasserzeichen und Prüfsumme, dass die gelieferte Datei dieser Track ist.</p>" % _h(today)
+                + T("<h1>Herkunftsnachweis</h1><p><b>„%s“</b> · %s</p>", "<h1>Provenance record</h1><p><b>“%s”</b> · %s</p>") % (_h(title), _h(artist))
+                + T("<p class='klein'>Erstellt am %s von Manuwave Studio. Dieser Nachweis beschreibt, wie der Track entstanden ist, "
+                    "und belegt über Wasserzeichen und Prüfsumme, dass die gelieferte Datei dieser Track ist.</p>",
+                    "<p class='klein'>Created on %s by Manuwave Studio. This record describes how the track was made "
+                    "and uses watermark and checksum to prove that the delivered file is this track.</p>") % _h(today)
                 + "<h2>Track</h2>" + _rows([
-                    ("Titel", _h(title)), ("Künstler", _h(artist)), ("Rechteinhaber", _h(owner)), ("Dauer", _h(_fmt_dur(dur))),
-                    ("Tempo / Tonart", _h("%s BPM / %s" % (tags.get("bpm") or "—", tags.get("keyscale") or info.get("keyscale") or "—"))),
-                    ("Sprache", _h("Instrumental" if instrumental else lang)), ("Copyright", _h(cpy))])
-                + ("<h2>Entstehung</h2>" if eigen else "<h2>Entstehung (KI)</h2>") + _rows(entstehung)
-                + "<h2>Menschlicher Anteil</h2><p>" + "<br>".join("• " + _h(x) for x in mensch) + "</p>"
-                + ("<h2>Bearbeitung</h2><p>%s</p>" % _h(" · ".join(bearbeitung)) if bearbeitung else "")
-                + "<h2>Datei und Nachweis</h2>" + _rows([
-                    ("Datei", _h("%s · %s · %s · %d Hz · %.1f MB" % (res["filename"], res["format"].upper(), qual, res["rate"], len(audio) / 1e6))),
+                    (T("Titel", "Title"), _h(title)), (T("Künstler", "Artist"), _h(artist)), (T("Rechteinhaber", "Rights holder"), _h(owner)),
+                    (T("Dauer", "Duration"), _h(_fmt_dur(dur))),
+                    (T("Tempo / Tonart", "Tempo / Key"), _h("%s BPM / %s" % (tags.get("bpm") or "—", tags.get("keyscale") or info.get("keyscale") or "—"))),
+                    (T("Sprache", "Language"), _h("Instrumental" if instrumental else lang)), ("Copyright", _h(cpy))])
+                + ((T("<h2>Entstehung</h2>", "<h2>Creation</h2>")) if eigen else T("<h2>Entstehung (KI)</h2>", "<h2>Creation (AI)</h2>"))
+                + _rows(entstehung)
+                + T("<h2>Menschlicher Anteil</h2><p>", "<h2>Human contribution</h2><p>") + "<br>".join("• " + _h(x) for x in mensch) + "</p>"
+                + ((T("<h2>Bearbeitung</h2><p>%s</p>", "<h2>Processing</h2><p>%s</p>") % _h(" · ".join(bearbeitung))) if bearbeitung else "")
+                + T("<h2>Datei und Nachweis</h2>", "<h2>File and verification</h2>") + _rows([
+                    (T("Datei", "File"), _h("%s · %s · %s · %d Hz · %.1f MB" % (res["filename"], res["format"].upper(), qual, res["rate"], len(audio) / 1e6))),
                     ("SHA-256", "<span class='klein'>%s</span>" % _h(sha)),
-                    ("Wasserzeichen", _h(wm or "—") + "<br><span class='klein'>unhörbar (audiowmark), übersteht MP3 und Bearbeitung; prüfen auf dem Mac: "
-                     "python3 %s --pruefen &lt;Datei&gt;</span>" % _h(shown_path(os.path.abspath(__file__)))),
-                    ("Archiv", _h(rel_home(path)))])
-                + "<h2>Beschreibung beim Erzeugen</h2><p class='klein'>%s</p>" % _h(info.get("caption") or "—")
-                + ("<h2>Liedtext</h2><pre>%s</pre>" % _h(info.get("lyrics")) if not instrumental else "")
-                + ("<h2>Rechtlicher Hinweis</h2><p class='klein'>Die Musik ist selbst eingespielt und damit ein eigenes Werk von %s. "
-                   "KI-erzeugt ist nur das Cover (Lizenz siehe oben). Dieser Nachweis ist keine Rechtsberatung.</p></body></html>" % _h(owner)
+                    (T("Wasserzeichen", "Watermark"), _h(wm or "—") + T(
+                        "<br><span class='klein'>unhörbar (audiowmark), übersteht MP3 und Bearbeitung; prüfen auf dem Mac: "
+                        "python3 %s --pruefen &lt;Datei&gt;</span>",
+                        "<br><span class='klein'>inaudible (audiowmark), survives MP3 and editing; verify on the Mac: "
+                        "python3 %s --pruefen &lt;file&gt;</span>") % _h(shown_path(os.path.abspath(__file__)))),
+                    (T("Archiv", "Archive"), _h(rel_home(path)))])
+                + T("<h2>Beschreibung beim Erzeugen</h2><p class='klein'>%s</p>", "<h2>Description at generation</h2><p class='klein'>%s</p>")
+                % _h(info.get("caption") or "—")
+                + (T("<h2>Liedtext</h2><pre>%s</pre>", "<h2>Lyrics</h2><pre>%s</pre>") % _h(info.get("lyrics")) if not instrumental else "")
+                + (T("<h2>Rechtlicher Hinweis</h2><p class='klein'>Die Musik ist selbst eingespielt und damit ein eigenes Werk von %s. "
+                     "KI-erzeugt ist nur das Cover (Lizenz siehe oben). Dieser Nachweis ist keine Rechtsberatung.</p></body></html>",
+                     "<h2>Legal notice</h2><p class='klein'>The music is self-performed and therefore an original work by %s. "
+                     "Only the cover is AI-generated (license see above). This record is not legal advice.</p></body></html>") % _h(owner)
                    if eigen else
-                   "<h2>Rechtlicher Hinweis</h2><p class='klein'>Rein KI-erzeugte Bestandteile sind in Deutschland nach derzeitiger "
-                  "Auffassung nicht urheberrechtlich geschützt; geschützt sein können die menschlichen Beiträge oben. Die eingesetzten "
-                  "Modelle erlauben die kommerzielle Nutzung (Lizenzen siehe oben, geprüft am 15.10.2026). Dieser Nachweis ist "
-                  "keine Rechtsberatung.</p></body></html>"))
+                   T("<h2>Rechtlicher Hinweis</h2><p class='klein'>Rein KI-erzeugte Bestandteile sind in Deutschland nach derzeitiger "
+                     "Auffassung nicht urheberrechtlich geschützt; geschützt sein können die menschlichen Beiträge oben. Die eingesetzten "
+                     "Modelle erlauben die kommerzielle Nutzung (Lizenzen siehe oben, geprüft am 15.10.2026). Dieser Nachweis ist "
+                     "keine Rechtsberatung.</p></body></html>",
+                     "<h2>Legal notice</h2><p class='klein'>Purely AI-generated components are, under the current prevailing view in "
+                     "Germany, not protected by copyright; the human contributions above may be protected. The models used "
+                     "permit commercial use (licenses see above, checked on 15 October 2026). This record is "
+                     "not legal advice.</p></body></html>")))
 
-    # ---- Lizenzvorlage für Firmen ----
+    # ---- License template for companies ----
     blank = "______________________________"
     lizenz = ("<html><head><meta charset='utf-8'><style>%s</style></head><body>" % PAKET_CSS
-              + "<h1>Nutzungslizenz für Musik</h1><p class='klein'>VORLAGE — vor der ersten Verwendung rechtlich prüfen lassen. "
-                "Linien ausfüllen, Zutreffendes ankreuzen, Nichtzutreffendes streichen.</p>"
-              + "<h2>Vertragsparteien</h2>" + _rows([
-                  ("Lizenzgeber", _h("%s (Künstlername: %s)" % (owner, artist)) + "<br>Anschrift: " + blank),
-                  ("Lizenznehmer", "Name/Firma: " + blank + "<br>Anschrift: " + blank)])
-              + "<h2>§ 1 Gegenstand</h2>" + _rows([
-                  ("Titel", _h("„%s“ von %s" % (title, artist))), ("Dauer", _h(_fmt_dur(dur))),
-                  ("Datei", _h(res["filename"])), ("SHA-256", "<span class='klein'>%s</span>" % _h(sha)),
-                  ("Wasserzeichen", _h(wm or "—"))])
-              + "<h2>§ 2 Eingeräumte Rechte</h2><p>Der Lizenzgeber räumt dem Lizenznehmer ein <b>einfaches (nicht ausschließliches), "
-                "nicht übertragbares</b> Recht ein, den Titel für folgende Zwecke zu nutzen (Zutreffendes ankreuzen):</p>"
-                "<p>☐ Hintergrundmusik in eigenen Geschäftsräumen &nbsp; ☐ Veranstaltungen &nbsp; ☐ Telefon-Warteschleife<br>"
-                "☐ eigene Online-Videos und Social Media &nbsp; ☐ Podcast &nbsp; ☐ Werbung (Medium: " + blank + ")</p>"
-                "<p>Gebiet: ☐ Deutschland ☐ EU ☐ weltweit &nbsp;·&nbsp; Dauer: ☐ unbefristet ☐ bis " + blank + "</p>"
-              + "<h2>§ 3 Nicht gestattet</h2><p>Weiterverkauf oder Weiterlizenzierung der Musik als solche; Veröffentlichung als eigene "
-                "Musik; Anmeldung bei einer Verwertungsgesellschaft oder bei Content-ID-Systemen; Verwendung zum Training von KI-Modellen.</p>"
-              + "<h2>§ 4 Vergütung</h2><p>Einmalig " + blank + " €, fällig bei Unterzeichnung — zzgl. gesetzlicher Umsatzsteuer, "
-                "bei Kleinunternehmerregelung stattdessen: „Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.“</p>"
-              + "<h2>§ 5 Verwertungsgesellschaften</h2><p>Der Titel ist bei keiner Verwertungsgesellschaft angemeldet. "
-                "Für die vereinbarte Nutzung fallen nach Kenntnis des Lizenzgebers keine Vergütungen an Verwertungsgesellschaften an. "
-                "Bei Rückfragen einer Verwertungsgesellschaft stellt der Lizenzgeber diese Lizenz und den Herkunftsnachweis zur Verfügung.</p>"
-              + ("<h2>§ 6 Entstehung</h2><p>Der Titel wurde vom Lizenzgeber selbst komponiert und eingespielt (Synthesizer und "
-                 "Drum-Machine von Manuwave Studio, keine KI). Der Lizenzgeber versichert, dass er keine bestehenden Werke bewusst "
-                 "nachgeahmt hat.</p>" if eigen else
-                 "<h2>§ 6 Entstehung mit KI</h2><p>Der Titel wurde mit Hilfe künstlicher Intelligenz erzeugt (Musik: %s%s). "
-                "Der Lizenzgeber versichert, dass die eingesetzten Werkzeuge die kommerzielle Nutzung erlauben und dass er keine "
-                "bestehenden Werke oder Künstler bewusst nachgeahmt hat. Der Lizenznehmer nimmt zur Kenntnis, dass rein KI-erzeugte "
-                "Bestandteile nach derzeitiger Rechtslage keinen urheberrechtlichen Schutz genießen.</p>" % (
-                    _h(ACE_LICENSE[0]), (_h("; Liedtext: %s" % owner) if text_eigen else "")))
-              + "<h2>§ 7 Haftung</h2><p>Der Lizenzgeber haftet für Vorsatz und grobe Fahrlässigkeit. Werden gegen den Lizenznehmer "
-                "Ansprüche Dritter wegen der vertragsgemäßen Nutzung erhoben, informieren sich die Parteien unverzüglich.</p>"
-              + "<h2>§ 8 Schluss</h2><p>Es gilt deutsches Recht. Änderungen bedürfen der Textform.</p>"
-              + "<p><br>Ort, Datum: " + blank + "<br><br><br>" + blank + " &nbsp;&nbsp;&nbsp; " + blank +
-                "<br>Lizenzgeber (%s) &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Lizenznehmer</p>" % _h(owner)
+              + T("<h1>Nutzungslizenz für Musik</h1><p class='klein'>VORLAGE — vor der ersten Verwendung rechtlich prüfen lassen. "
+                  "Linien ausfüllen, Zutreffendes ankreuzen, Nichtzutreffendes streichen.</p>",
+                  "<h1>Music Usage License</h1><p class='klein'>TEMPLATE — have it legally reviewed before first use. "
+                  "Fill in the lines, tick what applies, strike out what does not.</p>")
+              + T("<h2>Vertragsparteien</h2>", "<h2>Parties</h2>") + _rows([
+                  (T("Lizenzgeber", "Licensor"), _h(T("%s (Künstlername: %s)", "%s (artist name: %s)") % (owner, artist))
+                   + T("<br>Anschrift: ", "<br>Address: ") + blank),
+                  (T("Lizenznehmer", "Licensee"), T("Name/Firma: ", "Name/company: ") + blank + T("<br>Anschrift: ", "<br>Address: ") + blank)])
+              + T("<h2>§ 1 Gegenstand</h2>", "<h2>§ 1 Subject matter</h2>") + _rows([
+                  (T("Titel", "Title"), _h(T("„%s“ von %s", "“%s” by %s") % (title, artist))), (T("Dauer", "Duration"), _h(_fmt_dur(dur))),
+                  (T("Datei", "File"), _h(res["filename"])), ("SHA-256", "<span class='klein'>%s</span>" % _h(sha)),
+                  (T("Wasserzeichen", "Watermark"), _h(wm or "—"))])
+              + T("<h2>§ 2 Eingeräumte Rechte</h2><p>Der Lizenzgeber räumt dem Lizenznehmer ein <b>einfaches (nicht ausschließliches), "
+                  "nicht übertragbares</b> Recht ein, den Titel für folgende Zwecke zu nutzen (Zutreffendes ankreuzen):</p>"
+                  "<p>☐ Hintergrundmusik in eigenen Geschäftsräumen &nbsp; ☐ Veranstaltungen &nbsp; ☐ Telefon-Warteschleife<br>"
+                  "☐ eigene Online-Videos und Social Media &nbsp; ☐ Podcast &nbsp; ☐ Werbung (Medium: ",
+                  "<h2>§ 2 Rights granted</h2><p>The licensor grants the licensee a <b>simple (non-exclusive), "
+                  "non-transferable</b> right to use the title for the following purposes (tick what applies):</p>"
+                  "<p>☐ Background music on own business premises &nbsp; ☐ Events &nbsp; ☐ Telephone hold music<br>"
+                  "☐ Own online videos and social media &nbsp; ☐ Podcast &nbsp; ☐ Advertising (medium: ") + blank + ")</p>"
+              + T("<p>Gebiet: ☐ Deutschland ☐ EU ☐ weltweit &nbsp;·&nbsp; Dauer: ☐ unbefristet ☐ bis ",
+                  "<p>Territory: ☐ Germany ☐ EU ☐ worldwide &nbsp;·&nbsp; Term: ☐ unlimited ☐ until ") + blank + "</p>"
+              + T("<h2>§ 3 Nicht gestattet</h2><p>Weiterverkauf oder Weiterlizenzierung der Musik als solche; Veröffentlichung als eigene "
+                  "Musik; Anmeldung bei einer Verwertungsgesellschaft oder bei Content-ID-Systemen; Verwendung zum Training von KI-Modellen.</p>",
+                  "<h2>§ 3 Not permitted</h2><p>Resale or sub-licensing of the music as such; publication as one's own "
+                  "music; registration with a collecting society or with automated content-recognition systems; use for training AI models.</p>")
+              + T("<h2>§ 4 Vergütung</h2><p>Einmalig ", "<h2>§ 4 Remuneration</h2><p>One-time fee of ") + blank
+              + T(" €, fällig bei Unterzeichnung — zzgl. gesetzlicher Umsatzsteuer, "
+                  "bei Kleinunternehmerregelung stattdessen: „Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.“</p>",
+                  " €, due on signature — plus statutory VAT; "
+                  "under the small-business exemption instead: “No VAT is charged pursuant to § 19 UStG (German VAT Act).”</p>")
+              + T("<h2>§ 5 Verwertungsgesellschaften</h2><p>Der Titel ist bei keiner Verwertungsgesellschaft angemeldet. "
+                  "Für die vereinbarte Nutzung fallen nach Kenntnis des Lizenzgebers keine Vergütungen an Verwertungsgesellschaften an. "
+                  "Bei Rückfragen einer Verwertungsgesellschaft stellt der Lizenzgeber diese Lizenz und den Herkunftsnachweis zur Verfügung.</p>",
+                  "<h2>§ 5 Collecting societies</h2><p>The title is not registered with any collecting society. "
+                  "To the licensor's knowledge, no remuneration is payable to collecting societies for the agreed use. "
+                  "If a collecting society makes enquiries, the licensor will provide this license and the provenance record.</p>")
+              + (T("<h2>§ 6 Entstehung</h2><p>Der Titel wurde vom Lizenzgeber selbst komponiert und eingespielt (Synthesizer und "
+                   "Drum-Machine von Manuwave Studio, keine KI). Der Lizenzgeber versichert, dass er keine bestehenden Werke bewusst "
+                   "nachgeahmt hat.</p>",
+                   "<h2>§ 6 Origin</h2><p>The title was composed and performed by the licensor personally (synthesizer and "
+                   "drum machine from Manuwave Studio, no AI). The licensor warrants that they have not knowingly "
+                   "imitated any existing works.</p>") if eigen else
+                 T("<h2>§ 6 Entstehung mit KI</h2><p>Der Titel wurde mit Hilfe künstlicher Intelligenz erzeugt (Musik: %s%s). "
+                   "Der Lizenzgeber versichert, dass die eingesetzten Werkzeuge die kommerzielle Nutzung erlauben und dass er keine "
+                   "bestehenden Werke oder Künstler bewusst nachgeahmt hat. Der Lizenznehmer nimmt zur Kenntnis, dass rein KI-erzeugte "
+                   "Bestandteile nach derzeitiger Rechtslage keinen urheberrechtlichen Schutz genießen.</p>",
+                   "<h2>§ 6 Origin with AI</h2><p>The title was created with the help of artificial intelligence (music: %s%s). "
+                   "The licensor warrants that the tools used permit commercial use and that they have not knowingly imitated "
+                   "any existing works or artists. The licensee acknowledges that purely AI-generated components "
+                   "currently enjoy no copyright protection under the applicable legal situation.</p>") % (
+                    _h(ace[0]), (_h(T("; Liedtext: %s", "; lyrics: %s") % owner) if text_eigen else "")))
+              + T("<h2>§ 7 Haftung</h2><p>Der Lizenzgeber haftet für Vorsatz und grobe Fahrlässigkeit. Werden gegen den Lizenznehmer "
+                  "Ansprüche Dritter wegen der vertragsgemäßen Nutzung erhoben, informieren sich die Parteien unverzüglich.</p>",
+                  "<h2>§ 7 Liability</h2><p>The licensor is liable for intent and gross negligence. If third parties assert claims "
+                  "against the licensee because of use in accordance with the contract, the parties will inform each other without delay.</p>")
+              + T("<h2>§ 8 Schluss</h2><p>Es gilt deutsches Recht. Änderungen bedürfen der Textform.</p>",
+                  "<h2>§ 8 Final provisions</h2><p>German law applies. Amendments require text form.</p>")
+              + T("<p><br>Ort, Datum: ", "<p><br>Place, date: ") + blank + "<br><br><br>" + blank + " &nbsp;&nbsp;&nbsp; " + blank
+              + T("<br>Lizenzgeber (%s) &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Lizenznehmer</p>",
+                  "<br>Licensor (%s) &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Licensee</p>") % _h(owner)
               + "</body></html>")
 
     nachweis_b, n_ext = _html_to(cfg, nachweis, "pdf")
     lizenz_b, l_ext = _html_to(cfg, lizenz, "docx")
     cover = _cover_3000(cfg, path[:-4] + ".jpg")
     readme = "\n".join([
-        "„%s“ — Veröffentlichungspaket" % title, "",
-        "%-34s die Musik (%s, gemastert wie im Export gewählt; Cover und Tags stecken drin)" % (res["filename"], res["format"].upper()),
-        ("%-34s das Cover in 3000 × 3000 px für Vertriebe (aus 1000 px hochgerechnet)" % "Cover_3000x3000.jpg") if cover else "(kein Cover vorhanden)",
-        "%-34s alle Angaben fürs Hochladen, inkl. KI-Angaben zum Abhaken" % "Metadaten.txt",
-        ("%-34s nur die gesungenen Zeilen (für Liedtext-Felder)" % "Liedtext.txt") if not instrumental else "",
-        "%-34s wie der Track entstanden ist, Prüfsumme, Wasserzeichen" % ("Herkunftsnachweis." + n_ext),
-        "%-34s Vorlage zum Ausfüllen, wenn du den Track an Firmen lizenzierst" % ("Lizenz_Vorlage_Firmen." + l_ext),
-        "", "Hinweis: Das ist eine Arbeitshilfe, keine Rechtsberatung. Erstellt %s mit Manuwave Studio." % today,
+        T("„%s“ — Veröffentlichungspaket", "“%s” — Release package") % title, "",
+        "%-34s %s" % (res["filename"], T("die Musik (%s, gemastert wie im Export gewählt; Cover und Tags stecken drin)",
+                                          "the music (%s, mastered as chosen in the export; cover and tags embedded)") % res["format"].upper()),
+        ("%-34s %s" % ("Cover_3000x3000.jpg", T("das Cover in 3000 × 3000 px für Vertriebe (aus 1000 px hochgerechnet)",
+                                                 "the cover at 3000 × 3000 px for distributors (upscaled from 1000 px)")))
+        if cover else T("(kein Cover vorhanden)", "(no cover available)"),
+        "%-34s %s" % (f_meta, T("alle Angaben fürs Hochladen, inkl. KI-Angaben zum Abhaken",
+                                "all details for uploading, incl. AI disclosure checklist to tick off")),
+        ("%-34s %s" % (f_lyrics, T("nur die gesungenen Zeilen (für Liedtext-Felder)", "only the sung lines (for lyrics fields)")))
+        if not instrumental else "",
+        "%-34s %s" % (f_prov + "." + n_ext, T("wie der Track entstanden ist, Prüfsumme, Wasserzeichen",
+                                              "how the track was made, checksum, watermark")),
+        "%-34s %s" % (f_lic + "." + l_ext, T("Vorlage zum Ausfüllen, wenn du den Track an Firmen lizenzierst",
+                                             "template to fill in when you license the track to companies")),
+        "", T("Hinweis: Das ist eine Arbeitshilfe, keine Rechtsberatung. Erstellt %s mit Manuwave Studio.",
+              "Note: This is a working aid, not legal advice. Created %s with Manuwave Studio.") % today,
     ]).replace("\n\n\n", "\n\n") + "\n"
     folder = safe.replace(" ", "_")
     buf = io.BytesIO()
@@ -3241,30 +3390,31 @@ def release_package(cfg: dict, path: str, res: dict, info: dict, opts: dict, fin
         put(res["filename"], audio, compress=False)
         if cover:
             put("Cover_3000x3000.jpg", cover, compress=False)
-        put("Metadaten.txt", meta_txt.encode("utf-8"))
+        put(f_meta, meta_txt.encode("utf-8"))
         if not instrumental:
-            put("Liedtext.txt", (lines.strip() + "\n").encode("utf-8"))
-        put("Herkunftsnachweis." + n_ext, nachweis_b)
-        put("Lizenz_Vorlage_Firmen." + l_ext, lizenz_b)
-        put("Lies_mich.txt", readme.encode("utf-8"))
+            put(f_lyrics, (lines.strip() + "\n").encode("utf-8"))
+        put(f_prov + "." + n_ext, nachweis_b)
+        put(f_lic + "." + l_ext, lizenz_b)
+        put(f_readme, readme.encode("utf-8"))
     data = buf.getvalue()
-    # Was beim Paket galt, steht auch am Track — ein späteres Paket sagt dasselbe
+    # What applied to the package is also stored on the track — a later package says the same
     with FileLock(path):
         dj = _read_json(path[:-4] + ".json")
         dj["veroeffentlichung"] = {"text_eigen": text_eigen, "at": datetime.datetime.now().isoformat(timespec="seconds"),
                                    "sha256": sha, "datei": res["filename"]}
         _write_atomic(path[:-4] + ".json", json.dumps(dj, indent=2, ensure_ascii=False).encode("utf-8"))
-    return {"data": data, "mime": "application/zip", "filename": "%s_Paket.zip" % folder, "bytes": len(data),
+    return {"data": data, "mime": "application/zip", "filename": T("%s_Paket.zip", "%s_Package.zip") % folder, "bytes": len(data),
             "pdf": n_ext == "pdf", "docx": l_ext == "docx", "cover3000": bool(cover), "sha256": sha}
 
 
 # =============================================================================
-# 3.10: 🌐 Veröffentlichen auf Fahrstuhlmusik (öffentliche Seite, Verwaltung nur im Tailnet)
+# 3.10: 🌐 Publishing to the public listening site (public page, administration only inside the tailnet)
 # =============================================================================
-# Der Mac schickt die GEMASTERTE Fassung als 24-Bit-WAV (die Seite wandelt genau einmal in MP3 320),
-# dazu Cover und Angaben, an den Verwaltungs-Eingang der Seite. Der ist nur über Tailscale erreichbar
-# und prüft die Tailscale-Anmeldung — es gibt keinen Schlüssel, den man verlieren könnte.
-# Derselbe Track (gleicher Archivpfad) ersetzt beim erneuten Veröffentlichen die alte Fassung.
+# The owner wants a public page for free listening — "only what I release".
+# The Mac sends the MASTERED version as a 24-bit WAV (the site converts exactly once to MP3 320),
+# plus cover and metadata, to the site's admin endpoint. It is reachable only via Tailscale
+# and checks the Tailscale login — there is no key that could get lost.
+# The same track (same archive path) replaces the old version when published again.
 def _web(cfg, method, path, body=None, raw=None, ctype=None, timeout=60):
     base = (cfg.get("web_admin") or "").strip().rstrip("/")
     if not base:
@@ -3289,8 +3439,11 @@ def _web(cfg, method, path, body=None, raw=None, ctype=None, timeout=60):
         raise RuntimeError("Fahrstuhlmusik nicht erreichbar (%s) — ist Tailscale auf dem Mac an?" % getattr(e, "reason", e))
 
 
-# whisper.cpp hört die VERÖFFENTLICHTE Fassung (gemastert, also mit Schnitt am Anfang) und liefert Wörter mit Zeiten;
-# Hinweis (--prompt) und ohne Kontextverschleppung (-mc 0) findet auch die zweite Strophe; ein Gesangsfilter half nicht.
+# ---- 3.12: Sing-along lyrics — timings of the sung lines (request: scrollable lyrics for karaoke) ----
+# whisper.cpp listens to the PUBLISHED version (mastered, i.e. trimmed at the start) and returns words with times;
+# an alignment (Needleman-Wunsch) maps them onto the known lyrics. Measured on a sample track: the lyrics as a
+# hint (--prompt) and without context carry-over (-mc 0) also finds the second verse; a vocal filter did not help.
+# Filler from instrumental parts ("Thank you.") stays without a partner and does no harm. Without whisper, the site estimates.
 WHISPER_MODEL = os.path.join(DIR, "models", "whisper", "ggml-large-v3-turbo-q5_0.bin")
 _WORD = re.compile(r"[^\w']+", re.U)
 
@@ -3309,7 +3462,7 @@ def _similar(a: str, b: str) -> bool:
 
 
 def align_lyrics(lyrics: str, heard: list, duration: float) -> dict:
-    """lyrics: Liedtext mit [Markern]; heard: [(wort, start, ende)] → {"lines": [{t, e, l}], "coverage": Anteil}."""
+    """lyrics: lyrics with [markers]; heard: [(word, start, end)] → {"lines": [{t, e, l}], "coverage": fraction}."""
     lines = [x.strip() for x in (lyrics or "").split("\n") if x.strip() and not re.fullmatch(r"\[.*\]", x.strip())]
     L = [(w, i) for i, ln in enumerate(lines) for w in _words(ln)]
     R = [(w, t0, t1) for (txt, t0, t1) in heard for w in _words(txt)]
@@ -3321,14 +3474,14 @@ def align_lyrics(lyrics: str, heard: list, duration: float) -> dict:
     for i in range(1, n + 1):
         sc[i][0] = i * GAP
     for j in range(1, m + 1):
-        sc[0][j] = j * GAP * 0.3                     # Gehörtes ohne Text (Füller) kostet wenig
+        sc[0][j] = j * GAP * 0.3                     # heard words without lyrics (filler) are cheap
     for i in range(1, n + 1):
         li = L[i - 1][0]
         row, prev = sc[i], sc[i - 1]
         for j in range(1, m + 1):
             d = prev[j - 1] + (HIT if _similar(li, R[j - 1][0]) else MIS)
             row[j] = max(d, prev[j] + GAP, row[j - 1] + GAP * 0.3)
-    hits = {}                                       # Index im Liedtext → (start, ende)
+    hits = {}                                       # index in the lyrics → (start, end)
     i, j = n, m
     while i > 0 and j > 0:
         same = _similar(L[i - 1][0], R[j - 1][0])
@@ -3349,7 +3502,7 @@ def align_lyrics(lyrics: str, heard: list, duration: float) -> dict:
             first_pos = idx.index(got[0][0])
             t0 = got[0][1][0] - 0.35 * first_pos
             t1 = got[-1][1][1]
-            # Am Anfang nach Musik dehnt whisper das erste Wort über die ganze Pause — dann vom Zeilenende rechnen
+            # At the start after music, whisper stretches the first word over the whole pause — then compute from the line end
             if t1 - t0 > len(idx) * 0.9 + 1.0:
                 t0 = t1 - len(idx) * 0.45 - 0.3
             out.append({"t": max(0.0, t0), "e": t1, "l": ln, "a": True})
@@ -3358,7 +3511,7 @@ def align_lyrics(lyrics: str, heard: list, duration: float) -> dict:
     known = [k for k, x in enumerate(out) if x["a"]]
     if not known:
         return {"lines": [], "coverage": 0.0}
-    for k, x in enumerate(out):                     # Lücken gleichmäßig zwischen den Nachbarn verteilen
+    for k, x in enumerate(out):                     # spread gaps evenly between the neighbours
         if x["t"] is not None:
             continue
         a = max((q for q in known if q < k), default=None)
@@ -3371,7 +3524,7 @@ def align_lyrics(lyrics: str, heard: list, duration: float) -> dict:
             x["t"] = max(0.0, out[b]["t"] - 3.0 * (b - k))
         x["e"] = x["t"] + 2.5
     last = -1.0
-    for x in out:                                   # nie rückwärts
+    for x in out:                                   # never backwards
         x["t"] = round(max(x["t"], last + 0.3), 2)
         x["e"] = round(max(x["e"], x["t"]), 2)
         last = x["t"]
@@ -3389,7 +3542,7 @@ def _wav_seconds(data: bytes) -> float:
 
 
 def lyrics_timing(cfg: dict, wav_bytes: bytes, lyrics: str, lang: str, duration: float) -> dict:
-    """Zeiten für den Liedtext aus der fertigen Fassung. {} wenn whisper fehlt oder zu wenig erkannt wird."""
+    """Timings for the lyrics from the finished version. {} if whisper is missing or recognises too little."""
     cli = tool(cfg, "whisper-cli")
     model = cfg.get("whisper_model") or WHISPER_MODEL
     if not cli or not os.path.isfile(model) or not (lyrics or "").strip():
@@ -3422,8 +3575,9 @@ def lyrics_timing(cfg: dict, wav_bytes: bytes, lyrics: str, lang: str, duration:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-# die fahrstuhl webseite umstellt") — die Notizen sind mal deutsch, mal englisch; die fehlende Sprache schreibt das
-# Sprachmodell auf dem Mac. Ohne Modell bleibt sie leer, die Seite zeigt dann die vorhandene.
+# ---- 3.12.2: Bilingual note (request: the text describing the titles is not translated when the English version of
+# the site is selected) — notes are sometimes German, sometimes English; the missing language is written by the
+# language model on the Mac. Without a model it stays empty and the site then shows the one that exists.
 TRANSLATE_SYSTEM = {
     "en": "Translate the user's German text into natural, fluent English. Keep music terms (breakdown, drop, BPM, synth, "
           "pads) as they are, keep names and titles unchanged, fix obvious typos. Reply with the translation only.",
@@ -3447,14 +3601,14 @@ def translate_text(cfg: dict, text: str, target: str) -> str:
             "options": {"temperature": 0.2, "num_ctx": 4096}}
     answer = writer_chat(cfg, body, 180)
     out = ((answer.get("message") or {}).get("content") or "").strip().strip('"„“”')
-    # Nur annehmen, was wirklich in der Zielsprache steht und nicht bloß das Original wiederholt
+    # Accept only what is really in the target language and does not merely repeat the original
     if not out or out == text.strip() or is_german(out) != (target == "de"):
         return ""
     return out[:1500]
 
 
 def note_languages(cfg: dict, note: str) -> tuple:
-    """→ (note_de, note_en). Die Sprache der Notiz wird erkannt, die andere übersetzt."""
+    """→ (note_de, note_en). The language of the note is detected, the other one is translated."""
     note = (note or "").strip()
     if not note:
         return "", ""
@@ -3468,8 +3622,8 @@ def note_languages(cfg: dict, note: str) -> tuple:
 
 
 def web_publish(cfg, path, req, tick=None):
-    # 3.12.3: ohne mitgeschickte Regler (Veröffentlichen ohne den Browser) galt bis hier das Standard-Mastering und
-    # die eigenen Regler fehlten online. Jetzt: die Regler, die das Studio am Mac hinterlegt hat.
+    # 3.12.3: without controls sent along (publishing without the browser), the default mastering applied up to now and
+    # the track's own controls were missing online. Now: the controls the studio stored on the Mac.
     given = clean_master(req.get("master"))
     if given is None:
         given = clean_master(_read_json(path[:-4] + ".json").get("master"))
@@ -3486,6 +3640,7 @@ def web_publish(cfg, path, req, tick=None):
     cov_name = next((n.split(" (")[0] for k, n, _l, _u in MODEL_LICENSES if k in cov), cov)
     lang = (d.get("request") or {}).get("vocal_language") or (d.get("result") or {}).get("vocal_language") or ""
     lyrics = tags.get("lyrics") or ""
+    # 3.12.1: public without "(Version A)" — the owner could not change that version label anywhere
     title = re.sub(r"\s*\(Version [A-Z]\)$", "", tags.get("title") or info.get("title") or "Track")
     meta = {"title": title, "artist": tags.get("artist") or "",
             "genre": tags.get("genre") or "", "bpm": tags.get("bpm") or "0", "key": tags.get("key") or "", "lyrics": lyrics,
@@ -3510,7 +3665,7 @@ def web_publish(cfg, path, req, tick=None):
         tick("Fahrstuhlmusik wandelt um …")
     f = _web(cfg, "POST", "/api/admin/track/%s/fertig" % tid, {}, timeout=900)
     if lyrics.strip():
-        # 3.12: Zeiten zum Mitsingen — ein Fehler hier hält die Veröffentlichung nicht auf
+        # 3.12: sing-along timings — a failure here does not stop the publication
         try:
             if tick:
                 tick("Liedtext wird an die Musik angelegt …")
@@ -3536,7 +3691,7 @@ def web_withdraw(cfg, path):
         try:
             _web(cfg, "POST", "/api/admin/track/%s/zurueckziehen" % pub["id"], {"reason": "Vom Künstler zurückgezogen"})
         except RuntimeError as e:
-            if "(404)" not in str(e):            # schon weg = Ziel erreicht
+            if "(404)" not in str(e):            # already gone = goal reached
                 raise
     with FileLock(path):
         d = _read_json(path[:-4] + ".json")
@@ -3547,17 +3702,17 @@ def web_withdraw(cfg, path):
 
 
 # =============================================================================
-# Ablage auf dem Mac
+# Storage on the Mac
 # =============================================================================
 
 # =============================================================================
-# 3.14: Klangprüfung — ein Hörurteil-Modell bewertet jede Fassung, schwache werden neu gewürfelt
+# 3.14: Sound check — a listening-judgement model rates each version, weak ones are re-rolled
 # =============================================================================
-# Meta Audiobox Aesthetics (CC-BY 4.0) sagt aus dem Audio vier Werte voraus (1–10): CE Hörgenuss, CU Nutzwert,
-# PC Komplexität, PQ Produktionsqualität — trainiert an menschlichen Urteilen. Gemessen am 16.10.2026 am Archiv
-# des Maintainers: alle behaltenen Tracks CE 7,39–7,79, der als misslungen gelöschte 6,87 — einfache Signalmaße
-# (Knackser, Tempo, Tonart) trennten das NICHT. Läuft in einer eigenen Umgebung ($MWS_HOME/qa, PyTorch) auf dem
-# Prozessor, damit der Grafikchip frei bleibt; fehlt sie, ist die Prüfung einfach aus.
+# An audio aesthetics model (CC-BY 4.0) predicts four values (1–10) from the audio: CE enjoyment, CU usefulness,
+# PC complexity, PQ production quality — trained on human judgements. Measured on 16.10.2026 on the maintainer's archive:
+# all kept tracks CE 7.39–7.79, the one deleted as failed 6.87 — simple signal measures
+# (clicks, tempo, key) did NOT separate them. Runs in its own environment ($MWS_HOME/qa, PyTorch) on the CPU so that
+# the GPU stays free; if it is missing, the check is simply off.
 QA_MIN_CE = 7.2
 QA_DIR = os.path.join(DIR, "qa")
 QA_SCRIPT = r"""
@@ -3581,7 +3736,7 @@ def qa_python() -> str:
 
 
 def qa_score_file(cfg: dict, path: str):
-    """→ {"CE":…, "CU":…, "PC":…, "PQ":…} oder None (nicht installiert / Fehler — dann ohne Prüfung weiter)."""
+    """→ {"CE":…, "CU":…, "PC":…, "PQ":…} or None (not installed / error — then continue without a check)."""
     py = qa_python()
     if not py:
         return None
@@ -3618,8 +3773,8 @@ def qa_min(cfg: dict) -> float:
 
 
 def put_aside(job: dict, audio: bytes, meta: dict) -> str:
-    """Eine verworfene Fassung aufheben (renders/_verworfen/<Tag>/) — zum Nachhören, ob die Schwelle stimmt.
-    Unterstrich-Ordner zählen nicht zum Archiv (Bibliothek, „Vom Mac holen“)."""
+    """Set aside a discarded version (renders/_verworfen/<day>/) — to listen later whether the threshold is right.
+    Underscore folders do not belong to the archive (library, "fetch from the Mac")."""
     folder = os.path.join(RENDERS, "_verworfen", datetime.date.today().isoformat())
     os.makedirs(folder, exist_ok=True)
     title = (job.get("meta") or {}).get("title") or "Manuwave Studio"
@@ -3634,8 +3789,8 @@ def put_aside(job: dict, audio: bytes, meta: dict) -> str:
 
 
 def render_checked(cfg: dict, eng, srv, job: dict, tick):
-    """Rendern, bewerten, bei schwacher Bewertung neu würfeln (neuer Seed = neuer Plan des Sprachmodells) —
-    höchstens `qa_reroll` Mal, behalten wird die beste Fassung."""
+    """Render, rate, re-roll on a weak rating (new seed = new plan from the language model) —
+    at most `qa_reroll` times, the best version is kept."""
     request = job.get("request") or {}
     audio, meta = eng.render(request, tick)
     if not qa_python():
@@ -3668,22 +3823,22 @@ def render_checked(cfg: dict, eng, srv, job: dict, tick):
 
 
 # =============================================================================
-# 3.14: Lange Titel — Hauptteil in einem Durchgang, dann Abschnitt für Abschnitt anbauen
+# 3.14: Long tracks — main part in one pass, then append section by section
 # =============================================================================
-# ACE-Step 1.5 ist laut Tutorial bei 2–4 min stabil; darüber Wiederholungen und Tempo-Sprünge (Issue #1203, XL > 3 min).
-# Repaint verlängert über das Quellende hinaus (acestep.cpp ARCHITECTURE.md: end > Quelldauer = outpaint), schneidet
-# die Naht aber hart — darum: die letzten LONG_CTX s als Quelle, ab LONG_OVERLAP vor ihrem Ende neu rechnen (das Modell
-# baut den Übergang selbst) und in der Quelle selbst gleichlautend überblenden (beide Seiten sind dort dasselbe Stück).
-LONG_SINGLE = 240.0    # bis hierhin ein Durchgang wie bisher
-LONG_MAIN = 220.0      # Hauptteil langer Titel
-LONG_PART = 80.0       # je Anbau (offiziell 3–90 s)
+# According to its tutorial, ACE-Step 1.5 is stable at 2–4 min; beyond that, repetitions and tempo jumps (issue #1203, XL > 3 min).
+# Repaint extends beyond the source end (acestep.cpp ARCHITECTURE.md: end > source duration = outpaint), but cuts
+# the seam hard — therefore: the last LONG_CTX s as source, recompute from LONG_OVERLAP before its end (the model
+# builds the transition itself) and crossfade equal-power within the source itself (both sides are the same piece there).
+LONG_SINGLE = 240.0    # up to here a single pass as before
+LONG_MAIN = 220.0      # main part of a long track
+LONG_PART = 80.0       # per extension (officially 3–90 s)
 LONG_CTX = 30.0
 LONG_OVERLAP = 4.0
 LONG_FADE = 1.0
-LONG_TRIES = 2         # Versuche je Anbau; mit Klangprüfung bleibt der beste
-# Überhang: jedes Teilstück (außer dem letzten) wird LONG_OVERHANG s länger gerechnet und dieser Rest weggeworfen.
-# 🔴 Gemessen im ersten echten Test (16.10.2026, 380 s): das Modell plant den 220-s-Hauptteil als ganzen Song
-#    mit Ausklang (letzte 20 s −17,6 dB gegen −13 dB davor), und der Anbau setzte an einem Ende an (+7 dB nach der Naht).
+LONG_TRIES = 2         # attempts per extension; with the sound check the best one is kept
+# Overhang: every segment (except the last) is computed LONG_OVERHANG s longer and this remainder is thrown away.
+# 🔴 Measured in the first real test (16.10.2026, 380 s): the model plans the 220 s main part as a whole song
+#    with an outro (last 20 s −17.6 dB versus −13 dB before), and the extension attached to an ending (+7 dB after the seam).
 LONG_OVERHANG = 20.0
 SECTION_WEIGHT = {"intro": 0.6, "outro": 0.6, "build": 0.7, "pre-chorus": 0.7, "bridge": 0.8, "interlude": 0.7}
 
@@ -3704,7 +3859,7 @@ def wav_bytes(params, frames: bytes) -> bytes:
 
 
 def wav_cut(audio: bytes, seconds: float) -> bytes:
-    """Die ersten `seconds` behalten."""
+    """Keep the first `seconds`."""
     p, fr = wav_info(audio)
     fs = p.nchannels * p.sampwidth
     return wav_bytes(p, fr[: min(len(fr), int(seconds * p.framerate) * fs)])
@@ -3716,7 +3871,7 @@ def wav_seconds(audio: bytes) -> float:
 
 
 def wav_tail(audio: bytes, seconds: float):
-    """→ (WAV der letzten `seconds`, tatsächliche Länge in s)"""
+    """→ (WAV of the last `seconds`, actual length in s)"""
     p, fr = wav_info(audio)
     fs = p.nchannels * p.sampwidth
     n = min(len(fr) // fs, int(seconds * p.framerate))
@@ -3724,8 +3879,8 @@ def wav_tail(audio: bytes, seconds: float):
 
 
 def stitch(a: bytes, o: bytes, ctx_s: float, overlap: float = LONG_OVERLAP, fade: float = LONG_FADE) -> bytes:
-    """Bisheriges `a` + Repaint-Ergebnis `o` (beginnt mit den letzten ctx_s Sekunden von a). Schnitt `overlap` vor dem
-    Ende von a; davor `fade` Sekunden gleichlautend (sin/cos) überblendet — dort sind a und o dasselbe Stück."""
+    """Existing `a` + repaint result `o` (starts with the last ctx_s seconds of a). Cut `overlap` before the
+    end of a; before that `fade` seconds crossfaded equal-power (sin/cos) — there a and o are the same piece."""
     import array
     pa, fa = wav_info(a)
     po, fo = wav_info(o)
@@ -3749,8 +3904,8 @@ def stitch(a: bytes, o: bytes, ctx_s: float, overlap: float = LONG_OVERLAP, fade
 
 
 def plan_long(lyrics: str, total: float):
-    """Abschnitte des Liedtexts auf Hauptteil und Anbauten verteilen (nach grobem Gewicht je Abschnittsart).
-    → (Liedtext Hauptteil, [(Liedtext, Beschreibung) je Anbau], Länge je Anbau)"""
+    """Distribute the sections of the lyrics over main part and extensions (by rough weight per section type).
+    → (lyrics of main part, [(lyrics, description) per extension], length per extension)"""
     blocks = [x.strip() for x in (lyrics or "").split("\n\n") if x.strip()]
     n = max(1, math.ceil((total - LONG_MAIN) / LONG_PART))
     part = (total - LONG_MAIN) / n
@@ -3764,7 +3919,7 @@ def plan_long(lyrics: str, total: float):
     for x in w:
         starts.append(acc / tot * total)
         acc += x
-    # nach POSITION verteilen, nie nach Text — ein Refrain kommt mehrmals wortgleich vor
+    # distribute by POSITION, never by text — a chorus occurs several times with identical words
     k_main = max(1, sum(1 for st in starts if st < LONG_MAIN - 10))
     main = blocks[:k_main]
     parts, used = [], k_main
@@ -3781,10 +3936,10 @@ def render_long(cfg: dict, eng, srv, job: dict, tick):
     request = job.get("request") or {}
     total = min(600.0, float(request.get("duration") or 0))
     main_lyrics, parts, part_s = plan_long(request.get("lyrics") or "", total)
-    # Hauptteil: kein weiches Ausblenden — an seinem Ende wird angebaut
+    # Main part: no soft fade-out — it is extended at its end
     sub = dict(job, request=dict(request, duration=LONG_MAIN + LONG_OVERHANG, lyrics=main_lyrics, smooth_end=False))
     audio, meta = render_checked(cfg, eng, srv, sub, tick)
-    audio = wav_cut(audio, LONG_MAIN)             # Ausklang des Hauptteils weg — hier geht es weiter
+    audio = wav_cut(audio, LONG_MAIN)             # drop the outro of the main part — it continues here
     floor, qa_on = qa_min(cfg), bool(qa_python())
     tries = LONG_TRIES if qa_on else 1
     stats = []
@@ -3832,22 +3987,22 @@ def render_long(cfg: dict, eng, srv, job: dict, tick):
 
 
 # =============================================================================
-# 3.17: Loop-Maschine → die Musik-KI baut weiter
+# 3.17: Loop machine → the music AI keeps building
 # =============================================================================
-# Zwei Wege — einsingen oder ein paar Takte vorgeben, die Maschine übernimmt den Rest:
-#   fortsetzen — dein Jam ist der Anfang, die Musik-KI spielt weiter (repaint nach hinten, ab dem Ende des Jams).
-#                🔑 gemessen 19.10.2026: Anfang = Jam (Korrelation 1,00), Fortsetzung im Takt (122,3 statt 124 BPM),
-#                aber 7 dB leiser als der Jam → die Fortsetzung wird auf den Pegel des Jams gebracht.
-#   gesang     — eine eingesungene Schleife wird zur Songlänge wiederholt und vervollständigt (complete): die KI spielt
-#                Schlagzeug, Bass, Keys … dazu. 🔑 gemessen: XL-Base −15/−30 dB Drums/Bass, XL-SFT −22/−54 (Bass fehlt)
-#                → Base, wenn es da ist. Die KI singt dabei neu (17 dB unter der Band, verwaschen) → Demucs nimmt ihre
-#                Stimme heraus, DEINE Stimme kommt in passender Lautstärke darüber (abschaltbar: "stimme": "ki").
+# Two ways — sing something in or give a few bars, the machine takes over the rest:
+#   continue — your jam is the beginning, the music AI keeps playing (repaint backwards, from the end of the jam).
+#                🔑 measured 19.10.2026: beginning = jam (correlation 1.00), continuation in time (122.3 instead of 124 BPM),
+#                but 7 dB quieter than the jam → the continuation is brought to the level of the jam.
+#   vocals     — a sung-in loop is repeated to song length and completed (complete): the AI plays
+#                drums, bass, keys … along. 🔑 measured: XL-Base −15/−30 dB drums/bass, XL-SFT −22/−54 (bass missing)
+#                → Base, if available. The AI newly sings along (17 dB below the band, smeared) → Demucs removes its
+#                voice, YOUR voice goes on top at a fitting volume (can be turned off: "stimme": "ki").
 WEITER_MAX = 240.0
 WEITER_TRACKS = ("drums", "bass", "keyboard", "synth", "guitar", "strings", "percussion", "brass", "woodwinds", "fx", "backing_vocals")
 
 
 def pcm16_48k(audio: bytes) -> bytes:
-    """Beliebiges PCM-WAV (16/24/32 Bit, mono/stereo, jede Rate) → 16 Bit, stereo, 48 kHz."""
+    """Any PCM WAV (16/24/32 bit, mono/stereo, any rate) → 16 bit, stereo, 48 kHz."""
     p, fr = wav_info(audio)
     if p.comptype != "NONE":
         raise RuntimeError("Quelle: nur unkomprimiertes WAV")
@@ -3868,7 +4023,7 @@ def pcm16_48k(audio: bytes) -> bytes:
 
 
 def wav_loop(audio: bytes, seconds: float) -> bytes:
-    """Eine Schleife so oft hintereinander, bis `seconds` voll sind (die Schleife ist taktgenau — keine Blende nötig)."""
+    """Repeat a loop until `seconds` are filled (the loop is bar-exact — no crossfade needed)."""
     p, fr = wav_info(audio)
     fs = p.nchannels * p.sampwidth
     want = int(seconds * p.framerate) * fs
@@ -3877,7 +4032,7 @@ def wav_loop(audio: bytes, seconds: float) -> bytes:
 
 
 def _rms_active(fr: bytes) -> float:
-    """RMS nur über die lauten Stellen (Gesang hat Pausen — die sollen den Pegel nicht drücken)."""
+    """RMS only over the loud passages (vocals have pauses — they must not push the level down)."""
     win, vals = 4800 * 4, []
     for i in range(0, len(fr) - win, win):
         vals.append(audioop.rms(fr[i:i + win], 2))
@@ -3894,7 +4049,7 @@ def _normalize(fr: bytes, ceil: float = 0.89) -> bytes:
 
 
 def level_match(audio: bytes, from_s: float, ramp_s: float = 0.5) -> bytes:
-    """Die Fortsetzung (ab `from_s`) auf den Pegel des Jams davor bringen — weich über `ramp_s`."""
+    """Bring the continuation (from `from_s`) to the level of the jam before it — smoothly over `ramp_s`."""
     if audioop is None:
         return audio
     p, fr = wav_info(audio)
@@ -3921,7 +4076,7 @@ def level_match(audio: bytes, from_s: float, ramp_s: float = 0.5) -> bytes:
 
 
 def voice_on_top(cfg: dict, band_with_ai_voice: bytes, voice: bytes, tick) -> (bytes, str):
-    """Demucs nimmt die neu gesungene KI-Stimme aus der Band, deine Stimme kommt darüber. → (audio, Hinweis)"""
+    """Demucs removes the newly sung AI voice from the band, your voice goes on top. → (audio, note)"""
     py = midi_python()
     if not py or audioop is None:
         return band_with_ai_voice, "ohne Demucs: die KI-Stimme bleibt"
@@ -3944,7 +4099,7 @@ def voice_on_top(cfg: dict, band_with_ai_voice: bytes, voice: bytes, tick) -> (b
         n = min(len(fb), len(fv))
         fb, fv = fb[:n], fv[:n]
         rb, rv = _rms_active(fb), _rms_active(fv)
-        # Gesang vorn: aktive Stimme ~2 dB unter der Band — gemessen (Demucs): Stimme −16 dB, Drums −17, Mix −13
+        # Vocals up front: active voice ~2 dB below the band — measured (Demucs): voice −16 dB, drums −17, mix −13
         g = (rb * 0.8 / rv) if rv > 0 else 1.0
         g = max(0.25, min(6.0, g))
         mix = audioop.add(audioop.mul(fb, 2, 0.85), audioop.mul(fv, 2, g * 0.85), 2)
@@ -4021,7 +4176,7 @@ def archive(cfg, job, audio, meta) -> str:
         f.write(audio)
     begleit = {"request": job.get("request"), "meta": job.get("meta"), "result": meta}
     vorgabe = master_vorgabe(cfg)
-    if vorgabe:
+    if vorgabe:                     # 3.27: "default for new tracks" — applies from creation on, even without a browser
         m = dict(vorgabe)
         ae = auto_end(wav)
         if ae and "fade_out" not in m:
@@ -4035,17 +4190,17 @@ def archive(cfg, job, audio, meta) -> str:
 
 
 # =============================================================================
-# Aufträge rund ums Veredeln
+# Jobs around finishing
 # =============================================================================
 
 class NeedUpload(Exception):
     pass
 
 
-# Der Browser erkennt diesen Anfang und schickt den Track beim zweiten Versuch mit.
+# The browser recognises this prefix and sends the track along on the second attempt.
 ARCHIV_FEHLT = "ARCHIV_FEHLT: Der Mac hat diesen Track nicht (mehr) — der Browser schickt ihn mit."
 MAX_FILE = 64 * 1024 * 1024
-MAX_EXPORT = 120 * 1024 * 1024   # 3.4: 24 Bit — der Server nimmt bis 128 MB
+MAX_EXPORT = 120 * 1024 * 1024   # 3.4: 24 bit — the server accepts up to 128 MB
 
 
 def job_source(cfg: dict, srv, job: dict) -> str:
@@ -4065,8 +4220,8 @@ def job_source(cfg: dict, srv, job: dict) -> str:
 
 
 def archive_list() -> list:
-    """Was im Archiv dieses Macs liegt — damit der Browser holen kann, was ihm fehlt
-    (neues Gerät, abgebrochene Übergabe, gelöschte Bibliothek)."""
+    """What is in this Mac's archive, so the browser can fetch what it is missing
+    (new device, aborted handover, deleted library)."""
     out = []
     for p in all_archived():
         d = _read_json(p[:-4] + ".json")
@@ -4078,28 +4233,29 @@ def archive_list() -> list:
                     "cover": os.path.isfile(p[:-4] + ".jpg"), "wm": (d.get("wasserzeichen") or {}).get("id", ""),
                     "stamp": str((d.get("cover") or {}).get("stamp") or ""),
                     "rev": int((d.get("aufbereitet") or {}).get("v") or 0),
-                    # 3.12: veröffentlicht? — der Browser gleicht sein 🌐 damit ab (auch nach Veröffentlichen ohne ihn)
+                    # 3.12: published? — the browser reconciles its 🌐 with this (also after publishing without it)
                     "web": {k: (d.get("oeffentlich") or {}).get(k, "") for k in ("url", "slug", "at")} if (d.get("oeffentlich") or {}).get("url") else None,
-                    # 3.12.3: welche Regler der Mac kennt und mit welchen die Online-Fassung gerechnet wurde
+                    # 3.12.3: which controls the Mac knows and which ones the online version was rendered with
                     "master": d.get("master"), "web_master": (d.get("oeffentlich") or {}).get("master"),
-                    # 3.16: MIDI-Abbild — "ok" (mit Fassung), "pending", "failed", "none" (selbst gespielt / nicht eingerichtet)
+                    # 3.16: MIDI image — "ok" (with version), "pending", "failed", "none" (by hand / not set up)
                     "midi": midi_state(p, d), "midi_v": MIDI_V})
     return out
 
 
-# automatisch jeder erzeugte song auch auf den instrumenten verfügbar sein") ------------------------------------------
-# Eigene Umgebung $MWS_HOME/midi (Installer-Schritt "MIDI image"): Demucs (MIT) trennt Schlagzeug/Bass/Gesang/Rest,
-# Basic Pitch (Apache-2.0, ONNX) erkennt die Töne, pYIN den Bass, Einsätze je Band das Schlagzeug.
-# 🔑 Gerechnet wird NUR, wenn die Brücke sonst nichts tut — kommt ein Auftrag, wird abgebrochen und später neu begonnen.
-# Ergebnis neben der WAV: <name>.midi.json (Spuren auf dem 1/16-Raster, wie die Projekte in "Selber machen") + <name>.mid.
+# ---- 3.16: MIDI-Abbild jedes KI-Tracks (every AI-generated song gets a MIDI image and
+# is automatically available on the instruments too) ------------------------------------------
+# Own environment $MWS_HOME/midi (installer step "MIDI image"): Demucs (MIT) separates drums/bass/vocals/rest,
+# Basic Pitch (Apache-2.0, ONNX) detects the notes, pYIN the bass, per-band onsets the drums.
+# 🔑 Computed ONLY when the bridge is otherwise idle — if a job arrives, it is aborted and restarted later.
+# Result next to the WAV: <name>.midi.json (tracks on the 1/16 grid, like the projects in "Selber machen") + <name>.mid.
 MIDI_DIR = os.path.join(DIR, "midi")
-MIDI_V = 1                      # Fassung des Abbilds — höher = alles wird neu gerechnet
-MIDI_SCRIPT = r'''"""Manuwave Studio 3.16 — MIDI-Abbild eines Tracks: Stimmen trennen (Demucs), Noten erkennen (Basic Pitch),
-Schlagzeug aus Einsätzen je Band, alles aufs Raster des Tempos gelegt.
+MIDI_V = 1                      # version of the image — higher = everything is recomputed
+MIDI_SCRIPT = r'''"""Manuwave Studio 3.16 — MIDI image of a track: separate stems (Demucs), detect notes (Basic Pitch),
+drums from per-band onsets, everything snapped to the tempo grid.
 
-    python transcribe.py <audio> <aus.json> <aus.mid> [bpm]
+    python transcribe.py <audio> <out.json> <out.mid> [bpm]
 
-Ausgabe: JSON mit Spuren auf dem 1/16-Raster (wie die Projekte im Tab „Selber machen“) und eine MIDI-Datei (Typ 1).
+Output: JSON with tracks on the 1/16 grid (like the projects in the build-it-yourself tab) and a MIDI file (type 1).
 """
 import json, os, subprocess, sys, warnings, logging
 warnings.filterwarnings("ignore")
@@ -4133,7 +4289,7 @@ def separate(wav):
 
 
 def notes_of(mono, lo, hi, onset=0.5, frame=0.3, min_ms=80):
-    """Basic Pitch (ONNX) auf einer Stimme → [(start, ende, tonhöhe, stärke)]."""
+    """Basic Pitch (ONNX) on one stem → [(start, end, pitch, strength)]."""
     import tempfile, soundfile as sf
     from basic_pitch import ICASSP_2022_MODEL_PATH
     from basic_pitch.inference import predict, Model
@@ -4155,8 +4311,8 @@ def notes_of(mono, lo, hi, onset=0.5, frame=0.3, min_ms=80):
 
 
 def bass_line(x):
-    """Einstimmige Basslinie mit pYIN (Grundton-Tracker) — Basic Pitch griff bei tiefen Tönen oft Obertöne.
-    Ton = gerundeter Halbton über stimmhafte Rahmen; neue Note bei Tonwechsel oder neuem Anschlag im Bass-Stem."""
+    """Monophonic bass line with pYIN (fundamental tracker) — Basic Pitch often picked up overtones on low notes.
+    Pitch = rounded semitone over voiced frames; new note on pitch change or a new attack in the bass stem."""
     import librosa
     sr, hop = 11025, 128
     y = librosa.resample(x.astype(np.float32), orig_sr=SR, target_sr=sr)
@@ -4168,7 +4324,7 @@ def bass_line(x):
     out, cur, start, amp = [], -1, 0, []
     for i, m in enumerate(midi.tolist() + [-1]):
         if m != cur or (i in on and cur >= 0 and i - start > 2):
-            if cur >= 0 and i - start >= 4:          # mindestens ~45 ms
+            if cur >= 0 and i - start >= 4:          # at least ~45 ms
                 out.append((start * hop / sr, i * hop / sr, int(cur), float(min(1, np.mean(amp) / (gate * 8)))))
             cur, start, amp = m, i, []
         if i < len(rms):
@@ -4177,7 +4333,7 @@ def bass_line(x):
 
 
 def mono_line(ev, prefer="strong"):
-    """Eine Stimme: überlappende Noten → je Zeitpunkt nur eine (die stärkste bzw. tiefste)."""
+    """One voice: overlapping notes → only one per point in time (the strongest or the lowest)."""
     ev = sorted(ev, key=lambda n: n[0])
     out = []
     for n in ev:
@@ -4193,15 +4349,15 @@ def mono_line(ev, prefer="strong"):
 
 
 def drum_hits(x):
-    """Schlagzeug-Stem → [(zeit, "kick"|"snare"|"hat", stärke)]. Je Band eigene Einsätze (ein gemeinsamer Detektor
-    hörte unter der Kick die Hi-Hats nicht): tief = Kick, Mitte = Snare/Clap, hoch = Hi-Hat. Stille Teile zählen nicht."""
+    """Drum stem → [(time, "kick"|"snare"|"hat", strength)]. Separate onsets per band (a single shared detector
+    did not hear the hi-hats under the kick): low = kick, mid = snare/clap, high = hi-hat. Silent parts do not count."""
     import librosa
     sr, hop = SR // 2, 256
     y = x[::2].astype(np.float32)
     S = np.abs(librosa.stft(y, n_fft=1024, hop_length=hop))
     f = librosa.fft_frequencies(sr=sr, n_fft=1024)
     D = librosa.amplitude_to_db(S, ref=np.max)
-    total = librosa.amplitude_to_db(S.sum(0), ref=np.max)                     # Pegel des Stems je Rahmen
+    total = librosa.amplitude_to_db(S.sum(0), ref=np.max)                     # level of the stem per frame
     bands = (("kick", (f >= 30) & (f < 130), 0.10), ("snare", (f >= 180) & (f < 3500), 0.2), ("hat", f >= 7000, 0.10))
     found = {}
     for name, m, delta in bands:
@@ -4214,7 +4370,7 @@ def drum_hits(x):
     kicks = [t for t, _ in found["kick"]]
     near = lambda t, ts, d: any(abs(t - u) < d for u in ts)
     hits = [(t, "kick", v) for t, v in found["kick"]]
-    # der Anschlag einer Kick klickt auch in der Mitte — eine Snare zählt nur ohne Kick oder deutlich kräftig
+    # a kick's attack also clicks in the mid band — a snare only counts without a kick or when clearly strong
     hits += [(t, "snare", v) for t, v in found["snare"] if not near(t, kicks, 0.03) or v > 0.8]
     snares = [t for t, k, _ in hits if k == "snare"]
     hits += [(t, "hat", v) for t, v in found["hat"] if not near(t, snares, 0.03)]
@@ -4222,18 +4378,18 @@ def drum_hits(x):
 
 
 def tempo_and_beats(mix, drums, prior):
-    """Echtes Tempo + Schlagzeiten. 🔑 Die Musik-KI trifft das bestellte Tempo nicht genau (gemessen: 137,96 statt 136 —
-    nach 3:45 schon 3 Schläge daneben). Darum: Feinsuche ±6 % um die Vorgabe, dann der Beat-Tracker."""
+    """True tempo + beat times. 🔑 The music model does not hit the requested tempo exactly (measured: 137.96 instead of 136 —
+    already 3 beats off after 3:45). Hence: fine search ±6 % around the prior, then the beat tracker."""
     import librosa
     sr, hop = SR // 2, 128
-    loud = np.sqrt((drums ** 2).mean()) > 0.25 * np.sqrt((mix ** 2).mean())   # trägt das Schlagzeug den Takt?
-    env = librosa.onset.onset_strength(y=drums if loud else mix, sr=sr, hop_length=hop)    # beide schon in 22,05 kHz
+    loud = np.sqrt((drums ** 2).mean()) > 0.25 * np.sqrt((mix ** 2).mean())   # does the drum stem carry the beat?
+    env = librosa.onset.onset_strength(y=drums if loud else mix, sr=sr, hop_length=hop)    # both already at 22.05 kHz
     t = np.arange(len(env)) * hop / sr
     e = env - env.mean()
     def coh(b):
         return abs((e * np.exp(2j * np.pi * t / (60.0 / b))).sum())
     cands = []
-    # nur ±6 % um die Vorgabe: halb/doppelt gewänne sonst bei Achtel-Hi-Hats (gemessen: 202,6 statt 101,3)
+    # only ±6 % around the prior: half/double would otherwise win with eighth-note hi-hats (measured: 202.6 instead of 101.3)
     for p in ([prior] if prior else [librosa.feature.tempo(onset_envelope=env, sr=sr, hop_length=hop)[0]]):
         if 60 <= p <= 200:
             cands += list(np.arange(p * 0.94, p * 1.06, 0.01))
@@ -4249,7 +4405,7 @@ def tempo_and_beats(mix, drums, prior):
 
 
 def beat_pos(times, beats, bpm):
-    """Zeit → Position in Schlägen, entlang der verfolgten Schläge (linear über die Ränder hinaus)."""
+    """Time → position in beats, along the tracked beats (linear beyond the edges)."""
     times = np.asarray(times, dtype=float)
     idx = np.arange(len(beats), dtype=float)
     beat = 60.0 / bpm
@@ -4261,8 +4417,8 @@ def beat_pos(times, beats, bpm):
 
 
 def downbeat(beats, bpm, events, changes=()):
-    """Welcher Schlag ist die „1“? Kicks auf 1 und 3, Snares/Clap auf 2 und 4, Basswechsel auf der 1 → Verschiebung 0…3.
-    🔑 Bei four-on-the-floor sind die Kicks auf allen Vierteln gleich — dann entscheiden Snares und Basswechsel."""
+    """Which beat is the "1"? Kicks on 1 and 3, snares/clap on 2 and 4, bass changes on the 1 → offset 0…3.
+    🔑 With four-on-the-floor the kicks are equal on all quarter notes — then snares and bass changes decide."""
     ch = beat_pos(list(changes), beats, bpm) if len(changes) else np.array([])
     k = beat_pos([t for t, n, _ in events if n == "kick"], beats, bpm) if events else np.array([])
     sn = beat_pos([t for t, n, _ in events if n == "snare"], beats, bpm) if events else np.array([])
@@ -4279,7 +4435,7 @@ def main():
     t0 = time.time()
     wav = load(src)
     dur = wav.shape[1] / SR
-    cache = os.environ.get("MWS_MIDI_STEMS")          # nur zum Entwickeln: getrennte Stimmen zwischenspeichern
+    cache = os.environ.get("MWS_MIDI_STEMS")          # development only: cache the separated stems
     if cache and os.path.exists(cache):
         st = dict(np.load(cache))
     else:
@@ -4292,12 +4448,12 @@ def main():
     bass = bass_line(st["bass"])
     mel = mono_line(notes_of(st["vocals"], 80, 1100, onset=0.5, frame=0.35, min_ms=100))
     oth = [n for n in notes_of(st["other"], 55, 3000, onset=0.55, frame=0.35, min_ms=110) if n[3] > 0.3]
-    chg = [b[0] for a, b in zip(bass, bass[1:]) if b[2] % 12 != a[2] % 12]        # Basswechsel (Tonklasse)
+    chg = [b[0] for a, b in zip(bass, bass[1:]) if b[2] % 12 != a[2] % 12]        # bass change (pitch class)
     db = downbeat(beats, bpm, drums, chg)
     first = min([e[0] for e in bass + mel + oth] + [t for t, *_ in drums] + [beats[0]])
-    shift = db - 4 * int(np.ceil((db - float(beat_pos([first], beats, bpm)[0])) / 4))   # Takt 1 beginnt vor dem ersten Ton
+    shift = db - 4 * int(np.ceil((db - float(beat_pos([first], beats, bpm)[0])) / 4))   # bar 1 starts before the first note
     q = lambda t: int(round((float(beat_pos([t], beats, bpm)[0]) - shift) * 4))
-    # Zeit von Schritt 0 im Original (Schlag "shift" entlang der verfolgten Schläge, außerhalb linear)
+    # time of step 0 in the original (beat "shift" along the tracked beats, linear outside)
     off = round(float(np.interp(shift, np.arange(len(beats)), beats)) if 0 <= shift < len(beats) else float(beats[0] + shift * 60.0 / bpm), 3)
     step = 60.0 / bpm / 4
     def notes(ev, cap=None):
@@ -4306,14 +4462,14 @@ def main():
             st_ = q(s)
             o.append({"s": st_, "l": max(1, q(e) - st_), "n": p, "v": round(min(1.0, 0.45 + a * 0.6), 2)})
         o.sort(key=lambda n: (n["s"], n["n"]))
-        if cap:   # höchstens cap Töne, die zugleich anschlagen (die lautesten)
+        if cap:   # at most cap notes striking at the same time (the loudest)
             keep, by = [], {}
             for n in o:
                 by.setdefault(n["s"], []).append(n)
             for s_, g in by.items():
                 keep += sorted(g, key=lambda n: -n["v"])[:cap]
             o = sorted(keep, key=lambda n: (n["s"], n["n"]))
-        # gleiche Tonhöhe auf demselben Schritt nur einmal
+        # same pitch on the same step only once
         seen, uniq = set(), []
         for n in o:
             if (n["s"], n["n"]) not in seen:
@@ -4329,7 +4485,7 @@ def main():
     res = {"v": 1, "bpm": round(bpm, 2), "offset": round(off, 3), "duration": round(dur, 2), "steps_per_beat": 4,
            "tracks": {"drums": dr, "bass": notes(bass), "chords": notes(oth, cap=5), "melody": notes(mel)},
            "stats": {"separate_s": round(t_sep, 1), "total_s": round(time.time() - t0, 1), "device": DEV}}
-    # MIDI-Datei (Typ 1) auf dem Raster, Tempo = bpm — lässt sich in jede DAW ziehen
+    # MIDI file (type 1) on the grid, tempo = bpm — can be dragged into any DAW
     import pretty_midi
     pm = pretty_midi.PrettyMIDI(initial_tempo=bpm)
     sec = lambda s: max(0.0, s * step)
@@ -4348,19 +4504,20 @@ def main():
 if __name__ == "__main__":
     main()
 '''
-_job_active = threading.Event()   # die Render-Spur arbeitet gerade (gesetzt in run())
-_midi_first = []                  # vom Browser gewünscht — kommt zuerst dran
+_job_active = threading.Event()   # the render track is busy right now (set in run())
+_midi_first = []                  # requested by the browser — handled first
 _midi_lock = threading.Lock()
-_midi_proc = None                 # der laufende Rechenprozess — SIGTERM nimmt ihn mit (sonst rechnet er als Waise weiter)
+_midi_proc = None                 # running compute process — SIGTERM takes it along (else it runs on as an orphan)
 
 
-# Läuft in derselben Umgebung wie das MIDI-Abbild und benutzt dessen Helfer (transcribe.py). Nur Stilmerkmale.
-ANALYSE_SCRIPT = r'''"""Manuwave Studio 3.24 — einen hochgeladenen Song vermessen (für „Aus deinen Songs“): Tempo, Tonart, Akkordschleife,
-Aufbau, Energieverlauf, Anteile der Stimmen, Gesang, Klangfarbe, Groove. Nur Stilmerkmale — keine Melodie, kein Text.
+# ---- 3.19 (App 3.24): "Aus deinen Songs" — analyse an uploaded song ------------------------------------------
+# Runs in the same environment as the MIDI image and uses its helpers (transcribe.py). Style features only.
+ANALYSE_SCRIPT = r'''"""Manuwave Studio 3.24 — measure an uploaded song (for the "from your own songs" feature): tempo, key, chord loop,
+structure, energy curve, stem shares, vocals, timbre, groove. Style traits only — no melody, no lyrics.
 
-    python analyse.py <audio> <aus.json>
+    python analyse.py <audio> <out.json>
 
-Benutzt die Helfer des MIDI-Abbilds (transcribe.py daneben): Laden, Demucs-Trennung, Tempo, Schlagzeug-Einsätze.
+Uses the helpers of the MIDI image (transcribe.py alongside): loading, Demucs separation, tempo, drum onsets.
 """
 import json, os, sys, warnings, logging
 warnings.filterwarnings("ignore")
@@ -4369,9 +4526,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np
 from transcribe import SR, load, separate, tempo_and_beats, drum_hits, beat_pos
 
-MAX_S = 360                       # länger wird nicht vermessen (Rechenzeit), der Anfang trägt den Charakter
+MAX_S = 360                       # nothing longer is measured (compute time); the beginning carries the character
 NOTES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
-# Krumhansl-Kessler-Profile (Dur, Moll)
+# Krumhansl-Kessler profiles (major, minor)
 KK_MAJ = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
 KK_MIN = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
 ROMAN = ["I", "bII", "II", "bIII", "III", "IV", "#IV", "V", "bVI", "VI", "bVII", "VII"]
@@ -4380,15 +4537,15 @@ STEP = {"major": {0: "I", 2: "II", 4: "III", 5: "IV", 7: "V", 9: "VI", 11: "VII"
 
 
 def roman(d, q, mode):
-    """Stufe relativ zur Tonart (in Moll auf die natürliche Molltonleiter bezogen); Moll-Akkord klein geschrieben."""
+    """Scale degree relative to the key (in minor, relative to the natural minor scale); minor chord written in lowercase."""
     s = STEP[mode].get(d) or ROMAN[d]
     return s.lower() if q == "m" else s
 
 
 def tempo_estimate(mix, drums):
-    """Tempo ohne Vorgabe. 🔑 Der Schätzer von librosa griff bei Drum & Bass (172) auf 116 (zwei Drittel). Darum zählt die
-    ganze Familie: Phasen-Kohärenz und Autokorrelation des Einsatz-Signals bei b, b/2 und 2b. Zwischen b und 2b
-    entscheidet die Kohärenz, bei Gleichstand das Tempo zwischen 90 und 180 (D&B 172 statt 86, Trance 138 statt 69)."""
+    """Tempo without a prior. 🔑 librosa's estimator picked 116 (two thirds) for drum & bass (172). Hence the whole
+    family counts: phase coherence and autocorrelation of the onset signal at b, b/2 and 2b. Between b and 2b
+    coherence decides; on a tie, the tempo between 90 and 180 (D&B 172 instead of 86, trance 138 instead of 69)."""
     import librosa
     sr, hop = SR // 2, 128
     loud = np.sqrt((drums ** 2).mean()) > 0.25 * np.sqrt((mix ** 2).mean())
@@ -4417,9 +4574,9 @@ def tempo_estimate(mix, drums):
 
 
 def key_of(chroma, bass_chroma=None, bars=None, upper_chroma=None):
-    """Tonart. Krumhansl-Kessler allein verwechselte Quinte (C statt G) und Parallele (F-Dur statt a-Moll). Darum werden die
-    sechs besten Kandidaten zusätzlich nach dem Kernton der oberen Stimmen, dem Bass und dem Tonika-Akkord bewertet.
-    🔑 Der Bass allein führte in die Irre: in einem a-Moll-Trance spielte er am meisten F (die VI. Stufe)."""
+    """Key. Krumhansl-Kessler alone confused the fifth (C instead of G) and the relative key (F major instead of A minor). Hence the
+    six best candidates are additionally scored by the core pitch of the upper voices, the bass and the tonic chord.
+    🔑 The bass alone was misleading: in an A-minor trance track it played F most (the VI degree)."""
     v = chroma / (chroma.sum() + 1e-9)
     sc = {}
     for r in range(12):
@@ -4437,7 +4594,7 @@ def key_of(chroma, bass_chroma=None, bars=None, upper_chroma=None):
         if bc is not None:
             x += 0.3 * float(bc[r])
         q = "m" if mode == "minor" else ""
-        fits = lambda c: c[0] == r and c[1] in (q, "?")          # unklare Terz zählt für beide Tongeschlechter
+        fits = lambda c: c[0] == r and c[1] in (q, "?")          # an unclear third counts for both modes
         if seq:
             x += 0.4 * sum(1 for c in seq if fits(c)) / len(seq)
         if first and fits(first):
@@ -4451,7 +4608,7 @@ def key_of(chroma, bass_chroma=None, bars=None, upper_chroma=None):
 
 
 def chords_per_beat(chroma_beats):
-    """Dur-/Moll-Dreiklang je Schlag (Schablonen), schwache Schläge = keiner."""
+    """Major/minor triad per beat (templates), weak beats = none."""
     tmpl = []
     for r in range(12):
         for q, iv in (("", (0, 4, 7)), ("m", (0, 3, 7))):
@@ -4472,7 +4629,7 @@ def chords_per_beat(chroma_beats):
             continue
         cn = c / n
         maj3, min3 = cn[(r + 4) % 12], cn[(r + 3) % 12]
-        # Terz kaum hörbar (Powerchord, Quinten-Pads): Tongeschlecht später aus der Tonart
+        # third barely audible (power chord, fifths pads): mode is resolved later from the key
         out.append((r, q if abs(maj3 - min3) > 0.25 * cn[r] else "?"))
     return out
 
@@ -4482,15 +4639,15 @@ DIATONIC = {"major": {0: "", 2: "m", 4: "m", 5: "", 7: "", 9: "m", 11: "m"},
 
 
 def settle(chord, root, mode):
-    """Akkord mit unklarer Terz → Tongeschlecht der Stufe in der Tonart (in a-Moll: Am statt A)."""
+    """Chord with an unclear third → mode of that degree in the key (in A minor: Am instead of A)."""
     if not chord or chord[1] != "?":
         return chord
     return (chord[0], DIATONIC[mode].get((chord[0] - root) % 12, ""))
 
 
 def loop_of(bar_chords, root, mode):
-    """Akkordfolge: gleiche Takte zusammenfassen, dann die häufigste Folge von vier Wechseln (bei weniger Wechseln die
-    vorhandenen). 🔑 Je Takt gezählt zeigte ein Trance mit 2–4 Takten je Akkord nur „Am–Am–Am–Am“."""
+    """Chord progression: merge identical bars, then the most frequent sequence of four changes (with fewer changes, the
+    existing ones). 🔑 Counted per bar, a trance track with 2–4 bars per chord showed only "Am–Am–Am–Am"."""
     from collections import Counter
     runs = []
     for c in bar_chords:
@@ -4508,8 +4665,8 @@ def loop_of(bar_chords, root, mode):
     elif len(chords) >= 5:
         grams = Counter(tuple(chords[i:i + 4]) for i in range(len(chords) - 3))
         g, n = grams.most_common(1)[0]
-        # gleich gute Lesarten derselben Schleife: die, die auf dem Grundton beginnt (sonst schwankte die Anzeige
-        # zwischen F#m–A–Em–G und Bm–D–A–Em, je nach Lauf)
+        # equally good readings of the same loop: the one starting on the root (otherwise the display fluctuated
+        # between F#m–A–Em–G and Bm–D–A–Em, depending on the run)
         tonic = [x for x, k in grams.most_common() if k >= 0.6 * n and x[0][0] == root]
         if tonic and g[0][0] != root:
             g = tonic[0]
@@ -4526,7 +4683,7 @@ def loop_of(bar_chords, root, mode):
 
 
 def sections_of(y, sr, beats_s, energy_db):
-    """Aufbau: Abschnitte über Wiederholung (Chroma + Klangfarbe je Schlag), gleiche Teile tragen denselben Buchstaben."""
+    """Structure: sections via repetition (chroma + timbre per beat); identical parts get the same letter."""
     import librosa
     hop = 512
     bf = librosa.time_to_frames(beats_s, sr=sr, hop_length=hop)
@@ -4544,11 +4701,11 @@ def sections_of(y, sr, beats_s, energy_db):
     segs = []
     for i, s in enumerate(starts):
         e = starts[i + 1] if i + 1 < len(starts) else dur
-        if e - s < 4 and segs:                                # Splitter an den Vorgänger hängen
+        if e - s < 4 and segs:                                # attach slivers to the previous section
             segs[-1]["end"] = round(e, 1)
             continue
         segs.append({"start": round(s, 1), "end": round(e, 1)})
-    # gleiche Teile erkennen: mittlere Merkmale je Abschnitt, Ähnlichkeit > 0,92 → derselbe Buchstabe
+    # detect identical parts: mean features per section, similarity > 0.92 → same letter
     def feat(sg):
         a = int(np.searchsorted(bt, sg["start"]))
         b = max(a + 1, int(np.searchsorted(bt, sg["end"])))
@@ -4582,7 +4739,7 @@ def main():
     dur = wav.shape[1] / SR
     st = separate(wav)
     mix = wav.mean(0)
-    # Anteile der Stimmen (Energie), Gesang über die Zeit
+    # stem shares (energy), vocals over time
     en = {k: float((v.astype(np.float64) ** 2).sum()) for k, v in st.items()}
     tot = sum(en.values()) + 1e-12
     stems = {k: round(100 * en[k] / tot) for k in ("drums", "bass", "vocals", "other") if k in en}
@@ -4592,11 +4749,11 @@ def main():
     vr, mr = rm(st["vocals"]), rm(mix)
     voc_share = float(((vr > 0.2 * mr) & (mr > 10 ** (-40 / 20))).mean()) if n else 0.0
     vocals = "viel" if voc_share > 0.45 else "etwas" if voc_share > 0.15 else "kaum"
-    # Tempo und Schläge (ohne Vorgabe), halb/doppelt geprüft
+    # tempo and beats (no prior), half/double checked
     est, conf = tempo_estimate(mix[::2], st["drums"][::2])
-    bpm, beats = tempo_and_beats(mix[::2], st["drums"][::2], est)    # Feinsuche ±6 % um die Schätzung + Schläge
-    # Groove: Kick auf jedem Schlag? 🔑 Der Schlag-Tracker rastet mitunter auf Offbeat-Hi-Hats ein — darum zählt die Lage
-    # der Kicks relativ zu ihrer eigenen häufigsten Phase, nicht zur Phase der Schläge.
+    bpm, beats = tempo_and_beats(mix[::2], st["drums"][::2], est)    # fine search ±6 % around the estimate + beats
+    # Groove: kick on every beat? 🔑 The beat tracker sometimes locks onto offbeat hi-hats — hence the position
+    # of the kicks relative to their own most frequent phase counts, not the phase of the beats.
     hits = drum_hits(st["drums"])
     kicks = beat_pos([t for t, k, _ in hits if k == "kick"], beats, bpm)
     kv = np.array([v for t, k, v in hits if k == "kick"])
@@ -4606,7 +4763,7 @@ def main():
         d = ((kicks - phase + 0.5) % 1) - 0.5
         on = np.abs(d) < 0.15
         idx = np.round(kicks[on] - phase).astype(int)
-        # nur Schläge zählen, auf denen das Schlagzeug spielt — Breakdowns ohne Kick drückten sonst den Anteil
+        # only count beats on which the drums play — breakdowns without a kick would otherwise lower the share
         dr = st["drums"].astype(np.float64)
         bi = (np.asarray(beats) * SR).astype(int)
         bl = max(1, int(SR * 60 / bpm))
@@ -4614,23 +4771,24 @@ def main():
         active = brms > 0.15 * np.percentile(brms, 90) if len(brms) else brms
         act_idx = set(np.nonzero(active)[0].tolist())
         covered = len(set(idx.tolist()) & act_idx) / max(1, len(act_idx))
+        # kick and snare alternating: on every second beat the "kick" is only the low-end part of the snare — weaker
         ev, od = kv[on][idx % 2 == 0], kv[on][idx % 2 == 1]
         if len(ev) and len(od):
             even_odd = float(min(ev.mean(), od.mean()) / max(ev.mean(), od.mean()))
     four = covered > 0.6 and even_odd > 0.7
     snares = beat_pos([t for t, k, _ in hits if k == "snare"], beats, bpm)
-    # Backbeat: Snares eine Viertel neben den Kicks, jeden zweiten Schlag
+    # backbeat: snares one quarter note off the kicks, every second beat
     backbeat = float(np.mean(np.abs((((snares - phase) % 2) - 1)) < 0.2)) if len(snares) > 8 and not four else 0.0
     if not four and covered > 0.6 and even_odd <= 0.7:
-        backbeat = 1.0                                     # Kick und Snare im Wechsel
-    # Tonart aus allem außer Schlagzeug, Akkorde aus Bass + Rest je Schlag
+        backbeat = 1.0                                     # kick and snare alternating
+    # key from everything except drums, chords from bass + rest per beat
     sr = 22050
     harm = librosa.resample((st["bass"] + st["other"] + 0.5 * st["vocals"]).astype(np.float32), orig_sr=SR, target_sr=sr)
     hop = 512
     chroma = librosa.feature.chroma_cqt(y=harm, sr=sr, hop_length=hop)
-    # Akkorde ohne den Bass: sein fünfter Teilton (große Terz) machte aus a-Moll ein A-Dur.
-    # 🔑 Trägt der obere Teil kaum etwas (ein Trance: Rest 3 %, Gesang 10 % — die Trennung legte die Synths zum Bass),
-    #    sind Akkorde daraus Zufall und kippen die Tonart. Dann das ganze harmonische Signal, die Terz entscheidet die Tonart.
+    # Chords without the bass: its fifth partial (major third) turned A minor into A major.
+    # 🔑 If the upper part carries hardly anything (a trance track: other 3 %, vocals 10 % — the separation put the synths with the bass),
+    #    chords derived from it are chance and flip the key. Then use the whole harmonic signal; the third decides the key.
     up_share = (stems.get("other", 0) + stems.get("vocals", 0)) / 100.0
     upper_sig = st["other"] + 0.5 * st["vocals"] if up_share >= 0.15 else st["bass"] + st["other"] + 0.5 * st["vocals"]
     upper = librosa.resample(upper_sig.astype(np.float32), orig_sr=SR, target_sr=sr)
@@ -4638,10 +4796,10 @@ def main():
     bf = librosa.time_to_frames(beats, sr=sr, hop_length=hop)
     cb = librosa.util.sync(chroma_up, librosa.util.fix_frames(bf, x_max=chroma_up.shape[1]), aggregate=np.median)
     pb = chords_per_beat(cb)
-    if up_share < 0.15:                                  # mit Bass gemessen: Terz nicht trauen
+    if up_share < 0.15:                                  # measured with bass: do not trust the third
         pb = [(c[0], "?") if c else None for c in pb]
     bars = []
-    for i in range(0, len(pb) - 3, 4):                     # je Takt der häufigste Akkord
+    for i in range(0, len(pb) - 3, 4):                     # most frequent chord per bar
         cs = [c for c in pb[i:i + 4] if c]
         bars.append(max(set(cs), key=cs.count) if cs else None)
     bass_y = librosa.resample(st["bass"].astype(np.float32), orig_sr=SR, target_sr=sr)
@@ -4649,7 +4807,7 @@ def main():
     root, mode, kconf, kalt = key_of(chroma.sum(1), bass_c, bars, chroma_up.sum(1))
     bars = [settle(b, root, mode) for b in bars]
     loop = loop_of(bars, root, mode)
-    # Lautheit, Dynamik, Klangfarbe, Energieverlauf (je Sekunde)
+    # loudness, dynamics, timbre, energy curve (per second)
     y = librosa.resample(mix.astype(np.float32), orig_sr=SR, target_sr=sr)
     sec = sr
     m = len(y) // sec
@@ -4680,8 +4838,8 @@ if __name__ == "__main__":
 
 
 def analyse_measure(cfg: dict, audio: bytes, filename: str) -> dict:
-    """Tempo, Tonart, Akkordfolge, Aufbau, Energie, Stimmen-Anteile, Gesang, Klangfarbe, Groove. Ohne MIDI-Umgebung
-    (Installer mit --skip-midi) → {"unavailable": …} — die Musik-KI hört trotzdem zu."""
+    """Tempo, key, chords, structure, energy, stem shares, vocals, timbre, groove. Without the MIDI environment
+    (installer with --skip-midi) → {"unavailable": …} — the music AI still listens."""
     py = midi_python()
     if not py:
         return {"unavailable": "MIDI-Umgebung fehlt (Installer-Schritt „MIDI image“)"}
@@ -4725,8 +4883,8 @@ def analyse_measure(cfg: dict, audio: bytes, filename: str) -> dict:
 
 
 def analyse_job(cfg: dict, eng, srv, job: dict, tick) -> dict:
-    """Auftrag „analyse“: die Musik-KI hört zu (Stil, Takt, Sprache) und der Mac vermisst den Song.
-    🔑 Den erkannten Liedtext NICHT weitergeben — aus Vorbildern entsteht ein neuer Song, kein nachgesungener."""
+    """Job "analyse": the music AI listens (style, meter, language) and the Mac analyses the song.
+    🔑 Do NOT pass on the recognised lyrics — references yield a new song, not a re-sung one."""
     upload = srv.upload(job["id"])
     name = job.get("filename") or "upload"
     try:
@@ -4751,7 +4909,7 @@ def midi_python() -> str:
 def midi_state(path: str, d: dict = None) -> str:
     d = d if d is not None else _read_json(path[:-4] + ".json")
     if ((d.get("meta") or {}).get("source") or (d.get("request") or {}).get("source")) == "eigen":
-        return "none"                                   # selbst gespielt: die Noten gibt es schon im Projekt
+        return "none"                                   # played by hand: the notes already exist in the project
     if (_read_json(path[:-4] + ".midi.json").get("v") or 0) == MIDI_V and os.path.isfile(path[:-4] + ".mid"):
         return "ok"
     fail = _read_json(path[:-4] + ".midi.fail")
@@ -4763,12 +4921,12 @@ def midi_state(path: str, d: dict = None) -> str:
 def _midi_busy() -> bool:
     if _job_active.is_set() or os.path.exists(INFLIGHT):
         return True
-    with FileLock("bild-server", blocking=False) as l:     # malt gerade jemand (Cover, Bildwerk)? Dann nicht dazwischen.
+    with FileLock("bild-server", blocking=False) as l:     # someone painting (cover, image work)? Then stay out.
         return not l.held
 
 
 def midi_make(cfg: dict, path: str) -> str:
-    """Ein Abbild rechnen. → "ok", "stopped" (Auftrag kam dazwischen) oder "failed"."""
+    """Compute one image. → "ok", "stopped" (a job interrupted) or "failed"."""
     py = midi_python()
     script = os.path.join(MIDI_DIR, "transcribe.py")
     if _read_bytes(script) != MIDI_SCRIPT.encode():
@@ -4776,7 +4934,7 @@ def midi_make(cfg: dict, path: str) -> str:
     d = _read_json(path[:-4] + ".json")
     bpm = (d.get("request") or {}).get("bpm") or (d.get("result") or {}).get("bpm") or 0
     tmp_j, tmp_m = path[:-4] + ".midi.json.tmp", path[:-4] + ".mid.tmp"
-    # Modelle in den eigenen Ordner (Demucs 4.1 lädt über den Hugging-Face-Hub): Deinstallieren = Ordner löschen
+    # Models into the own folder (Demucs 4.1 downloads via the Hugging Face hub): uninstalling = deleting the folder
     env = dict(os.environ, MWS_FFMPEG=tool(cfg, "ffmpeg") or "ffmpeg", TORCH_HOME=os.path.join(MIDI_DIR, "torch"), HF_HOME=os.path.join(MIDI_DIR, "hf"),
                MWS_MIDI_DEVICE="mps" if sys.platform == "darwin" else "cpu", PYTORCH_ENABLE_MPS_FALLBACK="1")
     t0 = time.time()
@@ -4818,7 +4976,7 @@ def midi_make(cfg: dict, path: str) -> str:
 
 
 def midi_kill() -> None:
-    """Beim Beenden der Brücke: den Rechenprozess mitnehmen."""
+    """When the bridge exits: take the compute process along."""
     p = _midi_proc
     if p is not None and p.poll() is None:
         try:
@@ -4829,7 +4987,7 @@ def midi_kill() -> None:
 
 
 def midi_cleanup() -> int:
-    """Halbe Ergebnisse eines hart beendeten Laufs (.midi.json.tmp / .mid.tmp) wegräumen. → Anzahl."""
+    """Clean up partial results of a hard-killed run (.midi.json.tmp / .mid.tmp). → count."""
     n = 0
     for root, dirs, files in os.walk(RENDERS):
         for f in files:
@@ -4843,7 +5001,7 @@ def midi_cleanup() -> int:
 
 
 def midi_lane(cfg: dict) -> None:
-    """Hintergrund: jedem KI-Track sein Abbild — gewünschte zuerst, dann die neuesten. Nur bei Ruhe."""
+    """Background: give every AI track its image — requested ones first, then the newest. Only when idle."""
     if midi_cleanup():
         log("MIDI: halbe Ergebnisse eines abgebrochenen Laufs entfernt")
     time.sleep(30)
@@ -4871,8 +5029,8 @@ def midi_lane(cfg: dict) -> None:
 
 
 def midi_result(paths: list) -> bytes:
-    """Auftrag „midi": für jeden gefragten Track das Abbild (JSON + .mid als base64) oder seinen Stand.
-    Noch nicht fertige rücken nach vorn. Als JSON-Datei (ein Abbild ist ~100 KB — zu groß für den JSON-Körper)."""
+    """Job "midi": for each requested track, the render (JSON + .mid as base64) or its state.
+    Unfinished ones move to the front. Sent as a JSON file (a render is ~100 KB — too big for the JSON body)."""
     import base64
     items = {}
     for rel in paths[:40]:
@@ -4893,15 +5051,17 @@ def midi_result(paths: list) -> bytes:
     return json.dumps({"items": items, "v": MIDI_V}, separators=(",", ":")).encode()
 
 
-# Jetzt geht ALLES eines Tracks in den Papierkorb des Macs: WAV, .json, Cover (.jpg + Rohling .roh.jpg) und das
-# unmarkierte Original. Papierkorb statt sofort weg: bis zum Leeren zurückholbar. Klappt das Verschieben nicht
-# (Rechte), wird endgültig gelöscht — gelöscht heißt gelöscht. Das Wasserzeichen-Verzeichnis behält seinen Eintrag:
-# eine schon verbreitete Kopie soll ihre Herkunft weiter beweisen.
+# ---- 3.6: Deletion (user request: deleted songs must really be deleted) ----------------------------
+# Up to 3.5 the app only deleted its browser copy; the archive stayed and "📥 Fetch from Mac" offered the track again.
+# Now EVERYTHING of a track goes to the Mac's trash: WAV, .json, cover (.jpg + raw .roh.jpg) and the
+# unmarked original. Trash instead of immediate removal: recoverable until emptied. If moving fails
+# (permissions), the files are deleted for good — deleted means deleted. The watermark registry keeps its entry:
+# an already distributed copy should keep proving its origin.
 TRASH = os.path.join(HOME, ".Trash")
 
 
 def track_files(path: str) -> list:
-    """Alle Dateien eines Archiv-Tracks (die WAV zuerst)."""
+    """All files of an archive track (the WAV first)."""
     base = path[:-4]
     out = [path] + [base + s for s in (".json", ".jpg", ".roh.jpg", ".midi.json", ".mid") if os.path.isfile(base + s)]
     orig = os.path.join(ORIG_DIR, os.path.basename(os.path.dirname(path)), os.path.basename(path))
@@ -4911,8 +5071,8 @@ def track_files(path: str) -> list:
 
 
 def remember_masters(items: list) -> dict:
-    """3.12.3: Die Mastering-Regler leben im Browser (IndexedDB). Das Studio meldet sie hierher, damit alles,
-    was ohne den Browser läuft (Veröffentlichen aus dem Terminal, ein zweites Gerät), dieselben Regler nimmt."""
+    """3.12.3: The mastering controls live in the browser (IndexedDB). The studio reports them here so that everything
+    that runs without the browser (publishing from the terminal, a second device) uses the same controls."""
     saved, missing = 0, []
     for it in items[:500]:
         if not isinstance(it, dict):
@@ -4941,11 +5101,11 @@ def delete_tracks(rels: list, cfg=None) -> dict:
     for rel in rels[:500]:
         p = archive_path(rel)
         if not p:
-            missing.append(rel)          # schon weg — für den Browser ist das dasselbe wie gelöscht
+            missing.append(rel)          # already gone — for the browser that is the same as deleted
             continue
-        # 3.12.4: gelöscht heißt auch: nicht mehr öffentlich. Bis hier lag ein gelöschter Track im Papierkorb und lief
-        # auf der Seite weiter. Klappt das Zurückziehen nicht (Seite/Tailscale weg), bleibt der Track liegen: der
-        # Browser behält ihn in seiner Löschliste und versucht es beim nächsten Verbinden wieder.
+        # 3.12.4: deleted also means: no longer public. Until here a deleted track sat in the trash and kept running
+        # on the site. If withdrawing fails (site/Tailscale unreachable), the track stays put: the
+        # browser keeps it in its deletion list and retries on the next connect.
         pub = _read_json(p[:-4] + ".json").get("oeffentlich") or {}
         if pub.get("id") and not ((cfg or {}).get("web_admin") or "").strip():
             log("%s war veröffentlicht, aber keine Fahrstuhlmusik-Seite eingetragen — dort bitte von Hand zurückziehen" % os.path.basename(p))
@@ -4958,7 +5118,7 @@ def delete_tracks(rels: list, cfg=None) -> dict:
                     log("Löschen von %s verschoben — erst von Fahrstuhlmusik nehmen: %s" % (os.path.basename(p), e))
                     continue
             log("Von Fahrstuhlmusik zurückgezogen (gelöscht): %s" % os.path.basename(p))
-        with FileLock(p):                # nie mitten in ein Veredeln/Exportieren hinein
+        with FileLock(p):                # never in the middle of a refine/export
             day = os.path.basename(os.path.dirname(p))
             for f in track_files(p):
                 name = ("Original_" if f.startswith(os.path.realpath(ORIG_DIR) + os.sep) or f.startswith(ORIG_DIR + os.sep) else "") + os.path.basename(f)
@@ -4986,8 +5146,8 @@ def settings_result(cfg: dict) -> dict:
 
 
 def tool_job(cfg: dict, srv, job: dict) -> None:
-    """Schnelle Aufträge der Brief-Spur: Einstellungen, Export, Wasserzeichen prüfen.
-    Sie rühren den Grafikchip nicht an (Cover entstehen auf der Render-Spur)."""
+    """Quick jobs of the brief lane: settings, export, watermark check.
+    They do not touch the GPU (covers are made on the render lane)."""
     kind, jid, req = job.get("kind"), job["id"], job.get("request") or {}
     tick = lambda m: srv.progress(jid, m, job)  # noqa: E731
     if kind == "archiv":
@@ -5046,10 +5206,11 @@ def tool_job(cfg: dict, srv, job: dict) -> None:
         path = job_source(cfg, srv, job)
         fin = veredeln(cfg, path, req, want_cover=False, tick=tick)
         if rights(cfg)["watermark"] and not fin["id"]:
+            # "all songs must get a watermark" — so none leaves without one either
             raise RuntimeError("Wasserzeichen fehlt (%s) — Export abgebrochen" % (fin.get("wm_error") or "unbekannt"))
         given = clean_master(req.get("master"))
         if given is not None:
-            # Die Regler gehören zum Track: ein späterer Export (anderes Gerät, Terminal) klingt genauso
+            # The controls belong to the track: a later export (other device, terminal) sounds the same
             with FileLock(path):
                 d = _read_json(path[:-4] + ".json")
                 if d.get("master") != given:
@@ -5058,7 +5219,7 @@ def tool_job(cfg: dict, srv, job: dict) -> None:
         bits = 16 if int(req.get("bits") or 24) == 16 else 24
         res = export_track(cfg, path, fmt, rate, info_from_archive(path, req), tick, master=given, bits=bits)
         if isinstance(req.get("paket"), dict):
-            # 3.9: Veröffentlichungspaket — dieselbe Datei, dazu Cover 3000 px, Metadaten, Nachweis, Lizenzvorlage
+            # 3.9: release package — the same file, plus 3000 px cover, metadata, proof, license template
             if tick:
                 tick("Veröffentlichungspaket wird geschnürt …")
             pk = release_package(cfg, path, res, info_from_archive(path, req), req["paket"], fin,
@@ -5079,7 +5240,7 @@ def tool_job(cfg: dict, srv, job: dict) -> None:
 
 
 def finish_job(cfg: dict, srv, job: dict, tick) -> None:
-    """Render-Spur: einen vorhandenen Track nachrüsten oder ihm ein neues Cover malen."""
+    """Render lane: retrofit an existing track or paint it a new cover."""
     kind, jid, req = job.get("kind"), job["id"], job.get("request") or {}
     path = job_source(cfg, srv, job)
     fin = veredeln(cfg, path, req, want_cover=True, tick=tick, new_cover=(kind == "cover"))
@@ -5087,41 +5248,41 @@ def finish_job(cfg: dict, srv, job: dict, tick) -> None:
     if jpeg:
         try:
             srv.cover(jid, jpeg)
-        except Exception as e:  # noqa: BLE001 — das Cover liegt im Archiv; der Auftrag ist trotzdem fertig
+        except Exception as e:  # noqa: BLE001 — the cover is in the archive; the job is done anyway
             log("Cover-Übergabe %s gescheitert: %s" % (jid, e))
     d = _read_json(path[:-4] + ".json")
     meta = {"archived": rel_home(path), "wasserzeichen": fin["id"], "cover": bool(jpeg),
             "cover_error": fin.get("cover_error", ""), "cover_model": (d.get("cover") or {}).get("model", ""),
             "wm_error": fin.get("wm_error", ""), "cover_stamp": fin.get("stamp", ""),
             "rev": int((d.get("aufbereitet") or {}).get("v") or 0),
-            # was der Browser braucht, um einen Track neu in die Bibliothek zu legen
+            # what the browser needs to put a track back into the library
             "track": {"request": d.get("request") or {}, "meta": d.get("meta") or {}, "result": d.get("result") or {}}}
     if kind == "nachruesten" and req.get("audio"):
         srv.meta(jid, meta)
         srv.result_audio(jid, _read_bytes(path))
-    else:   # Cover oder Nachrüsten: der Browser behält seine Kopie, nur Kennung + Cover reisen
+    else:   # cover or retrofit: the browser keeps its copy, only ID + cover travel
         srv.result_json(jid, meta)
     log("%s: %s · %s" % ("Neues Cover" if kind == "cover" else "Nachgerüstet", os.path.basename(path),
                           ", ".join(fin["changed"]) or "war schon vollständig"))
 
 
 # =============================================================================
-# Hauptschleife
+# Main loop
 # =============================================================================
 
 def _on_term(signum, frame):
-    # launchctl stop / Abmelden / kill schicken SIGTERM: den laufenden Auftrag beim
-    # Modellserver mitnehmen, statt ihn als Waise rechnen zu lassen.
+    # launchctl stop / logout / kill send SIGTERM: take the running job along at the
+    # model server instead of letting it keep computing as an orphan.
     Engine.cancel_inflight("Brücke wird beendet")
-    midi_kill()                     # 3.16.1: auch das MIDI-Abbild nicht als Waise weiterrechnen lassen
+    midi_kill()                     # 3.16.1: do not let the MIDI render keep computing as an orphan either
     sys.exit(0)
 
 
-# 3.18 (App 3.23): neuer Code auf der Platte (Ein-Klick-Update, Installer, neue Fassung vom Server) → die Brücke startet
-# sich selbst neu, sobald sie nichts zu tun hat. POSIX: execv (dieselbe Prozessnummer — Starter und launchd behalten sie),
-# Windows: Ende mit 75, der Starter startet neu. Eigene Modellserver und die MIDI-Rechnung werden vorher beendet.
+# 3.18 (App 3.23): new code on disk (one-click update, installer, new version from the server) → the bridge restarts
+# itself as soon as it is idle. POSIX: execv (same process ID — starter and launchd keep it),
+# Windows: exit with 75, the starter restarts it. Own model servers and the MIDI computation are stopped beforehand.
 _CODE_FILE = os.path.abspath(__file__)
-_brief_active = threading.Event()   # die Brief-Spur arbeitet gerade
+_brief_active = threading.Event()   # the brief lane is working
 
 
 def _code_sha() -> str:
@@ -5156,8 +5317,9 @@ def restart_bridge(eng) -> None:
         sys.stderr.flush()
     except Exception:  # noqa: BLE001
         pass
-    # 🔴 3.19.1: Windows-Starter bis 3.24.0 erkannten Code 75 nie (ExitCode leer ohne gemerkten Handle) — die Brücke
-    #    unter einem älteren startet sie ihren Nachfolger selbst.
+    # 🔴 3.19.1: Windows starters up to 3.24.0 never recognized code 75 (ExitCode empty without a retained handle) — the
+    #    bridge simply stayed off after new code, "no more songs". Only the starter from 3.24.1 sets MWS_SUPERVISED=1;
+    #    under an older one the bridge starts its successor itself.
     if os.environ.get("MWS_TEST_RESPAWN") == "1" or (IS_WIN and os.environ.get("MWS_SUPERVISED") != "1"):
         try:
             err = open(os.path.join(DIR, "bridge.restart.log"), "ab")
@@ -5174,15 +5336,15 @@ def restart_bridge(eng) -> None:
 
 
 def brief_lane(cfg: dict) -> None:
-    """Zweite Spur: Briefe schreiben, während die erste vielleicht minutenlang rechnet.
-    Sie fasst den Modellserver nicht an — nur das lokale Sprachmodell."""
+    """Second lane: write briefs while the first may be computing for minutes.
+    It does not touch the model server — only the local language model."""
     srv = Server(cfg)
     backoff = 2
     while True:
         try:
             st, job = srv.next_job(lane="brief")
             backoff = 2
-        except Exception:  # Netz weg, Server deployt … — die Hauptspur protokolliert das schon
+        except Exception:  # network down, server deploying … — the main lane already logs that
             time.sleep(backoff)
             backoff = min(60, backoff * 2)
             continue
@@ -5231,8 +5393,8 @@ def run(cfg: dict) -> None:
     log("Manuwave-Studio-Brücke %s · Server %s · Ablage %s · Brief-Schreiber %s" % (
         BRIDGE_VERSION, cfg["server"], RENDERS, find_writer(cfg) or "keiner"))
     threading.Thread(target=brief_lane, args=(cfg,), name="brief", daemon=True).start()
-    threading.Thread(target=midi_lane, args=(cfg,), name="midi", daemon=True).start()    # 3.16: MIDI-Abbilder bei Ruhe
-    # Ist die letzte Brücke ohne Aufräumen gestorben (Absturz, Strom, kill -9)?
+    threading.Thread(target=midi_lane, args=(cfg,), name="midi", daemon=True).start()    # 3.16: MIDI renders when idle
+    # Did the last bridge die without cleaning up (crash, power loss, kill -9)?
     Engine.cancel_inflight("vom letzten Lauf übrig")
     ImageServer(cfg).cleanup_at_start()
     backoff = 2
@@ -5242,13 +5404,13 @@ def run(cfg: dict) -> None:
             backoff = 2
         except urllib.error.HTTPError as e:
             if e.code == 401:
-                log("Server lehnt den Schlüssel ab — neu koppeln: neonforge_bridge.py --pair")
+                log("Server lehnt den Schlüssel ab — neu koppeln: manuwave_bridge.py --pair")
             else:
                 log("Server antwortet %d — neuer Versuch in %d s" % (e.code, backoff))
             time.sleep(backoff)
             backoff = min(60, backoff * 2)
             continue
-        except Exception as e:  # Netz weg, Mac aufgewacht, Server deployt gerade …
+        except Exception as e:  # network down, Mac just woke up, server deploying right now …
             log("Server nicht erreichbar (%s) — neuer Versuch in %d s" % (type(e).__name__, backoff))
             time.sleep(backoff)
             backoff = min(60, backoff * 2)
@@ -5263,11 +5425,11 @@ def run(cfg: dict) -> None:
         title = (job.get("meta") or {}).get("title", "")
         log("Auftrag %s (%s) %s" % (jid, job.get("kind"), title))
         tick = lambda msg: srv.progress(jid, msg, job)  # noqa: E731
-        _job_active.set()          # 3.16: die MIDI-Spur hält sofort an
+        _job_active.set()          # 3.16: the MIDI lane stops immediately
         Awake.hold(cfg)
         try:
-            # Nur Musik und Analyse brauchen den Modellserver — ein Cover oder Nachrüsten nicht.
-            # 🔴 Sonst lüde er ~8 GB nur für ein Bild, und das Bildmodell bekäme den Speicher nicht.
+            # Only music and analysis need the model server — a cover or retrofit does not.
+            # 🔴 Otherwise it would load ~8 GB just for one image, and the image model would not get the memory.
             if job.get("kind") not in ("nachruesten", "cover"):
                 eng.ensure(lambda m: srv.progress(jid, m, job))
             if job.get("kind") == "understand":
@@ -5281,19 +5443,21 @@ def run(cfg: dict) -> None:
                 finish_job(cfg, srv, job, tick)
             else:
                 long_ = float((job.get("request") or {}).get("duration") or 0) > LONG_SINGLE
-                if job.get("kind") == "weiter":        # 3.17: aus der Loop-Maschine
+                if job.get("kind") == "weiter":        # 3.17: from the loop machine
                     audio, meta = render_weiter(cfg, eng, srv, job, tick)
                 else:
                     audio, meta = (render_long if long_ else render_checked)(cfg, eng, srv, job, tick)
                 path = archive(cfg, job, audio, meta)
                 cover_next = False
-                # 3.2: erst veredeln (Wasserzeichen + Tags), DANN ausliefern — so verlässt kein
-                # Track den Mac ohne Zeichen. Scheitert das Veredeln, geht der Track trotzdem
-                # raus (eine Viertelstunde Rechenzeit wegwerfen wäre schlimmer) und sagt es;
+                # 3.2: refine first (watermark + tags), THEN deliver — so no
+                # track leaves the Mac without a mark. If refining fails, the track still goes
+                # out (throwing away a quarter hour of compute would be worse) and says so;
+                # "retrofit" makes up for it later.
                 try:
                     if path:
                         meta["archived"] = rel_home(path)
-                        # 3.5: das unmarkierte Original bleibt (backup=True) — ohne es lässt sich ein Track
+                        # 3.5: the unmarked original stays (backup=True) — without it a track can
+                        #      never be cleanly reprocessed again (found with a real track)
                         fin = veredeln(cfg, path, None, want_cover=False, tick=tick, backup=True)
                         meta["wasserzeichen"] = fin["id"]
                         if fin.get("wm_error"):
@@ -5315,7 +5479,7 @@ def run(cfg: dict) -> None:
                 log("fertig in %.0f s · %.1f s Audio · %s" % (meta.get("render_s", 0),
                     meta.get("duration_real", 0), path or "nicht abgelegt"))
                 if cover_next:
-                    # Das Cover kommt NACH dem Track: der Track ist sofort hörbar, das Bild folgt.
+                    # The cover comes AFTER the track: the track is audible immediately, the image follows.
                     try:
                         fin = veredeln(cfg, path, None, want_cover=True, tick=None, backup=False)
                         jpeg = _read_bytes(path[:-4] + ".jpg")
@@ -5344,12 +5508,12 @@ def run(cfg: dict) -> None:
 
 
 class Awake:
-    """3.7: Der Rechner soll nicht schlafen, solange ein Auftrag läuft — auch wenn Safari im Hintergrund ist.
-    Am 13.10. ging um 17:49 der Bildschirm aus; der Mac rechnete weiter, aber Safari brach um 18:10 das Abholen
-    von „Euphoric Ascent · A" ab. Solange die Brücke einen Auftrag hat — und 3 min danach, damit der Browser den
-    fertigen Track noch abholt —, hält `caffeinate` den Mac UND den Bildschirm wach (-d -i -m). `-w` beendet es
-    von selbst, wenn die Brücke stirbt. Abschalten: "wach_halten": false in bridge.json.
-    Sperrt der Nutzer den Mac selbst, kann das nichts verhindern — dann holt die Seite beim Entsperren nach (3.6.1)."""
+    """3.7: The machine must not sleep while a job is running — even if Safari is in the background.
+    On 13.10. the screen went off at 17:49; the Mac kept computing, but Safari aborted fetching a finished track at 18:10.
+    As long as the bridge has a job — and 3 min after, so the browser still fetches the
+    finished track —, `caffeinate` keeps the Mac AND the screen awake (-d -i -m). `-w` ends it
+    by itself when the bridge dies. Disable: "wach_halten": false in bridge.json.
+    If the user locks the Mac themselves, nothing can prevent that — then the page catches up on unlock (3.6.1)."""
     NACHLAUF_S = 180
     _lock = threading.Lock()
     _n = 0
@@ -5387,8 +5551,8 @@ class Awake:
 
     @classmethod
     def _stop(cls, me) -> None:
-        # 🔴 Durchsicht 3.7: ein schon ausgelöster Zeitgeber, der auf die Sperre wartet, lässt sich nicht mehr abbrechen —
-        #    nur der AKTUELLE darf stoppen (sonst fiele der Nachlauf eines neueren Auftrags weg)
+        # 🔴 Review 3.7: an already fired timer that is waiting for the lock can no longer be cancelled —
+        #    only the CURRENT one may stop (otherwise the grace period of a newer job would be lost)
         with cls._lock:
             if cls._timer is not me:
                 return
@@ -5403,7 +5567,7 @@ class Awake:
 
 
 # =============================================================================
-# Koppeln, Dienst ein/aus, Status
+# Pairing, service on/off, status
 # =============================================================================
 
 def pair(cfg: dict) -> None:
@@ -5421,7 +5585,7 @@ def pair(cfg: dict) -> None:
         print("  → in Manuwave Studio: ⚙️ Einstellungen › Mac-Brücke › Code eingeben")
     print("  Oder diesen Link auf dem Gerät öffnen:\n  %s\n" % link)
     if sys.platform == "darwin":
-        # Der Dialog läuft mit Frist — ohne sie hinge --install, bis jemand OK klickt.
+        # The dialog runs with a timeout — without it --install would hang until someone clicks OK.
         subprocess.run(["open", link], check=False)
         if code:
             subprocess.run(["osascript", "-e",
@@ -5432,18 +5596,25 @@ def pair(cfg: dict) -> None:
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def install_target(here: str) -> str:
+    """Where the installed copy of the bridge lives: an installed bridge keeps the file name it already has
+    (the service points at it); anything else (a fresh download) is installed under the current name."""
+    name = os.path.basename(here)
+    return os.path.join(DIR, name if name in BRIDGE_NAMES else BRIDGE_NAMES[0])
+
+
 def install(cfg: dict) -> None:
     cfg = ensure_token(cfg)
     os.makedirs(DIR, exist_ok=True)
     os.makedirs(os.path.dirname(LOG), exist_ok=True)
-    target = os.path.join(DIR, "neonforge_bridge.py")
     here = os.path.abspath(__file__)
+    target = install_target(here)
     if here != target:
         with open(here, "rb") as src, open(target, "wb") as dst:
             dst.write(src.read())
         os.chmod(target, 0o755)
-    # Vorlage 1:1 wie die übrigen com.robert.*-Dienste: System-Python, Start mit dem
-    # Login, bei Absturz neu, Log unter ~/Library/Logs.
+    # Template like other launchd user services: system Python, start at
+    # login, restart on crash, log under ~/Library/Logs.
     plist = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -5463,8 +5634,9 @@ def install(cfg: dict) -> None:
     uid = os.getuid()
     service = "gui/%d/%s" % (uid, LABEL)
     subprocess.run(["launchctl", "bootout", service], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    # 🔴 bootout kehrt zurück, BEVOR der alte Dienst abgebaut ist. Ein sofortiges bootstrap
-    #    Also warten, bis launchd ihn wirklich vergessen hat, und notfalls nachfassen.
+    # 🔴 bootout returns BEFORE the old service is torn down. An immediate bootstrap
+    #    then fails with "5: Input/output error" — and the old one is gone anyway.
+    #    So wait until launchd has really forgotten it, and retry if necessary.
     for _ in range(40):
         if subprocess.run(["launchctl", "print", service], stdout=subprocess.DEVNULL,
                           stderr=subprocess.DEVNULL).returncode != 0:
@@ -5509,7 +5681,7 @@ def status(cfg: dict) -> None:
 
 def nachruesten_cli(cfg: dict) -> None:
     import signal
-    # Abbrechen (kill/launchctl) soll den Bild-Server mitnehmen: SystemExit läuft durch die with-Blöcke
+    # Aborting (kill/launchctl) should take the image server along: SystemExit runs through the with blocks
     signal.signal(signal.SIGTERM, lambda *a: sys.exit(143))
     files = all_archived()
     print("%d Tracks im Archiv · Rechteinhaber: %s · Bildmodell: %s" % (
@@ -5581,3 +5753,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

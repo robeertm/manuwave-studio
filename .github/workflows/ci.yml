@@ -10,6 +10,8 @@ jobs:
         with: { python-version: "3.9" }        # the bridge must stay Python 3.9 compatible (macOS system Python)
       - name: Python compiles (3.9)
         run: python -m py_compile app/server.py app/bridge/manuwave_bridge.py install/common/*.py
+      - name: No forbidden names (third-party brands, earlier project names)
+        run: python scripts/check_names.py
       - name: Shell syntax
         run: for f in install/macos/*.sh install/linux/*.sh "install/macos/Manuwave Studio.command"; do bash -n "$f"; done
       - uses: actions/setup-node@v4
